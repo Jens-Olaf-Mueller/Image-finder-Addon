@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>Image Finder</title>
+
+    <link rel="stylesheet" href="./popup.css">
+    <script src="../src/popup.js" type="module"></script>
+</head>
+
+<body>
+    <main class="mainGUI">
+        <!-- Image list -->
+        <div id="divImageList" class="image-list">
+            <ul id="lstImages" class="images"></ul>
+        </div>
+
+        <!-- Image preview -->
+        <div id="divPreview" class="preview">
+            <img id="imgPreview" class="preview">
+            <h2 id="h2_Preview">Image preview</h2>
+        </div>
+    </main>
+
+    <!-- Toolbar -->
+    <div id="divToolbar" class="toolbar" role="toolbar" aria-label="Image actions">
+        <button type="button" id="btnSearch" class="toolbar-button"
+            title="Find images"
+            aria-label="Find images">
+            <img src="../assets/icons/search.png" alt="find">
+        </button>
+
+        <button type="button" id="btnDownload" class="toolbar-button"
+            title="Download image"
+            aria-label="Download image"
+            disabled>
+            <img src="../assets/icons/download.png" alt="download">
+        </button>
+
+        <button type="button" id="btnSaveAll" class="toolbar-button"
+            title="Save all"
+            aria-label="Save all"
+            disabled>
+            <img src="../assets/icons/saveall.png" alt="save all">
+        </button>
+
+        <button type="button" id="btnDelete" class="toolbar-button"
+            title="Delete image"
+            aria-label="Delete image"
+            disabled>
+            <img src="../assets/icons/bin.png" alt="delete">
+        </button>
+
+        <button type="button" id="btnClear" class="toolbar-button"
+            title="Clear list"
+            aria-label="Clear list"
+            disabled>
+            <img src="../assets/icons/clear.png" alt="clear list">
+        </button>
+
+        <div id="divToolbarSpacer" class="toolbar-spacer">
+            <span id="spnStatusBar" class="statusbar"></span>
+            <div id="divProgressbar" class="progressbar">0%</div>
+        </div>
+
+        <div class="control theme">
+            <label title="Switch theme">
+                <input type="checkbox" id="chkTheme" name="theme" title="Switch theme" aria-label="Switch theme">
+                <img class="theme-light" src="../assets/icons/sun.png" alt="sun">
+                <img class="theme-dark" src="../assets/icons/moon.png" alt="moon">
+            </label>
+        </div>
+
+        <button type="button" id="btnSettings" class="toolbar-button"
+            title="Settings"
+            aria-label="Settings">
+            <img src="../assets/icons/settings.png" alt="settings">
+        </button>
+    </div>
+</body>
+</html>

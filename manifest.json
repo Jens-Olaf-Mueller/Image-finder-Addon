@@ -1,0 +1,28 @@
+{
+    "manifest_version": 3,
+    "name": "Image Finder",
+    "version": "0.1.0",
+    "description": "Find images on the current website.",
+        "icons": {
+        "64": "assets/icons/icon64.png"
+    },
+    "host_permissions": [
+        "http://*/*",
+        "https://*/*"
+    ],
+    "permissions": [
+        "storage",
+        "activeTab",
+        "scripting",
+        "downloads"
+    ],
+    "action": {
+        "default_title": "Image Finder",
+        "default_icon": "assets/icons/icon64.png",
+        "default_popup": "ui/popup.html"
+    },
+    "options_ui": {
+        "page": "ui/settings.html",
+        "open_in_tab": false
+    }
+}

@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>Image Finder - Test Page</title>
+
+    <style>
+        .background-test {
+            width: 320px;
+            height: 160px;
+            margin: 1rem 0;
+        }
+
+        .background-class {
+            background-image: url('images/Gartenhaus.jpg');
+        }
+
+        .background-layers {
+            background-image:
+                url('images/Pyramiden.jpeg'),
+                url('images/Rockies.avif');
+        }
+
+        .background-gradient {
+            background-image:
+                linear-gradient(rgb(0 0 0 / 45%), rgb(255 255 255 / 20%)),
+                url('images/Rade (1).jpg');
+        }
+
+        .background-duplicate {
+            background-image: url('images/Habermann (1).JPG');
+        }
+
+        .background-small {
+            background-image: url('images/save.svg');
+        }
+
+        .background-large-compressed {
+            background-image: url('images/BK78tVf3hQI.jpg');
+        }
+
+        .background-data-image {
+            background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='320'%20height='240'%3E%3Crect%20width='320'%20height='240'%20fill='%2300897b'/%3E%3C/svg%3E");
+        }
+    </style>
+</head>
+
+<body>
+    <main>
+        <h1>Image Finder - Scanner Tests</h1>
+
+        <!-- Test 1: Normal image -->
+        <section>
+            <h2>1. Normal image</h2>
+
+            <img
+                id="imgNormal"
+                src="images/Benz.JPG"
+                alt="Mercedes"
+            >
+        </section>
+
+
+        <!-- Test 2: Native lazy loading -->
+        <section style="margin-top: 1200px;">
+            <h2>2. Native lazy loading</h2>
+
+            <img
+                id="imgLazy"
+                src="images/Habermann (3).JPG"
+                loading="lazy"
+                alt="Native lazy image: Habermann 3"
+            >
+        </section>
+
+
+        <!-- Test 3: data-src with placeholder -->
+        <section>
+            <h2>3. data-src</h2>
+
+            <img
+                id="imgDataSrc"
+                src="images/placeholder.gif"
+                data-src="images/DieWahrheit.jpg"
+                alt="Data-src image: Die Wahrheit"
+            >
+        </section>
+
+
+        <!-- Test 4: data-srcset -->
+        <section>
+            <h2>4. data-srcset (Kinsky)</h2>
+
+            <img
+                id="imgDataSrcset"
+                data-srcset="
+                    images/Kinsky-small500.JPG 500w,
+                    images/Kinsky-original1952x1440.JPEG 1500w
+                "
+                alt="Data-srcset image"
+            >
+        </section>
+
+
+        <!-- Test 5: Normal srcset -->
+        <section>
+            <h2>5. Normal srcset (Wasbek)</h2>
+
+            <img
+                id="imgSrcset"
+                src="images/Wasbek-small500.jpg"
+                srcset="
+                    images/Wasbek-small500.jpg 500w,
+                    images/Wasbek-large1500.jpg 1500w
+                "
+                sizes="(max-width: 800px) 500px, 1500px"
+                alt="Srcset image"
+            >
+        </section>
+
+        <section>
+            <h2>6. .GIF</h2>
+            <img src="images/domazonwalk.gif" alt="GIF Sample">
+        </section>
+
+        <section>
+            <h2>7. .WEBP</h2>
+            <img src="images/woods.webp" alt="WEBP Sample">
+        </section>
+
+
+        <section>
+            <h2>8. .AVIF</h2>
+            <img src="images/Rockies.avif" alt="AVIF Sample">
+        </section>
+
+        <section>
+            <h2>9. SVG</h2>
+            <img src="images/save.svg" alt="SVG Sample">
+        </section>
+
+        <section>
+            <h2>10. Inline background image</h2>
+            <div
+                class="background-test"
+                style="background-image: url('images/ballspanking.gif')"
+            ></div>
+        </section>
+
+        <section>
+            <h2>11. Background image via CSS class</h2>
+            <div class="background-test background-class"></div>
+        </section>
+
+        <section>
+            <h2>12. Two background image layers</h2>
+            <div class="background-test background-layers"></div>
+        </section>
+
+        <section>
+            <h2>13. Gradient with background image</h2>
+            <div class="background-test background-gradient"></div>
+        </section>
+
+        <section>
+            <h2>14. Duplicate background image</h2>
+            <div class="background-test background-duplicate"></div>
+            <div class="background-test background-duplicate"></div>
+        </section>
+
+        <section>
+            <h2>15. No background image</h2>
+            <div class="background-test"></div>
+        </section>
+
+        <section>
+            <h2>16. Small background image</h2>
+            <div class="background-test background-small"></div>
+        </section>
+
+        <section>
+            <h2>17. Large, compressed background image</h2>
+            <div class="background-test background-large-compressed"></div>
+        </section>
+
+        <!-- ❌
+        <section>
+            <h2>18. Linked JPG image</h2>
+            <a href="images/Benz.JPG">Linked JPG</a>
+        </section>
+        -->
+        <section>
+            <h2>18. Linked JPG image</h2>
+            <a href="images/Loo.jpg">Linked JPG</a>
+        </section>
+
+        <section>
+            <h2>19. Linked WEBP image</h2>
+            <a href="images/woods.webp">Linked WEBP</a>
+        </section>
+
+        <section>
+            <h2>20. Linked AVIF with query</h2>
+            <a href="images/Rockies.avif?v=123">Linked AVIF with query</a>
+        </section>
+
+        <section>
+            <h2>21. Normal HTML link</h2>
+            <a href="index.html">Normal HTML link</a>
+        </section>
+
+        <section>
+            <h2>22. Duplicate linked image</h2>
+            <a href="images/Coffee.jpg">Duplicate A</a>
+            <a href="images/Coffee.jpg">Duplicate B</a>
+        </section>
+
+        <section>
+            <h2>23. Same image as element and link</h2>
+            <img src="images/label.webp" alt="Image element">
+            <a href="images/label.webp">Same image as link</a>
+        </section>
+
+        <section>
+            <h2>24. Thumbnail linked to fullsize image</h2>
+            <a href="images/Wasbek-large1500.jpg">
+                <img src="images/Wasbek-small500.jpg" alt="Thumbnail">
+            </a>
+        </section>
+
+        <!-- ❌
+        <section>
+            <h2>25. Linked image with uppercase extension</h2>
+            <a href="images/Habermann (3).JPG">Uppercase JPG</a>
+        </section>
+        -->
+        <section>
+            <h2>25. Linked image with uppercase extension</h2>
+            <a href="images/Podest Wiek.JPG">Uppercase JPG</a>
+        </section>
+
+        <section>
+            <h2>26. Data PNG as image element and srcset</h2>
+            <img
+                id="imgDataPng"
+                src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAUAAAADwCAMAAABG801ZAAAAA1BMVEXlOTVQZGYIAAAAYklEQVR42u3BMQEAAADCoPVPbQ0PoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4NcALP8AAZ8iU1IAAAAASUVORK5CYII="
+                alt="Data PNG"
+            >
+            <img
+                id="imgDataUrlSrcset"
+                srcset="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAUAAAADwCAMAAABG801ZAAAAA1BMVEUVZcA+eQETAAAAYklEQVR42u3BMQEAAADCoPVPbQ0PoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4NcALP8AAZ8iU1IAAAAASUVORK5CYII= 1x"
+                alt="Data PNG via srcset"
+            >
+        </section>
+
+        <section>
+            <h2>27. Data SVG without Base64</h2>
+            <img
+                id="imgDataSvg"
+                src="data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='320'%20height='240'%3E%3Crect%20width='320'%20height='240'%20fill='%237e57c2'/%3E%3C/svg%3E"
+                alt="Data SVG"
+            >
+        </section>
+
+        <section>
+            <h2>28. Data image as CSS background</h2>
+            <div class="background-test background-data-image"></div>
+        </section>
+
+        <section>
+            <h2>29. Data image as link</h2>
+            <a href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAUAAAADwCAMAAABG801ZAAAAA1BMVEVDoEeTGWaZAAAAYklEQVR42u3BMQEAAADCoPVPbQ0PoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4NcALP8AAZ8iU1IAAAAASUVORK5CYII=">
+                Linked data PNG
+            </a>
+        </section>
+
+        <section>
+            <h2>30. Identical data image twice</h2>
+            <img
+                src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAUAAAADwCAMAAABG801ZAAAAA1BMVEX7jACJ3XasAAAAYklEQVR42u3BMQEAAADCoPVPbQ0PoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4NcALP8AAZ8iU1IAAAAASUVORK5CYII="
+                alt="Duplicate data PNG A"
+            >
+            <img
+                src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAUAAAADwCAMAAABG801ZAAAAA1BMVEX7jACJ3XasAAAAYklEQVR42u3BMQEAAADCoPVPbQ0PoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4NcALP8AAZ8iU1IAAAAASUVORK5CYII="
+                alt="Duplicate data PNG B"
+            >
+        </section>
+
+        <section>
+            <h2>31. Data-image source setting</h2>
+            <p>With <code>sources.dataimages = false</code>, data images do not appear in the result list.</p>
+        </section>
+
+        <section>
+            <h2>32. Small data image for size filtering</h2>
+            <img
+                id="imgSmallDataGif"
+                src="data:image/gif;base64,R0lGODlhAQABAPAAAAAAAAAAACH5BAAAAAAALAAAAAABAAEAAAICRAEAOw=="
+                alt="1 × 1 data GIF"
+            >
+        </section>
+    </main>
+</body>
+</html>
