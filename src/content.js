@@ -1,4 +1,4 @@
-(() => {
+export function scanImages(ignoreHiddenImages = false) {
     const getURL = (value) => {
         if (typeof value !== 'string' || !value.trim()) return null;
 
@@ -11,6 +11,11 @@
 
     const getPreferredSrcsetURL = (srcset) => {
         if (typeof srcset !== 'string' || !srcset.trim()) return null;
+
+        const singleDataImage = srcset.trim().match(
+            /^(data:image\/[^,]+,[^\s]+)(?:\s+(?:\d+w|\d*\.?\d+x))?$/i
+        );
+        if (singleDataImage) return getURL(singleDataImage[1]);
 
         const candidates = srcset
             .split(',')
@@ -62,13 +67,35 @@
     const isDataImageURL = (url) =>
         typeof url === 'string' && /^data:image\//i.test(url);
 
+    const isHidden = (element, computedStyle = null) => {
+        if (!ignoreHiddenImages) return false;
+
+        try {
+            for (let current = element; current; current = current.parentElement) {
+                const style = current === element && computedStyle
+                    ? computedStyle
+                    : getComputedStyle(current);
+
+                if (style.display === 'none' ||
+                    style.visibility === 'hidden' ||
+                    style.visibility === 'collapse') {
+                    return true;
+                }
+            }
+        } catch {
+            return false;
+        }
+
+        return false;
+    };
+
     const isLinkedImageURL = (url) => {
         if (isDataImageURL(url)) return true;
 
         try {
             const {protocol, pathname} = new URL(url);
 
-            if (!['http:', 'https:', 'file:'].includes(protocol)) return false;
+            if (!['http:', 'https:'].includes(protocol)) return false;
 
             return /\.(?:jpe?g|png|gif|webp|svg|avif)$/i.test(pathname);
         } catch {
@@ -78,21 +105,6 @@
 
     const images = [];
 
-    // ❌
-    // const seen = new Set();
-    //
-    // const addCandidate = (url, width, height, source) => {
-    //     const key = `${source}:${url}`;
-    //     if (!url || seen.has(key)) return;
-    //     seen.add(key);
-    //     images.push({
-    //         url,
-    //         width,
-    //         height,
-    //         source
-    //     });
-    // };
-
     const addCandidate = (url, width, height, source) => {
         if (!url) return;
 
@@ -100,23 +112,25 @@
             url,
             width,
             height,
-            // ❌ source
             source: isDataImageURL(url) ? 'dataimages' : source
         });
     };
 
     for (const img of document.images) {
+        if (isHidden(img)) continue;
+
         const currentSrc = getURL(img.currentSrc);
         const src = getURL(img.getAttribute('src'));
-        const srcset = getPreferredSrcsetURL(img.getAttribute('srcset'));
         const dataSrc = getURL(img.getAttribute('data-src'));
-        const dataSrcset = getPreferredSrcsetURL(img.getAttribute('data-srcset'));
+        const dataSrcset = img.getAttribute('data-srcset');
         const hasLazySource = Boolean(dataSrc || dataSrcset);
         const currentSrcLooksLikePlaceholder = hasLazySource && (!currentSrc || currentSrc === src);
 
         let url = currentSrc;
-        if (currentSrcLooksLikePlaceholder) url = dataSrcset || dataSrc;
-        url ??= srcset || src;
+        if (currentSrcLooksLikePlaceholder) {
+            url = getPreferredSrcsetURL(dataSrcset) || dataSrc;
+        }
+        if (!url) url = getPreferredSrcsetURL(img.getAttribute('srcset')) || src;
         const dimensionsKnown = currentSrc && url === currentSrc;
         addCandidate(
             url,
@@ -128,7 +142,10 @@
 
     for (const element of document.querySelectorAll('*')) {
         try {
-            const backgroundImage = getComputedStyle(element).backgroundImage;
+            const style = getComputedStyle(element);
+            if (isHidden(element, style)) continue;
+
+            const backgroundImage = style.backgroundImage;
             for (const url of getBackgroundURLs(backgroundImage)) {
                 addCandidate(url, 0, 0, 'backgroundimages');
             }
@@ -138,6 +155,8 @@
     }
 
     for (const link of document.querySelectorAll('a[href]')) {
+        if (isHidden(link)) continue;
+
         const url = getURL(link.href);
 
         if (!isLinkedImageURL(url)) continue;
@@ -146,4 +165,4 @@
     }
 
     return images;
-})();
+}

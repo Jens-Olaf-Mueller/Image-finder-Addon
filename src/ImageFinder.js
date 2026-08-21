@@ -1,5 +1,6 @@
 import { Settings } from './Settings.js';
 import Progressbar from './Progressbar.js';
+import { scanImages } from './content.js';
 
 const DEFAULT_BYTES_PER_PIXEL = 0.1;
 const UTF8_ENCODER = new TextEncoder();
@@ -15,8 +16,17 @@ export class ImageFinder {
         return imageId ? this.images.get(imageId) ?? null : null;
     }
 
+    get listItems() {
+        return Array.from(this.DOM.lstImages.querySelectorAll('li')) || [];
+    }
+
+    get listIndex() {
+        const items = Array.from(this.DOM.lstImages.querySelectorAll('li'));
+        return items.indexOf(this.selectedItem);
+    }
+
     get downloadButtonState() {
-        return this.settings.get('downloads').disableDownloadWhenDone || false;
+        return (this.settings.get('downloads') ?? {}).disableDownloadWhenDone === true;
     }
 
     get filter() {
@@ -53,6 +63,7 @@ export class ImageFinder {
         this.settings = new Settings();
         this.images = new Map();
         this.progressbar = new Progressbar(this.DOM.divProgressbar);
+        this.isSavingAll = false;
 
         console.dir(this)
     }
@@ -66,6 +77,72 @@ export class ImageFinder {
     setEventListeners() {
         this.DOM.divToolbar.addEventListener('click', e => this.onButtonClick(e));
         this.DOM.lstImages.addEventListener('click', e => this.onListItemClick(e));
+        this.DOM.lstImages.addEventListener('keydown', e => this.onKeyPress(e));
+    }
+
+    async onKeyPress(e) {
+        const items = this.listItems;
+        if (!items.length) return;
+
+        e.preventDefault();
+        let index = this.listIndex;
+        switch (e.key) {
+            case 'ArrowUp':
+                index = index <= 0 ? items.length - 1 : index - 1;
+                break;
+            case 'ArrowDown':
+                index = index < 0 || index >= items.length - 1 ? 0 : index + 1;
+                break;
+            case 'Home':
+                index = 0;
+                break;
+            case 'End':
+                index = items.length - 1;
+                break;
+            case 'Delete':
+                this.deleteImage(this.selectedItem);
+                return;
+            case 'Enter':
+                await this.saveImage(this.selectedItem);
+                return;
+            default:
+                return;
+        }
+
+        const item = items[index];
+        this.selectedItem?.classList.remove('selected');
+        item.classList.add('selected');
+
+        item.scrollIntoView({ block: 'nearest' });
+        await this.#showImage(item);
+    }
+
+    async #showImage(item) {
+        const imageId = item?.dataset.imageId;
+        const image = imageId ? this.images.get(imageId) ?? null : null;
+        if (!image) return;
+
+        this.DOM.imgPreview.src = item.dataset.url;
+        this.DOM.h2_Preview.style.display = 'none';
+        this.DOM.btnDelete.disabled = false;
+        const downloadOff = this.downloadButtonState && item.classList.contains('saved');
+        this.DOM.btnDownload.disabled = false || downloadOff;
+
+        if (image.fileSize === null && image.source !== 'dataimages') {
+            const fileInfo = await this.getFileInfo(item.dataset.url);
+
+            if (this.selectedItem?.dataset.imageId !== imageId) return;
+
+            image.fileSize = fileInfo?.size ?? null;
+        }
+
+        if (this.selectedItem?.dataset.imageId !== imageId) return;
+
+        const size = image.fileSize >= 1048576
+            ? `${parseInt(image.fileSize / 1024 / 1024)} MB`
+            : image.fileSize ? `${parseInt(image.fileSize / 1024)} KB` : '??? KB';
+        this.statusBar = `${image.imageType}: ${image.width} × ${image.height} px [${size}]`;
+        this.DOM.spnStatusBar.style.display = 'block';
     }
 
     async onListItemClick(e) {
@@ -74,25 +151,12 @@ export class ImageFinder {
 
         this.selectedItem?.classList.remove('selected');
         item.classList.add('selected');
+        this.DOM.lstImages.focus();
 
-        this.DOM.imgPreview.src = item.dataset.url;
-        this.DOM.h2_Preview.style.display = 'none';
-        this.DOM.btnDelete.disabled = false;
-        const downloadOff = this.downloadButtonState && item.classList.contains('saved');
-        this.DOM.btnDownload.disabled = false || downloadOff;
-
-        const image = this.selectedImage;
-        if (image) {
-            // ❌ if (image.fileSize === null) {
-            if (image.fileSize === null && image.source !== 'dataimages') {
-                const fileInfo = await this.getFileInfo(item.dataset.url);
-                image.fileSize = fileInfo?.size ?? null;
-            }
-            const size = image.fileSize > 1048576
-                ? `${parseInt(image.fileSize / 1024)} MB`
-                : image.fileSize ? `${image.fileSize} KB` : '??? KB';
-            this.statusBar = `${image.imageType}: ${image.width} × ${image.height} px [${size}]`;
-            this.DOM.spnStatusBar.style.display = 'block';
+        try {
+            await this.#showImage(item);
+        } catch (error) {
+            console.warn('Cannot show image:', item.dataset.url, error);
         }
     }
 
@@ -175,14 +239,15 @@ export class ImageFinder {
         this.info = 'Scanning...';
 
         try {
+            const filters = this.settings.get('filters') ?? {};
             const result = await window.chrome.scripting.executeScript({
                 target: {tabId: tab.id},
-                files: ['/src/content.js']
+                func: scanImages,
+                args: [filters.ignoreHiddenImages === true]
             });
             const filesFound = result[0]?.result ?? [];
             const filter = this.filter;
             const sources = this.settings.get('sources') ?? {};
-            const filters = this.settings.get('filters') ?? {};
             const seenUrls = new Set();
             this.progressbar.show(filesFound.length);
 
@@ -308,16 +373,33 @@ export class ImageFinder {
     }
 
     async saveAllImages() {
-        for (const [_, image] of this.images) {
-            // ❌
-            // await window.chrome.downloads.download({
-            //     url: image.url,
-            //     ...this.getDownloadOptions(image.fileName)
-            // });
-            await this.downloadImage(image);
-        }
+        if (this.isSavingAll) return;
 
-        this.DOM.lstImages.querySelectorAll('li').forEach(li => li.classList.add('saved'));
+        this.isSavingAll = true;
+        this.DOM.btnSaveAll.disabled = true;
+
+        try {
+            for (const [imageId, image] of this.images) {
+                try {
+                    await this.downloadImage(image);
+
+                    const item = this.listItems.find(
+                        li => li.dataset.imageId === imageId
+                    );
+                    if (!item) continue;
+
+                    item.classList.add('saved');
+                    if (this.downloadButtonState && this.selectedItem === item) {
+                        this.DOM.btnDownload.disabled = true;
+                    }
+                } catch (error) {
+                    console.warn('Cannot download image:', image.url, error);
+                }
+            }
+        } finally {
+            this.isSavingAll = false;
+            this.DOM.btnSaveAll.disabled = (this.images.size === 0);
+        }
     }
 
     async downloadImage(image) {

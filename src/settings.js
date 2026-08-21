@@ -48,6 +48,7 @@ async function runSettings() {
 
 async function setDefaultDownloadFolder() {
     let defaultFolder = settings.get('downloads', 'defaultFolder', '');
+    let shouldSave = false;
 
     if (!defaultFolder) {
         try {
@@ -56,6 +57,7 @@ async function setDefaultDownloadFolder() {
             if (!defaultFolder) return;
 
             settings.data.downloads.defaultFolder = defaultFolder;
+            shouldSave = true;
 
         } catch (error) {
             console.warn('Could not determine download folder:', error);
@@ -65,6 +67,10 @@ async function setDefaultDownloadFolder() {
 
     if (!settings.get('downloads', 'userFolder', '')) {
         inpUserFolder.value = defaultFolder;
+        shouldSave = true;
+    }
+
+    if (shouldSave) {
         await settings.save();
     }
 }

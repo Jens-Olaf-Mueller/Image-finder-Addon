@@ -44,6 +44,11 @@
         .background-data-image {
             background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='320'%20height='240'%3E%3Crect%20width='320'%20height='240'%20fill='%2300897b'/%3E%3C/svg%3E");
         }
+
+        .hidden-background {
+            display: none;
+            background-image: url('images/test4.jpg');
+        }
     </style>
 </head>
 
@@ -185,12 +190,6 @@
             <div class="background-test background-large-compressed"></div>
         </section>
 
-        <!-- ❌
-        <section>
-            <h2>18. Linked JPG image</h2>
-            <a href="images/Benz.JPG">Linked JPG</a>
-        </section>
-        -->
         <section>
             <h2>18. Linked JPG image</h2>
             <a href="images/Loo.jpg">Linked JPG</a>
@@ -299,6 +298,36 @@
                 id="imgSmallDataGif"
                 src="data:image/gif;base64,R0lGODlhAQABAPAAAAAAAAAAACH5BAAAAAAALAAAAAABAAEAAAICRAEAOw=="
                 alt="1 × 1 data GIF"
+            >
+        </section>
+
+        <section>
+            <h2>33. Ignore hidden images</h2>
+            <p>
+                With <code>ignoreHiddenImages = false</code>, test1.jpg through
+                test5.jpg are found. With <code>ignoreHiddenImages = true</code>,
+                test1.jpg through test4.jpg are ignored; test5.jpg remains found.
+            </p>
+
+            <img src="images/test1.jpg" style="display: none" alt="Hidden by display">
+            <img src="images/test2.jpg" style="visibility: hidden" alt="Hidden by visibility">
+            <div style="display: none">
+                <img src="images/test3.jpg" alt="Hidden parent">
+            </div>
+            <div class="hidden-background"></div>
+            <img src="images/test5.jpg" style="opacity: 0" alt="Transparent but included">
+        </section>
+
+        <section>
+            <h2>34. Data image via data-srcset</h2>
+            <p>
+                The single Data-URL candidate must be found even though the browser
+                does not resolve the custom <code>data-srcset</code> attribute.
+            </p>
+            <img
+                id="imgDataDataSrcset"
+                data-srcset="data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='320'%20height='240'%3E%3Crect%20width='320'%20height='240'%20fill='%23ff6347'/%3E%3C/svg%3E 1x"
+                alt="Data SVG via data-srcset"
             >
         </section>
     </main>

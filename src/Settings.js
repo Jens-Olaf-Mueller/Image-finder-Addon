@@ -28,26 +28,21 @@ export class Settings {
         const stored = await window.chrome.storage.local.get(this.storageKey);
         const savedData = stored[this.storageKey] ?? {};
 
-        if (!this.form) {
-            this.data = savedData;
-            return this.data;
+        this.data = this.mergeData(DEFAULT_SETTINGS, savedData);
+
+        if (this.form) {
+            this.setFormData(this.data);
+
+            // Saves new/default controls automatically if the markup was extended.
+            await window.chrome.storage.local.set({
+                [this.storageKey]: this.data
+            });
         }
-
-        const defaultData = this.getFormData();
-
-        this.data = this.mergeData(defaultData, savedData);
-        this.setFormData(this.data);
-
-        // Saves new/default controls automatically if the markup was extended.
-        await window.chrome.storage.local.set({
-            [this.storageKey]: this.data
-        });
 
         return this.data;
     }
 
     async save() {
-        // ❌ if (this.form) this.data = this.getFormData();
         if (this.form) this.data = this.mergeData(this.data, this.getFormData());
 
         await window.chrome.storage.local.set({
@@ -145,7 +140,6 @@ export class Settings {
     }
 
     mergeData(defaultData, savedData) {
-        // ❌ const mergedData = {};
         const mergedData = Object.fromEntries(
             Object.entries(savedData ?? {}).map(([sectionName, section]) => [
                 sectionName,
@@ -154,7 +148,6 @@ export class Settings {
         );
 
         Object.entries(defaultData).forEach(([sectionName, section]) => {
-            // ❌ mergedData[sectionName] = {};
             mergedData[sectionName] ??= {};
 
             Object.entries(section).forEach(([key, defaultValue]) => {
@@ -199,4 +192,44 @@ export class Settings {
 
         return likelyFolder;
     }
-}
+};
+
+export const DEFAULT_SETTINGS = {
+    common: {
+        scanOnStart: true
+    },
+    downloads: {
+        downloadFolder: 'prompt',
+        userFolder: '',
+        defaultFolder: '',
+        zipFileList: false,
+        disableDownloadWhenDone: false
+    },
+    filesizes: {
+        ignoresizes: true,
+        minwidth: 200,
+        minheight: 200,
+        minimumfilesize: 128
+    },
+    imagetypes: {
+        jpg: true,
+        png: true,
+        webp: true,
+        gif: true,
+        svg: false,
+        avif: false
+    },
+    sources: {
+        imageelements: true,
+        backgroundimages: true,
+        linkedimages: true,
+        dataimages: false,
+        blobimages: false
+    },
+    filters: {
+        removeDuplicates: true,
+        ignoreHiddenImages: false,
+        hasExcludeList: false,
+        excludeList: ''
+    }
+};

@@ -41,8 +41,11 @@ main.mainGUI {
 .images {
     margin: 0;
     padding: 0;
-
     list-style: none;
+}
+
+.images:focus {
+    outline: none;
 }
 
 /* Preview */
@@ -111,7 +114,6 @@ img.preview:not([src]) {
 }
 
 /* Toolbar buttons */
-
 .toolbar-button {
     min-height: var(--icon-size);
     width: var(--icon-size);
@@ -128,7 +130,6 @@ img.preview:not([src]) {
     height: 1.25rem;
     cursor: pointer;
 }
-
 
 .theme input {
     display: none;
@@ -167,11 +168,14 @@ img.preview:not([src]) {
 }
 
 .images li.selected {
-    /* background: #c8dcf0; */
     background: navy;
     color: whitesmoke;
 }
 
 .images li.saved {
     color: #006000;
+}
+
+.images li.selected.saved {
+    background-color: lightgreen;
 }
