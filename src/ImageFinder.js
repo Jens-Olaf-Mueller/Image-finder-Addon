@@ -416,6 +416,20 @@ export class ImageFinder {
         };
 
         try {
+            if (image.source !== 'dataimages') {
+                const response = await window.chrome.runtime.sendMessage({
+                    action: 'downloadImage',
+                    url: image.url,
+                    options: this.getDownloadOptions(image.fileName)
+                });
+
+                if (response?.success !== true) {
+                    throw new Error(response?.error || 'Background download failed');
+                }
+
+                return response.downloadId;
+            }
+
             let downloadUrl = image.url;
 
             if (image.source === 'dataimages') {
@@ -459,14 +473,6 @@ export class ImageFinder {
 
     getDownloadOptions(fileName) {
         const downloads = this.settings.get('downloads') ?? {};
-
-        if (downloads.downloadFolder !== 'user') {
-            return {
-                filename: fileName,
-                saveAs: true
-            };
-        }
-
         const userFolder = String(downloads.userFolder ?? '')
             .trim()
             .replaceAll('\\', '/')
@@ -486,7 +492,7 @@ export class ImageFinder {
 
         return {
             filename: relativeFolder ? `${relativeFolder}/${fileName}` : fileName,
-            saveAs: false
+            saveAs: downloads.downloadFolder !== 'user'
         };
     }
 

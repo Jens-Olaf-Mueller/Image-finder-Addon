@@ -16,6 +16,12 @@
         "scripting",
         "downloads"
     ],
+    "background": {
+        "scripts": [
+            "src/background.js"
+        ],
+        "service_worker": "src/background.js"
+    },
     "action": {
         "default_title": "Image Finder",
         "default_icon": "assets/icons/icon64.png",
