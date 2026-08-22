@@ -15,7 +15,7 @@ form#frmSettings {
     border: none;
     border-radius: 3px;
     margin-top: 0.5rem;
-    padding: 2rem 1rem 1rem 0.75rem;
+    padding: 2rem 0.5rem 0.75rem 0.5rem;
     background-color: var(--preview-bg, #e8e8e8);
 }
 
@@ -25,28 +25,32 @@ form#frmSettings {
     transform: translateY(1rem);
 }
 
-.control {
+#frmSettings .control {
     display: flex;
     align-items: center;
 }
 
-.ctrl__vertical {
+#frmSettings .ctrl__vertical {
     flex-direction: column;
     align-items: flex-start;
 }
 
-.control label:first-child {
+#frmSettings .control label:first-child {
     min-width: 8rem;
 }
 
-.control input[type=number] {
+#frmSettings .control input[type=number] {
     border: none;
     outline: none;
     text-align: center;
 }
 
-.control:has(input[type=text]),
-.control input[type=text] {
+#frmSettings .control input[type=range] {
+    width: 5rem;
+}
+
+#frmSettings .control:has(input[type=text]),
+#frmSettings .control input[type=text] {
     width: 100%;
 }
 
@@ -60,6 +64,24 @@ form#frmSettings {
     height: 100%;
 }
 
-*[disabled] {
+#frmSettings *[disabled] {
     color: #777;
+}
+
+#divSettingsContentPopup {
+    height: 100%;
+    overflow-y: auto;
+}
+
+#divSettingsContentPopup #frmSettings {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.5rem;
+    align-content: start;
+}
+
+#divSettingsContentPopup #frmSettings fieldset[name] {
+    min-width: 0;
+    margin-top: 0;
+    align-self: start;
 }

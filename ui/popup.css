@@ -1,5 +1,6 @@
 :root {
     --icon-size: 2rem;
+    --icon-size-small: 1rem;
     --preview-bg: #e8e8e8;
 }
 
@@ -11,6 +12,7 @@ html,
 body {
     margin: 0;
     padding: 0;
+    overflow-x: hidden;
 }
 
 body {
@@ -18,6 +20,8 @@ body {
     height: 520px;
     display: flex;
     flex-direction: column;
+    position: relative;
+    overflow: hidden;
 
     font-family: sans-serif;
     background: #f4f4f4;
@@ -78,15 +82,28 @@ img.preview:not([src]) {
     color: #777;
 }
 
-/* Toolbar */
+/* Toolbars */
 .toolbar {
     display: flex;
     align-items: center;
     gap: 6px;
-    height: 46px;
+    height: 2.5rem;
     padding: 5px 8px;
     border-top: 1px solid #b0b0b0;
     background: #dddddd;
+}
+
+.toolbar__top {
+    display: grid;
+    grid-template-columns: 275px auto;
+    height: 1.66rem;
+    padding: 0 8px;
+}
+
+.toolbar-section {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
 }
 
 #divToolbarSpacer.toolbar-spacer {
@@ -95,6 +112,25 @@ img.preview:not([src]) {
     flex: 1;
     height: 100%;
     padding: 0.75rem;
+}
+
+#divToolbar {
+    position: relative;
+    z-index: 3;
+}
+
+.settings-panel {
+    position: absolute;
+    inset: 0 0 2.5rem;
+    z-index: 2;
+    padding: 1rem;
+    background: #f4f4f4;
+    transform: translateX(100%);
+    transition: transform 200ms ease;
+}
+
+.settings-panel.open {
+    transform: translateX(0);
 }
 
 .progressbar {
@@ -131,6 +167,23 @@ img.preview:not([src]) {
     cursor: pointer;
 }
 
+
+.tbr-btn__small {
+    min-height: var(--icon-size-small);
+    width: var(--icon-size-smalls);
+    height: var(--icon-size-smalls);
+    padding: 0 10px;
+}
+
+.tbr-btn__small img {
+    width: 0.625rem;
+    height: 0.625rem;
+}
+
+.tbr-btn__small:last-child {
+    margin-right: auto;
+}
+
 .theme input {
     display: none;
 }
@@ -153,6 +206,12 @@ img.preview:not([src]) {
 }
 
 .toolbar-button:active {
+    background: #bbbbbb;
+}
+
+#btnSettings[value=true] {
+    border-style: inset !important;
+    border: 2px solid silver;
     background: #bbbbbb;
 }
 

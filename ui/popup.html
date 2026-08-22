@@ -7,10 +7,54 @@
     <title>Image Finder</title>
 
     <link rel="stylesheet" href="./popup.css">
+    <link rel="stylesheet" href="./settings.css">
     <script src="../src/popup.js" type="module"></script>
 </head>
 
 <body>
+    <!-- Top toolbar -->
+    <div id="divTopToolbar" class="toolbar toolbar__top" role="toolbar" aria-label="Image sorting and preview controls">
+
+        <div id="divToolbarTopLeft" class="toolbar-section" role="group" aria-label="Image list sorting">
+            <button type="button" id="btnSortFilename" class="toolbar-button tbr-btn__small"
+                title="Sort by filename"
+                aria-label="Sort by filename">
+                <img src="../assets/icons/sort-alphabetical.png" alt="sort-alphabetical">
+            </button>
+            <button type="button" id="btnSortType" class="toolbar-button tbr-btn__small"
+                title="Sort by image type"
+                aria-label="Sort by image type">
+                <img src="../assets/icons/sort-type.png" alt="sort type">
+            </button>
+            <button type="button" id="btnSortFileSize" class="toolbar-button tbr-btn__small"
+                title="Sort by file size"
+                aria-label="Sort by file size">
+                <img src="../assets/icons/sort-size.png" alt="sort size">
+            </button>
+            <button type="button" id="btnSortDimensions" class="toolbar-button tbr-btn__small"
+                title="Sort by dimensions"
+                aria-label="Sort by dimensions">
+                <img src="../assets/icons/sort-dims.png" alt="sort dimensions">
+            </button>
+        </div>
+
+        <div id="divToolbarTopRight" class="toolbar-section" role="group" aria-label="Image preview controls">
+            <button type="button" id="btnImageInfo" class="toolbar-button"
+                title="Image information"
+                aria-label="Image information">
+                <img id="imgTypeInfo" src="../assets/icons/jpeg.png" alt="filetype" style="height: 1.15rem;">
+            </button>
+
+            <div class="control theme">
+                <label title="Switch theme">
+                    <input type="checkbox" id="chkTheme" name="theme" title="Switch theme" aria-label="Switch theme">
+                    <img class="theme-light" src="../assets/icons/sun.png" alt="sun">
+                    <img class="theme-dark" src="../assets/icons/moon.png" alt="moon">
+                </label>
+            </div>
+        </div>
+    </div>
+
     <main class="mainGUI">
         <!-- Image list -->
         <div id="divImageList" class="image-list">
@@ -78,19 +122,16 @@
             <div id="divProgressbar" class="progressbar">0%</div>
         </div>
 
-        <div class="control theme">
-            <label title="Switch theme">
-                <input type="checkbox" id="chkTheme" name="theme" title="Switch theme" aria-label="Switch theme">
-                <img class="theme-light" src="../assets/icons/sun.png" alt="sun">
-                <img class="theme-dark" src="../assets/icons/moon.png" alt="moon">
-            </label>
-        </div>
-
         <button type="button" id="btnSettings" class="toolbar-button"
             title="Settings"
-            aria-label="Settings">
+            aria-label="Settings"
+            value="false">
             <img src="../assets/icons/settings.png" alt="settings">
         </button>
+    </div>
+
+    <div id="divSettingsPanel" class="settings-panel" aria-label="Settings">
+        <div id="divSettingsContentPopup"></div>
     </div>
 </body>
 </html>

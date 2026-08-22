@@ -69,8 +69,9 @@ export class ImageFinder {
         console.dir(this)
     }
 
-    async run() {
+    async run(onSettingsReady = null) {
         await this.settings.run();
+        if (typeof onSettingsReady === 'function') await onSettingsReady();
         this.setEventListeners();
         if (this.settings.get('common', 'scanOnStart', true)) await this.scan();
     }
@@ -200,7 +201,7 @@ export class ImageFinder {
         const btnName = btn.id.slice(3).toLowerCase() || '';
         switch (btnName) {
             case 'settings':
-                window.chrome.runtime.openOptionsPage();
+                this.toggleSettingsPanel();
                 break;
 
             case 'search':
@@ -235,6 +236,13 @@ export class ImageFinder {
                 console.log(`Unhandled button: [${btnName}]`);
                 break;
         }
+    }
+
+    toggleSettingsPanel() {
+        const isOpen = this.DOM.btnSettings.value === 'true';
+        const nextState = String(!isOpen);
+        this.DOM.btnSettings.value = nextState;
+        this.DOM.divSettingsPanel.classList.toggle('open', nextState === 'true');
     }
 
     clear() {

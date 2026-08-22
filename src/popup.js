@@ -1,9 +1,27 @@
 
 import { ImageFinder } from './ImageFinder.js';
+import { loadSettingsForm, SettingsView } from './settingsView.js';
 
 const imageFinder = new ImageFinder();
 
-imageFinder.run();
+runPopup();
+
+async function runPopup() {
+    let settingsForm = null;
+
+    try {
+        settingsForm = await loadSettingsForm('divSettingsContentPopup');
+    } catch (error) {
+        console.warn('Cannot load settings form:', error);
+    }
+
+    await imageFinder.run(async () => {
+        if (!settingsForm) return;
+
+        const settingsView = new SettingsView(imageFinder.settings, settingsForm);
+        await settingsView.run({loadSettings: false});
+    });
+}
 
 // const divToolbar = document.getElementById('divToolbar');
 // const btnSave = document.getElementById('btnSave');

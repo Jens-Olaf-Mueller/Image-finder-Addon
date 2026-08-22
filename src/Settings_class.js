@@ -1,5 +1,8 @@
 export class Settings {
     #form = null;
+    #boundForm = null;
+    #onFormChange = () => this.save();
+
     get form() { return this.#form; }
     set form(newForm) {
         if (newForm instanceof HTMLFormElement) {
@@ -19,9 +22,20 @@ export class Settings {
 
     async run() {
         await this.load();
-
-        if (this.form) this.form.addEventListener('change', () => this.save());
+        this.bindForm();
         return this.data;
+    }
+
+    bindForm(form = this.form) {
+        this.form = form;
+        if (!this.form) return;
+
+        this.setFormData(this.data);
+        if (this.#boundForm === this.form) return;
+
+        this.#boundForm?.removeEventListener('change', this.#onFormChange);
+        this.form.addEventListener('change', this.#onFormChange);
+        this.#boundForm = this.form;
     }
 
     async load() {
