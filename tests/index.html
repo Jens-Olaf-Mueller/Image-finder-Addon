@@ -3,14 +3,58 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
-    <title>Image Finder - Test Page</title>
+    <title>Image Finder - Test Suite</title>
 
     <style>
+        :root {
+            color-scheme: light dark;
+            font-family: system-ui, sans-serif;
+        }
+
+        body {
+            margin: 0;
+        }
+
+        main {
+            max-width: 960px;
+            margin: 0 auto;
+            padding: 2rem 1rem 4rem;
+        }
+
+        .test-group {
+            margin-top: 3rem;
+        }
+
+        .test {
+            margin: 1rem 0;
+            padding: 1rem;
+            border: 1px solid #777;
+            border-radius: .5rem;
+        }
+
+        .test h3 {
+            margin-top: 0;
+        }
+
+        .requirements {
+            margin-bottom: 1rem;
+        }
+
+        .test-image,
+        .background-test {
+            display: block;
+            max-width: 100%;
+            max-height: 320px;
+            margin-top: .75rem;
+        }
+
         .background-test {
             width: 320px;
-            height: 160px;
-            margin: 1rem 0;
+            height: 180px;
+            background-position: center;
+            background-repeat: no-repeat;
+            background-size: cover;
+            border: 1px dashed #777;
         }
 
         .background-class {
@@ -19,30 +63,27 @@
 
         .background-layers {
             background-image:
-                url('images/Pyramiden.jpeg'),
-                url('images/Rockies.avif');
+                url('images/Habermann (1).JPG'),
+                url('images/Rade (1).jpg');
         }
 
         .background-gradient {
             background-image:
-                linear-gradient(rgb(0 0 0 / 45%), rgb(255 255 255 / 20%)),
-                url('images/Rade (1).jpg');
-        }
-
-        .background-duplicate {
-            background-image: url('images/Habermann (1).JPG');
+                linear-gradient(rgb(0 0 0 / 50%), rgb(255 255 255 / 15%)),
+                url('images/BK78tVf3hQI.jpg');
         }
 
         .background-small {
-            background-image: url('images/save.svg');
+            background-image: url('images/label.webp');
+            background-size: contain;
         }
 
-        .background-large-compressed {
-            background-image: url('images/BK78tVf3hQI.jpg');
+        .background-large {
+            background-image: url('images/Habermann (2).JPG');
         }
 
         .background-data-image {
-            background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='320'%20height='240'%3E%3Crect%20width='320'%20height='240'%20fill='%2300897b'/%3E%3C/svg%3E");
+            background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='320'%20height='240'%20viewBox='0%200%20320%20240'%3E%3Crect%20width='320'%20height='240'%20fill='%23ef5350'/%3E%3C/svg%3E");
         }
 
         .hidden-background {
@@ -54,303 +95,448 @@
 
 <body>
     <main>
-        <h1>Image Finder - Scanner Tests</h1>
+        <h1>Image Finder - Scanner Test Suite</h1>
+        <p>
+            Each physical file in <code>images/</code> is used at most once. The
+            only intentional exception is the explicit Coffee.jpg duplicate test.
+        </p>
 
-        <!-- Test 1: Normal image -->
-        <!-- <section>
-            <h2>1. Normal image</h2>
+        <section class="test-group" aria-labelledby="image-elements">
+            <h2 id="image-elements">A. Image Elements</h2>
 
-            <img
-                id="imgNormal"
-                src="images/Benz.JPG"
-                alt="Mercedes"
-            >
-        </section> -->
+            <section class="test">
+                <h3>1. Normal image element</h3>
+                <p class="requirements">
+                    <strong>Test:</strong> regular <code>&lt;img src&gt;</code>.
+                    <strong>Source:</strong> Image elements = ON.
+                    <strong>Type:</strong> JPG = ON.
+                    <strong>Expected:</strong> Benz.JPG appears once.
+                </p>
+                <img class="test-image" src="images/Benz.JPG" alt="Normal JPG image">
+            </section>
 
+            <section class="test">
+                <h3>2. Native lazy loading</h3>
+                <p class="requirements">
+                    <strong>Test:</strong> an image with <code>loading="lazy"</code>.
+                    <strong>Source:</strong> Image elements = ON.
+                    <strong>Type:</strong> JPG = ON.
+                    <strong>Expected:</strong> Habermann (3).JPG appears once.
+                </p>
+                <img
+                    class="test-image"
+                    src="images/Habermann (3).JPG"
+                    loading="lazy"
+                    alt="Native lazy JPG image"
+                >
+            </section>
 
-        <!-- Test 2: Native lazy loading -->
-        <section style="margin-top: 1200px;">
-            <h2>2. Native lazy loading</h2>
+            <section class="test">
+                <h3>3. data-src image</h3>
+                <p class="requirements">
+                    <strong>Test:</strong> an image URL supplied only through
+                    <code>data-src</code>.
+                    <strong>Source:</strong> Image elements = ON.
+                    <strong>Type:</strong> JPG = ON.
+                    <strong>Expected:</strong> DieWahrheit.jpg appears once.
+                </p>
+                <img class="test-image" data-src="images/DieWahrheit.jpg" alt="data-src JPG image">
+            </section>
 
-            <img
-                id="imgLazy"
-                src="images/Habermann (3).JPG"
-                loading="lazy"
-                alt="Native lazy image: Habermann 3"
-            >
+            <section class="test">
+                <h3>4. Normal srcset</h3>
+                <p class="requirements">
+                    <strong>Test:</strong> a standard width-based <code>srcset</code>.
+                    <strong>Source:</strong> Image elements = ON.
+                    <strong>Type:</strong> JPG = ON.
+                    <strong>Expected:</strong> the 1500w Wasbek candidate appears once.
+                </p>
+                <img
+                    class="test-image"
+                    srcset="images/Wasbek-small500.jpg 500w, images/Wasbek-large1500.jpg 1500w"
+                    sizes="(max-width: 800px) 500px, 1500px"
+                    alt="Normal JPG srcset image"
+                >
+            </section>
+
+            <section class="test">
+                <h3>5. data-srcset</h3>
+                <p class="requirements">
+                    <strong>Test:</strong> an image URL supplied through the custom
+                    <code>data-srcset</code> attribute.
+                    <strong>Source:</strong> Image elements = ON.
+                    <strong>Type:</strong> JPG = ON.
+                    <strong>Expected:</strong> Kinsky-original1952x1440.JPG appears once.
+                </p>
+                <img
+                    class="test-image"
+                    data-srcset="images/Kinsky-original1952x1440.JPG 1x"
+                    alt="data-srcset JPG image"
+                >
+            </section>
         </section>
 
+        <section class="test-group" aria-labelledby="image-types">
+            <h2 id="image-types">B. Image Types</h2>
 
-        <!-- Test 3: data-src with placeholder -->
-        <!-- <section>
-            <h2>3. data-src</h2>
+            <section class="test">
+                <h3>6. JPEG image</h3>
+                <p class="requirements">
+                    <strong>Test:</strong> a JPEG file with the <code>.jpeg</code> extension.
+                    <strong>Source:</strong> Image elements = ON.
+                    <strong>Type:</strong> JPG = ON.
+                    <strong>Expected:</strong> Pyramiden.jpeg appears once.
+                </p>
+                <img class="test-image" src="images/Pyramiden.jpeg" alt="JPEG image">
+            </section>
 
-            <img
-                id="imgDataSrc"
-                src="images/placeholder.gif"
-                data-src="images/DieWahrheit.jpg"
-                alt="Data-src image: Die Wahrheit"
-            >
-        </section> -->
+            <section class="test">
+                <h3>7. GIF image</h3>
+                <p class="requirements">
+                    <strong>Test:</strong> a GIF image element.
+                    <strong>Source:</strong> Image elements = ON.
+                    <strong>Type:</strong> GIF = ON.
+                    <strong>Expected:</strong> domazonwalk.gif appears once.
+                </p>
+                <img class="test-image" src="images/domazonwalk.gif" alt="GIF image">
+            </section>
 
+            <section class="test">
+                <h3>8. WEBP image</h3>
+                <p class="requirements">
+                    <strong>Test:</strong> a WEBP image element.
+                    <strong>Source:</strong> Image elements = ON.
+                    <strong>Type:</strong> WEBP = ON.
+                    <strong>Expected:</strong> woods.webp appears once.
+                </p>
+                <img class="test-image" src="images/woods.webp" alt="WEBP image">
+            </section>
 
-        <!-- Test 4: data-srcset -->
-        <section>
-            <h2>4. data-srcset (Kinsky)</h2>
+            <section class="test">
+                <h3>9. AVIF image</h3>
+                <p class="requirements">
+                    <strong>Test:</strong> an AVIF image element.
+                    <strong>Source:</strong> Image elements = ON.
+                    <strong>Type:</strong> AVIF = ON.
+                    <strong>Expected:</strong> Rockies.avif appears once.
+                </p>
+                <img class="test-image" src="images/Rockies.avif" alt="AVIF image">
+            </section>
 
-            <img
-                id="imgDataSrcset"
-                data-srcset="
-                    images/Kinsky-small500.JPG 500w,
-                    images/Kinsky-original1952x1440.JPEG 1500w
-                "
-                alt="Data-srcset image"
-            >
+            <section class="test">
+                <h3>10. SVG image</h3>
+                <p class="requirements">
+                    <strong>Test:</strong> an external SVG image element.
+                    <strong>Source:</strong> Image elements = ON.
+                    <strong>Type:</strong> SVG = ON.
+                    <strong>Expected:</strong> save.svg appears once.
+                </p>
+                <img class="test-image" src="images/save.svg" alt="SVG image">
+            </section>
         </section>
 
+        <section class="test-group" aria-labelledby="background-images">
+            <h2 id="background-images">C. CSS Background Images</h2>
 
-        <!-- Test 5: Normal srcset -->
-        <section>
-            <h2>5. Normal srcset (Wasbek)</h2>
+            <section class="test">
+                <h3>11. Inline background image</h3>
+                <p class="requirements">
+                    <strong>Test:</strong> an inline <code>background-image</code> style.
+                    <strong>Source:</strong> CSS background images = ON.
+                    <strong>Type:</strong> GIF = ON.
+                    <strong>Expected:</strong> ballspanking.gif appears once.
+                </p>
+                <div
+                    class="background-test"
+                    style="background-image: url('images/ballspanking.gif')"
+                    aria-label="Inline GIF background"
+                ></div>
+            </section>
 
-            <img
-                id="imgSrcset"
-                src="images/Wasbek-small500.jpg"
-                srcset="
-                    images/Wasbek-small500.jpg 500w,
-                    images/Wasbek-large1500.jpg 1500w
-                "
-                sizes="(max-width: 800px) 500px, 1500px"
-                alt="Srcset image"
-            >
+            <section class="test">
+                <h3>12. CSS class background image</h3>
+                <p class="requirements">
+                    <strong>Test:</strong> a background image declared by a CSS class.
+                    <strong>Source:</strong> CSS background images = ON.
+                    <strong>Type:</strong> JPG = ON.
+                    <strong>Expected:</strong> Gartenhaus.jpg appears once.
+                </p>
+                <div class="background-test background-class" aria-label="CSS class JPG background"></div>
+            </section>
+
+            <section class="test">
+                <h3>13. Multiple background layers</h3>
+                <p class="requirements">
+                    <strong>Test:</strong> two image URLs in one background declaration.
+                    <strong>Source:</strong> CSS background images = ON.
+                    <strong>Type:</strong> JPG = ON.
+                    <strong>Expected:</strong> both background JPGs appear once.
+                </p>
+                <div class="background-test background-layers" aria-label="Two JPG background layers"></div>
+            </section>
+
+            <section class="test">
+                <h3>14. Gradient with background image</h3>
+                <p class="requirements">
+                    <strong>Test:</strong> a gradient layer followed by an image URL.
+                    <strong>Source:</strong> CSS background images = ON.
+                    <strong>Type:</strong> JPG = ON.
+                    <strong>Expected:</strong> BK78tVf3hQI.jpg appears once; the gradient is not an image result.
+                </p>
+                <div class="background-test background-gradient" aria-label="Gradient over JPG background"></div>
+            </section>
+
+            <section class="test">
+                <h3>15. Small CSS background image</h3>
+                <p class="requirements">
+                    <strong>Test:</strong> a small WEBP used as a contained background.
+                    <strong>Source:</strong> CSS background images = ON.
+                    <strong>Type:</strong> WEBP = ON.
+                    <strong>Expected:</strong> label.webp appears once.
+                </p>
+                <div class="background-test background-small" aria-label="Small WEBP background"></div>
+            </section>
+
+            <section class="test">
+                <h3>16. Large CSS background image</h3>
+                <p class="requirements">
+                    <strong>Test:</strong> a large photographic CSS background.
+                    <strong>Source:</strong> CSS background images = ON.
+                    <strong>Type:</strong> JPG = ON.
+                    <strong>Expected:</strong> Habermann (2).JPG appears once.
+                </p>
+                <div class="background-test background-large" aria-label="Large JPG background"></div>
+            </section>
         </section>
 
-        <!-- <section>
-            <h2>6. .GIF</h2>
-            <img src="images/domazonwalk.gif" alt="GIF Sample">
-        </section> -->
+        <section class="test-group" aria-labelledby="linked-images">
+            <h2 id="linked-images">D. Linked Images</h2>
 
-        <section>
-            <h2>7. .WEBP</h2>
-            <img src="images/woods.webp" alt="WEBP Sample">
+            <section class="test">
+                <h3>17. Normal image link</h3>
+                <p class="requirements">
+                    <strong>Test:</strong> a direct link to an image file.
+                    <strong>Source:</strong> Linked images = ON.
+                    <strong>Type:</strong> JPG = ON.
+                    <strong>Expected:</strong> Granit poliert u diagonal - Wädenswil (5).JPG appears once.
+                </p>
+                <a href="images/Granit poliert u diagonal - Wädenswil (5).JPG">Open linked JPG</a>
+            </section>
+
+            <section class="test">
+                <h3>18. Image link with query string</h3>
+                <p class="requirements">
+                    <strong>Test:</strong> a linked image whose URL has a query string.
+                    <strong>Source:</strong> Linked images = ON.
+                    <strong>Type:</strong> JPG = ON.
+                    <strong>Expected:</strong> Loo.jpg appears once despite <code>?v=123</code>.
+                </p>
+                <a href="images/Loo.jpg?v=123">Open linked JPG with query string</a>
+            </section>
+
+            <section class="test">
+                <h3>19. Image link with uppercase extension</h3>
+                <p class="requirements">
+                    <strong>Test:</strong> a linked image whose extension is uppercase.
+                    <strong>Source:</strong> Linked images = ON.
+                    <strong>Type:</strong> JPG = ON.
+                    <strong>Expected:</strong> Podest Wiek.JPG appears once.
+                </p>
+                <a href="images/Podest Wiek.JPG">Open linked uppercase JPG</a>
+            </section>
+
+            <section class="test">
+                <h3>20. Thumbnail linked to full-size image</h3>
+                <p class="requirements">
+                    <strong>Test:</strong> an image-element thumbnail inside a link to another image.
+                    <strong>Source:</strong> Image elements and Linked images = ON.
+                    <strong>Type:</strong> JPG = ON.
+                    <strong>Expected:</strong> one thumbnail and one full-size candidate.
+                </p>
+                <a href="images/Kinsky-original1952x1440.JPEG">
+                    <img
+                        class="test-image"
+                        src="images/Kinsky-small500.JPG"
+                        alt="JPG thumbnail linked to full-size JPG"
+                    >
+                </a>
+            </section>
+
+            <section class="test">
+                <h3>21. Non-image link</h3>
+                <p class="requirements">
+                    <strong>Test:</strong> a regular HTML link as a negative case.
+                    <strong>Source:</strong> Linked images = ON.
+                    <strong>Type:</strong> any.
+                    <strong>Expected:</strong> this link is not found as an image.
+                </p>
+                <a href="index.html">Open this test page</a>
+            </section>
         </section>
 
+        <section class="test-group" aria-labelledby="data-images">
+            <h2 id="data-images">E. Data Images</h2>
 
-        <section>
-            <h2>8. .AVIF</h2>
-            <img src="images/Rockies.avif" alt="AVIF Sample">
+            <section class="test">
+                <h3>22. Data image via src</h3>
+                <p class="requirements">
+                    <strong>Test:</strong> an inline SVG Data URL in <code>src</code>.
+                    <strong>Source:</strong> Data images = ON.
+                    <strong>Type:</strong> SVG = ON.
+                    <strong>Expected preview:</strong> purple rectangle, 320 × 240 px.
+                </p>
+                <img
+                    class="test-image"
+                    src="data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='320'%20height='240'%20viewBox='0%200%20320%20240'%3E%3Crect%20width='320'%20height='240'%20fill='%237e57c2'/%3E%3C/svg%3E"
+                    alt="Purple 320 by 240 data SVG"
+                >
+            </section>
+
+            <section class="test">
+                <h3>23. Data image via srcset</h3>
+                <p class="requirements">
+                    <strong>Test:</strong> an inline SVG Data URL in <code>srcset</code>.
+                    <strong>Source:</strong> Data images = ON.
+                    <strong>Type:</strong> SVG = ON.
+                    <strong>Expected preview:</strong> turquoise rectangle, 320 × 240 px.
+                </p>
+                <img
+                    class="test-image"
+                    srcset="data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='320'%20height='240'%20viewBox='0%200%20320%20240'%3E%3Crect%20width='320'%20height='240'%20fill='%2300897b'/%3E%3C/svg%3E 1x"
+                    alt="Turquoise 320 by 240 data SVG via srcset"
+                >
+            </section>
+
+            <section class="test">
+                <h3>24. Data image via data-srcset</h3>
+                <p class="requirements">
+                    <strong>Test:</strong> an inline SVG Data URL in <code>data-srcset</code>.
+                    <strong>Source:</strong> Data images = ON.
+                    <strong>Type:</strong> SVG = ON.
+                    <strong>Expected preview:</strong> orange rectangle, 320 × 240 px.
+                </p>
+                <img
+                    class="test-image"
+                    data-srcset="data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='320'%20height='240'%20viewBox='0%200%20320%20240'%3E%3Crect%20width='320'%20height='240'%20fill='%23fb8c00'/%3E%3C/svg%3E 1x"
+                    alt="Orange 320 by 240 data SVG via data-srcset"
+                >
+            </section>
+
+            <section class="test">
+                <h3>25. Data SVG without Base64</h3>
+                <p class="requirements">
+                    <strong>Test:</strong> a percent-encoded, non-Base64 SVG Data URL.
+                    <strong>Source:</strong> Data images = ON.
+                    <strong>Type:</strong> SVG = ON.
+                    <strong>Expected preview:</strong> violet rectangle, 160 × 120 px.
+                </p>
+                <img
+                    class="test-image"
+                    src="data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='160'%20height='120'%20viewBox='0%200%20160%20120'%3E%3Crect%20width='160'%20height='120'%20fill='%238e24aa'/%3E%3C/svg%3E"
+                    alt="Violet 160 by 120 non-Base64 data SVG"
+                >
+            </section>
+
+            <section class="test">
+                <h3>26. Data image as CSS background</h3>
+                <p class="requirements">
+                    <strong>Test:</strong> an inline SVG Data URL used by CSS.
+                    <strong>Source:</strong> Data images = ON.
+                    <strong>Type:</strong> SVG = ON.
+                    <strong>Expected preview:</strong> red rectangle, 320 × 240 px.
+                </p>
+                <div class="background-test background-data-image" aria-label="Red 320 by 240 data SVG background"></div>
+            </section>
+
+            <section class="test">
+                <h3>27. Linked data image</h3>
+                <p class="requirements">
+                    <strong>Test:</strong> a link to an inline SVG Data URL.
+                    <strong>Source:</strong> Data images = ON.
+                    <strong>Type:</strong> SVG = ON.
+                    <strong>Expected preview:</strong> green rectangle, 160 × 90 px.
+                </p>
+                <a href="data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='160'%20height='90'%20viewBox='0%200%20160%2090'%3E%3Crect%20width='160'%20height='90'%20fill='%2343a047'/%3E%3C/svg%3E">
+                    Open linked green data SVG
+                </a>
+            </section>
+
+            <section class="test">
+                <h3>28. Small data image for size filtering</h3>
+                <p class="requirements">
+                    <strong>Test:</strong> a very small inline SVG Data URL.
+                    <strong>Source:</strong> Data images = ON.
+                    <strong>Type:</strong> SVG = ON.
+                    <strong>Expected preview:</strong> black square, 8 × 8 px; it is excluded when the minimum-size filter is larger than 8 px.
+                </p>
+                <img
+                    class="test-image"
+                    src="data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='8'%20height='8'%20viewBox='0%200%208%208'%3E%3Crect%20width='8'%20height='8'%20fill='%23000'/%3E%3C/svg%3E"
+                    alt="Black 8 by 8 data SVG"
+                >
+            </section>
         </section>
 
-        <section>
-            <h2>9. SVG</h2>
-            <img src="images/save.svg" alt="SVG Sample">
+        <section class="test-group" aria-labelledby="blob-images">
+            <h2 id="blob-images">F. Blob Images</h2>
+
+            <section class="test">
+                <h3>29. Synthetic Blob image</h3>
+                <p class="requirements">
+                    <strong>Test:</strong> an SVG generated at runtime as <code>Blob</code> and assigned through <code>URL.createObjectURL()</code>.
+                    <strong>Source:</strong> Blob images = ON.
+                    <strong>Type:</strong> SVG = ON.
+                    <strong>Expected preview:</strong> cyan rectangle with “BLOB”, 320 × 180 px.
+                    <strong>Expected metadata:</strong> <code>image/svg+xml</code>, 320 × 180 px.
+                </p>
+                <img id="imgBlobImage" class="test-image" alt="Synthetic cyan Blob image">
+            </section>
         </section>
 
-        <!-- <section>
-            <h2>10. Inline background image</h2>
-            <div
-                class="background-test"
-                style="background-image: url('images/ballspanking.gif')"
-            ></div>
-        </section> -->
+        <section class="test-group" aria-labelledby="special-cases">
+            <h2 id="special-cases">G. Filter and Special Cases</h2>
 
-        <section>
-            <h2>11. Background image via CSS class</h2>
-            <div class="background-test background-class"></div>
-        </section>
+            <section class="test">
+                <h3>30. Intentional duplicate</h3>
+                <p class="requirements">
+                    <strong>Test:</strong> exactly two image elements with the same normal JPG URL.
+                    <strong>Source:</strong> Image elements = ON.
+                    <strong>Type:</strong> JPG = ON.
+                    <strong>Expected:</strong> Coffee.jpg appears twice when Remove duplicates = OFF, and once when it is ON.
+                </p>
+                <img class="test-image" src="images/Coffee.jpg" alt="Duplicate JPG A">
+                <img class="test-image" src="images/Coffee.jpg" alt="Duplicate JPG B">
+            </section>
 
-        <section>
-            <h2>12. Two background image layers</h2>
-            <div class="background-test background-layers"></div>
-        </section>
-
-        <section>
-            <h2>13. Gradient with background image</h2>
-            <div class="background-test background-gradient"></div>
-        </section>
-
-        <section>
-            <h2>14. Duplicate background image</h2>
-            <div class="background-test background-duplicate"></div>
-            <div class="background-test background-duplicate"></div>
-        </section>
-
-        <section>
-            <h2>15. No background image</h2>
-            <div class="background-test"></div>
-        </section>
-
-        <section>
-            <h2>16. Small background image</h2>
-            <div class="background-test background-small"></div>
-        </section>
-
-        <section>
-            <h2>17. Large, compressed background image</h2>
-            <div class="background-test background-large-compressed"></div>
-        </section>
-
-        <section>
-            <h2>18. Linked JPG image</h2>
-            <a href="images/Loo.jpg">Linked JPG</a>
-        </section>
-
-        <section>
-            <h2>19. Linked WEBP image</h2>
-            <a href="images/woods.webp">Linked WEBP</a>
-        </section>
-
-        <section>
-            <h2>20. Linked AVIF with query</h2>
-            <a href="images/Rockies.avif?v=123">Linked AVIF with query</a>
-        </section>
-
-        <section>
-            <h2>21. Normal HTML link</h2>
-            <a href="index.html">Normal HTML link</a>
-        </section>
-
-        <section>
-            <h2>22. Duplicate linked image</h2>
-            <a href="images/Coffee.jpg">Duplicate A</a>
-            <a href="images/Coffee.jpg">Duplicate B</a>
-        </section>
-
-        <section>
-            <h2>23. Same image as element and link</h2>
-            <img src="images/label.webp" alt="Image element">
-            <a href="images/label.webp">Same image as link</a>
-        </section>
-
-        <section>
-            <h2>24. Thumbnail linked to fullsize image</h2>
-            <a href="images/Wasbek-large1500.jpg">
-                <img src="images/Wasbek-small500.jpg" alt="Thumbnail">
-            </a>
-        </section>
-
-        <section>
-            <h2>25. Linked image with uppercase extension</h2>
-            <a href="images/Podest Wiek.JPG">Uppercase JPG</a>
-        </section>
-
-        <section>
-            <h2>26. Data PNG as image element and srcset</h2>
-            <img
-                id="imgDataPng"
-                src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAUAAAADwCAMAAABG801ZAAAAA1BMVEXlOTVQZGYIAAAAYklEQVR42u3BMQEAAADCoPVPbQ0PoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4NcALP8AAZ8iU1IAAAAASUVORK5CYII="
-                alt="Data PNG"
-            >
-            <img
-                id="imgDataUrlSrcset"
-                srcset="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAUAAAADwCAMAAABG801ZAAAAA1BMVEUVZcA+eQETAAAAYklEQVR42u3BMQEAAADCoPVPbQ0PoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4NcALP8AAZ8iU1IAAAAASUVORK5CYII= 1x"
-                alt="Data PNG via srcset"
-            >
-        </section>
-
-        <section>
-            <h2>27. Data SVG without Base64</h2>
-            <img
-                id="imgDataSvg"
-                src="data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='320'%20height='240'%3E%3Crect%20width='320'%20height='240'%20fill='%237e57c2'/%3E%3C/svg%3E"
-                alt="Data SVG"
-            >
-        </section>
-
-        <section>
-            <h2>28. Data image as CSS background</h2>
-            <div class="background-test background-data-image"></div>
-        </section>
-
-        <section>
-            <h2>29. Data image as link</h2>
-            <a href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAUAAAADwCAMAAABG801ZAAAAA1BMVEVDoEeTGWaZAAAAYklEQVR42u3BMQEAAADCoPVPbQ0PoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4NcALP8AAZ8iU1IAAAAASUVORK5CYII=">
-                Linked data PNG
-            </a>
-        </section>
-
-        <section>
-            <h2>30. Identical data image twice</h2>
-            <img
-                src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAUAAAADwCAMAAABG801ZAAAAA1BMVEX7jACJ3XasAAAAYklEQVR42u3BMQEAAADCoPVPbQ0PoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4NcALP8AAZ8iU1IAAAAASUVORK5CYII="
-                alt="Duplicate data PNG A"
-            >
-            <img
-                src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAUAAAADwCAMAAABG801ZAAAAA1BMVEX7jACJ3XasAAAAYklEQVR42u3BMQEAAADCoPVPbQ0PoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4NcALP8AAZ8iU1IAAAAASUVORK5CYII="
-                alt="Duplicate data PNG B"
-            >
-        </section>
-
-        <section>
-            <h2>31. Data-image source setting</h2>
-            <p>With <code>sources.dataimages = false</code>, data images do not appear in the result list.</p>
-        </section>
-
-        <section>
-            <h2>32. Small data image for size filtering</h2>
-            <img
-                id="imgSmallDataGif"
-                src="data:image/gif;base64,R0lGODlhAQABAPAAAAAAAAAAACH5BAAAAAAALAAAAAABAAEAAAICRAEAOw=="
-                alt="1 × 1 data GIF"
-            >
-        </section>
-
-        <section>
-            <h2>33. Ignore hidden images</h2>
-            <p>
-                With <code>ignoreHiddenImages = false</code>, test1.jpg through
-                test5.jpg are found. With <code>ignoreHiddenImages = true</code>,
-                test1.jpg through test4.jpg are ignored; test5.jpg remains found.
-            </p>
-
-            <img src="images/test1.jpg" style="display: none" alt="Hidden by display">
-            <img src="images/test2.jpg" style="visibility: hidden" alt="Hidden by visibility">
-            <div style="display: none">
-                <img src="images/test3.jpg" alt="Hidden parent">
-            </div>
-            <div class="hidden-background"></div>
-            <img src="images/test5.jpg" style="opacity: 0" alt="Transparent but included">
-        </section>
-
-        <section>
-            <h2>34. Data image via data-srcset</h2>
-            <p>
-                The single Data-URL candidate must be found even though the browser
-                does not resolve the custom <code>data-srcset</code> attribute.
-            </p>
-            <img
-                id="imgDataDataSrcset"
-                data-srcset="data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='320'%20height='240'%3E%3Crect%20width='320'%20height='240'%20fill='%23ff6347'/%3E%3C/svg%3E 1x"
-                alt="Data SVG via data-srcset"
-            >
-        </section>
-
-        <section>
-            <h2>35. Runtime Blob image source</h2>
-            <p>
-                With <code>sources.blobimages = true</code>, the two visible Blob
-                images below must be found as one result when duplicate removal is
-                enabled. With <code>sources.blobimages = false</code>, neither Blob
-                image may appear in the result list. Both images should visibly show
-                the same Mercedes photograph.
-            </p>
-            <img id="imgBlobImage" alt="Runtime Blob image">
-            <img id="imgBlobImageDuplicate" alt="Duplicate runtime Blob image">
+            <section class="test">
+                <h3>31. Hidden images and opacity counterexample</h3>
+                <p class="requirements">
+                    <strong>Test:</strong> hidden image elements, a hidden CSS background, and an opacity-only image.
+                    <strong>Source:</strong> Image elements and CSS background images = ON.
+                    <strong>Type:</strong> JPG = ON.
+                    <strong>Expected:</strong> with Ignore hidden images = OFF, all five candidates appear. With it ON, the display-none, visibility-hidden, hidden-parent, and hidden-background candidates do not appear; the opacity:0 candidate still appears.
+                </p>
+                <img src="images/test1.jpg" style="display: none" alt="Hidden by display none">
+                <img src="images/test2.jpg" style="visibility: hidden" alt="Hidden by visibility">
+                <div style="display: none">
+                    <img src="images/test3.jpg" alt="Hidden by parent">
+                </div>
+                <div class="background-test hidden-background" aria-label="Hidden JPG background"></div>
+                <img src="images/test5.jpg" style="opacity: 0" alt="Opacity zero but not hidden">
+            </section>
         </section>
     </main>
 
     <script>
-        (async () => {
-            const response = await fetch('images/Benz.JPG');
-            if (!response.ok) throw new Error('Cannot create the Blob test image');
+        const blobSvg = [
+            '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180" viewBox="0 0 320 180">',
+            '<rect width="320" height="180" fill="#00bcd4"/>',
+            '<text x="160" y="100" fill="#00343b" font-family="sans-serif" font-size="42" font-weight="700" text-anchor="middle">BLOB</text>',
+            '</svg>'
+        ].join('');
+        const blob = new Blob([blobSvg], {type: 'image/svg+xml'});
 
-            const imageData = await response.arrayBuffer();
-            const blob = new Blob([imageData], {type: 'image/jpeg'});
-            const blobUrl = URL.createObjectURL(blob);
-
-            document.getElementById('imgBlobImage').src = blobUrl;
-            document.getElementById('imgBlobImageDuplicate').src = blobUrl;
-        })().catch(error => console.error('Blob image test setup failed:', error));
+        document.getElementById('imgBlobImage').src = URL.createObjectURL(blob);
     </script>
 </body>
 </html>
