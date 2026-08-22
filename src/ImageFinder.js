@@ -64,6 +64,7 @@ export class ImageFinder {
         this.images = new Map();
         this.progressbar = new Progressbar(this.DOM.divProgressbar);
         this.isSavingAll = false;
+        this.currentBlobPreview = null;
 
         console.dir(this)
     }
@@ -122,13 +123,44 @@ export class ImageFinder {
         const image = imageId ? this.images.get(imageId) ?? null : null;
         if (!image) return;
 
-        this.DOM.imgPreview.src = item.dataset.url;
+        if (image.source === 'blobimages') {
+            const cachedPreview = this.currentBlobPreview?.imageId === imageId
+                ? this.currentBlobPreview.dataUrl
+                : null;
+
+            if (cachedPreview) {
+                this.DOM.imgPreview.src = cachedPreview;
+            } else {
+                this.currentBlobPreview = null;
+                this.DOM.imgPreview.removeAttribute('src');
+
+                const response = await window.chrome.runtime.sendMessage({
+                    action: 'resolveBlobImage',
+                    tabId: image.tabId,
+                    blobUrl: image.url
+                });
+
+                if (this.selectedItem?.dataset.imageId !== imageId) return;
+                if (response?.success !== true || typeof response.dataUrl !== 'string') {
+                    throw new Error(response?.error || 'Cannot resolve Blob image for preview');
+                }
+
+                this.currentBlobPreview = {imageId, dataUrl: response.dataUrl};
+                this.DOM.imgPreview.src = response.dataUrl;
+            }
+        } else {
+            this.currentBlobPreview = null;
+            this.DOM.imgPreview.src = item.dataset.url;
+        }
+
         this.DOM.h2_Preview.style.display = 'none';
         this.DOM.btnDelete.disabled = false;
         const downloadOff = this.downloadButtonState && item.classList.contains('saved');
         this.DOM.btnDownload.disabled = false || downloadOff;
 
-        if (image.fileSize === null && image.source !== 'dataimages') {
+        if (image.fileSize === null &&
+            image.source !== 'dataimages' &&
+            image.source !== 'blobimages') {
             const fileInfo = await this.getFileInfo(item.dataset.url);
 
             if (this.selectedItem?.dataset.imageId !== imageId) return;
@@ -207,6 +239,7 @@ export class ImageFinder {
 
     clear() {
         this.images.clear();
+        this.currentBlobPreview = null;
         this.DOM.lstImages.innerHTML = '';
         this.DOM.imgPreview.removeAttribute('src');
         this.DOM.h2_Preview.style.display = 'block';
@@ -265,25 +298,36 @@ export class ImageFinder {
                         : null;
                     if (image.source === 'dataimages' && !dataImage) continue;
 
-                    const url = dataImage ? null : new URL(image.url);
+                    const blobImage = image.source === 'blobimages';
+                    const blobImageType = blobImage && typeof image.mimeType === 'string'
+                        ? this.getImageType(image.mimeType)
+                        : null;
+
+                    const url = dataImage || blobImage ? null : new URL(image.url);
                     const candidateFileName = dataImage
                         ? `data-image.${dataImage.imageType}`
-                        : decodeURIComponent(url.pathname.split('/').pop());
+                        : blobImage
+                            ? 'blob-image'
+                            : decodeURIComponent(url.pathname.split('/').pop());
                     if (this.isExcluded(candidateFileName)) continue;
 
                     // ❌
                     // let fileInfo = null,
                     //     imageType = fileName.includes('.') ? fileName.split('.').pop().toLowerCase() : null;
-                    let fileInfo = dataImage ? {size: dataImage.size} : null,
-                        imageType = dataImage?.imageType ??
-                            (candidateFileName.includes('.')
+                    let fileInfo = dataImage
+                            ? {size: dataImage.size}
+                            : blobImage
+                                ? {size: image.fileSize ?? null, type: image.mimeType ?? null}
+                                : null,
+                        imageType = dataImage?.imageType ?? blobImageType ??
+                            (!blobImage && candidateFileName.includes('.')
                                 ? candidateFileName.split('.').pop().toLowerCase()
                                 : null);
                     if (imageType === 'jpeg') imageType = 'jpg';
 
                     // Keine oder unbekannte Extension → MIME-Type ermitteln
                     if (!imageType || !filter.extensions.has(imageType)) {
-                        if (dataImage) continue;
+                        if (dataImage || blobImage) continue;
 
                         fileInfo = await this.getFileInfo(image.url);
                         if (!fileInfo?.type) continue;
@@ -319,7 +363,9 @@ export class ImageFinder {
                     const imageId = crypto.randomUUID();
                     const fileName = dataImage
                         ? `data-image-${imageId}.${imageType}`
-                        : candidateFileName;
+                        : blobImage
+                            ? `blob-image-${imageId}.${imageType}`
+                            : candidateFileName;
                     if (filters.removeDuplicates) seenUrls.add(image.url);
 
                     this.images.set(imageId, {
@@ -331,7 +377,8 @@ export class ImageFinder {
                         height,
                         fileSize: fileInfo?.size ?? null,
                         estimatedSize,
-                        source: image.source
+                        source: image.source,
+                        tabId: tab.id
                     });
                 } catch (error) {
                     console.warn('Cannot process image:', image.url, error);
@@ -387,6 +434,7 @@ export class ImageFinder {
                 imageId,
                 url: image.url,
                 source: image.source,
+                tabId: image.tabId,
                 options: this.getDownloadOptions(image.fileName)
             }));
             const response = await window.chrome.runtime.sendMessage({
@@ -427,6 +475,7 @@ export class ImageFinder {
             action: 'downloadImage',
             url: image.url,
             source: image.source,
+            tabId: image.tabId,
             options: this.getDownloadOptions(image.fileName)
         });
 
@@ -464,6 +513,10 @@ export class ImageFinder {
 
     deleteImage(item) {
         if (!item) return;
+
+        if (this.currentBlobPreview?.imageId === item.dataset.imageId) {
+            this.currentBlobPreview = null;
+        }
 
         this.images.delete(item.dataset.imageId);
         item.remove();

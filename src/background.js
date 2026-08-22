@@ -33,6 +33,55 @@ async function dataUrlToBlob(dataUrl) {
     return response.blob();
 }
 
+async function readPageBlobAsDataUrl(blobUrl) {
+    if (typeof blobUrl !== 'string' || !/^blob:/i.test(blobUrl)) {
+        throw new Error('The page Blob URL is invalid');
+    }
+
+    const response = await fetch(blobUrl);
+    if (!response.ok) throw new Error('Cannot read the page Blob URL');
+
+    const blob = await response.blob();
+
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+
+        reader.onload = () => {
+            if (typeof reader.result === 'string') {
+                resolve(reader.result);
+            } else {
+                reject(new Error('Cannot convert the page Blob to a Data URL'));
+            }
+        };
+        reader.onerror = () => reject(new Error('Cannot read the page Blob'));
+        reader.readAsDataURL(blob);
+    });
+}
+
+async function resolvePageBlob(tabId, blobUrl) {
+    if (!Number.isInteger(tabId)) {
+        throw new Error('The Blob image source tab is missing');
+    }
+
+    let results;
+    try {
+        results = await chrome.scripting.executeScript({
+            target: {tabId},
+            func: readPageBlobAsDataUrl,
+            args: [blobUrl]
+        });
+    } catch (error) {
+        throw new Error(`Cannot resolve Blob image in its source tab: ${getErrorMessage(error)}`);
+    }
+
+    const dataUrl = results[0]?.result;
+    if (typeof dataUrl !== 'string' || !/^data:image\//i.test(dataUrl)) {
+        throw new Error('The source tab did not return a valid image Data URL');
+    }
+
+    return dataUrl;
+}
+
 function releaseBackgroundObjectUrl(downloadId) {
     const objectUrl = backgroundObjectUrlsByDownloadId.get(downloadId);
     if (!objectUrl) return;
@@ -201,6 +250,7 @@ function getDownloadRequest(image) {
     return {
         url: image.url.trim(),
         source: image.source,
+        tabId: image.tabId,
         options: image.options && typeof image.options === 'object'
             ? image.options
             : {}
@@ -208,10 +258,15 @@ function getDownloadRequest(image) {
 }
 
 async function startImageDownload(image) {
-    const {url, source, options} = getDownloadRequest(image);
+    const {url, source, tabId, options} = getDownloadRequest(image);
 
     if (source === 'dataimages') {
         return downloadDataImage(url, options);
+    }
+
+    if (source === 'blobimages') {
+        const dataUrl = await resolvePageBlob(tabId, url);
+        return downloadDataImage(dataUrl, options);
     }
 
     return chrome.downloads.download({url, ...options});
@@ -255,6 +310,15 @@ chrome.downloads.onChanged.addListener((delta) => {
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.target === OFFSCREEN_TARGET) {
         return undefined;
+    }
+
+    if (message?.action === 'resolveBlobImage') {
+        Promise.resolve(resolvePageBlob(message.tabId, message.blobUrl)).then(
+            (dataUrl) => sendResponse({success: true, dataUrl}),
+            (error) => sendResponse({success: false, error: getErrorMessage(error)})
+        );
+
+        return true;
     }
 
     if (message?.action === 'downloadImage') {

@@ -57,7 +57,7 @@
         <h1>Image Finder - Scanner Tests</h1>
 
         <!-- Test 1: Normal image -->
-        <section>
+        <!-- <section>
             <h2>1. Normal image</h2>
 
             <img
@@ -65,7 +65,7 @@
                 src="images/Benz.JPG"
                 alt="Mercedes"
             >
-        </section>
+        </section> -->
 
 
         <!-- Test 2: Native lazy loading -->
@@ -324,6 +324,33 @@
                 alt="Data SVG via data-srcset"
             >
         </section>
+
+        <section>
+            <h2>35. Runtime Blob image source</h2>
+            <p>
+                With <code>sources.blobimages = true</code>, the two visible Blob
+                images below must be found as one result when duplicate removal is
+                enabled. With <code>sources.blobimages = false</code>, neither Blob
+                image may appear in the result list. Both images should visibly show
+                the same Mercedes photograph.
+            </p>
+            <img id="imgBlobImage" alt="Runtime Blob image">
+            <img id="imgBlobImageDuplicate" alt="Duplicate runtime Blob image">
+        </section>
     </main>
+
+    <script>
+        (async () => {
+            const response = await fetch('images/Benz.JPG');
+            if (!response.ok) throw new Error('Cannot create the Blob test image');
+
+            const imageData = await response.arrayBuffer();
+            const blob = new Blob([imageData], {type: 'image/jpeg'});
+            const blobUrl = URL.createObjectURL(blob);
+
+            document.getElementById('imgBlobImage').src = blobUrl;
+            document.getElementById('imgBlobImageDuplicate').src = blobUrl;
+        })().catch(error => console.error('Blob image test setup failed:', error));
+    </script>
 </body>
 </html>

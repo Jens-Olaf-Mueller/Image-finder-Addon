@@ -1,4 +1,4 @@
-export function scanImages(ignoreHiddenImages = false) {
+export async function scanImages(ignoreHiddenImages = false) {
     const getURL = (value) => {
         if (typeof value !== 'string' || !value.trim()) return null;
 
@@ -67,6 +67,60 @@ export function scanImages(ignoreHiddenImages = false) {
     const isDataImageURL = (url) =>
         typeof url === 'string' && /^data:image\//i.test(url);
 
+    const isBlobImageURL = (url) =>
+        typeof url === 'string' && /^blob:/i.test(url);
+
+    const blobMetadataByUrl = new Map();
+    const blobDimensionsByUrl = new Map();
+
+    const getBlobMetadata = (url) => {
+        if (blobMetadataByUrl.has(url)) return blobMetadataByUrl.get(url);
+
+        const metadataPromise = (async () => {
+            try {
+                const response = await fetch(url);
+                if (!response.ok) return null;
+
+                const mimeType = response.headers.get('content-type') || null;
+                const fileSize = Number(response.headers.get('content-length')) || null;
+
+                await response.body?.cancel();
+                return mimeType || fileSize !== null ? {mimeType, fileSize} : null;
+            } catch {
+                return null;
+            }
+        })();
+
+        blobMetadataByUrl.set(url, metadataPromise);
+        return metadataPromise;
+    };
+
+    const getBlobDimensions = (url) => {
+        if (blobDimensionsByUrl.has(url)) return blobDimensionsByUrl.get(url);
+
+        const dimensionsPromise = new Promise((resolve) => {
+            const image = new Image();
+
+            image.onload = () => {
+                resolve(
+                    image.naturalWidth > 0 && image.naturalHeight > 0
+                        ? {width: image.naturalWidth, height: image.naturalHeight}
+                        : null
+                );
+            };
+            image.onerror = () => resolve(null);
+
+            try {
+                image.src = url;
+            } catch {
+                resolve(null);
+            }
+        });
+
+        blobDimensionsByUrl.set(url, dimensionsPromise);
+        return dimensionsPromise;
+    };
+
     const isHidden = (element, computedStyle = null) => {
         if (!ignoreHiddenImages) return false;
 
@@ -90,7 +144,7 @@ export function scanImages(ignoreHiddenImages = false) {
     };
 
     const isLinkedImageURL = (url) => {
-        if (isDataImageURL(url)) return true;
+        if (isDataImageURL(url) || isBlobImageURL(url)) return true;
 
         try {
             const {protocol, pathname} = new URL(url);
@@ -112,7 +166,11 @@ export function scanImages(ignoreHiddenImages = false) {
             url,
             width,
             height,
-            source: isDataImageURL(url) ? 'dataimages' : source
+            source: isDataImageURL(url)
+                ? 'dataimages'
+                : isBlobImageURL(url)
+                    ? 'blobimages'
+                    : source
         });
     };
 
@@ -163,6 +221,22 @@ export function scanImages(ignoreHiddenImages = false) {
 
         addCandidate(url, 0, 0, 'linkedimages');
     }
+
+    await Promise.all(images.map(async (image) => {
+        if (image.source !== 'blobimages') return;
+
+        const [metadata, dimensions] = await Promise.all([
+            getBlobMetadata(image.url),
+            image.width > 0 && image.height > 0
+                ? null
+                : getBlobDimensions(image.url)
+        ]);
+        if (metadata) Object.assign(image, metadata);
+        if (dimensions) {
+            image.width = dimensions.width;
+            image.height = dimensions.height;
+        }
+    }));
 
     return images;
 }
