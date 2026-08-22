@@ -18,6 +18,10 @@
                         <input type="checkbox" id="chkScanOnStart" name="scanOnStart" checked>
                          Scan current page on addon start
                     </label>
+                    <label class="control" title="Scans the list of found images in the background for better versions">
+                        <input type="checkbox" id="chkBackGroundScan" name="backGroundScan">
+                         Background scan
+                    </label>
                 </fieldset>
 
                 <fieldset name="downloads"><legend>Downloads</legend>
@@ -127,6 +131,10 @@
                     <label id="lblIgnoreHiddenImages" class="control">
                         <input type="checkbox" id="chkIgnoreHiddenImages" name="ignoreHiddenImages"/>
                         Ignore hidden images
+                    </label>
+                    <label id="lblIgnoreBlurredImages" class="control">
+                        <input type="checkbox" id="chkIgnoreBlurredImages" name="ignoreBlurredImages"/>
+                        Ignore blurred images
                     </label>
                     <div class="control ctrl__vertical">
                         <label>

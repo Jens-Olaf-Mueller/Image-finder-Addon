@@ -196,7 +196,8 @@ export class Settings {
 
 export const DEFAULT_SETTINGS = {
     common: {
-        scanOnStart: true
+        scanOnStart: true,
+        backGroundScan: false
     },
     downloads: {
         downloadFolder: 'prompt',
@@ -229,6 +230,7 @@ export const DEFAULT_SETTINGS = {
     filters: {
         removeDuplicates: true,
         ignoreHiddenImages: false,
+        ignoreBlurredImages: false,
         hasExcludeList: false,
         excludeList: ''
     }

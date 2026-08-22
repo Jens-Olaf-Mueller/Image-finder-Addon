@@ -1,4 +1,4 @@
-import { Settings } from './Settings.js';
+import { Settings } from './Settings_class.js';
 import Progressbar from './Progressbar.js';
 import { scanImages } from './content.js';
 
@@ -175,6 +175,10 @@ export class ImageFinder {
                 await this.scan();
                 break;
 
+            case 'scan':
+                // TODO re-scan the selected image for a better version
+                break;
+
             case 'download':
                 await this.saveImage(item);
                 break;
@@ -192,7 +196,7 @@ export class ImageFinder {
                 break;
 
             case 'restart':
-                // TODO restart AddOn
+                window.chrome.runtime.reload();
                 break;
 
             default:
@@ -379,23 +383,39 @@ export class ImageFinder {
         this.DOM.btnSaveAll.disabled = true;
 
         try {
-            for (const [imageId, image] of this.images) {
-                try {
-                    await this.downloadImage(image);
+            const images = Array.from(this.images, ([imageId, image]) => ({
+                imageId,
+                url: image.url,
+                source: image.source,
+                options: this.getDownloadOptions(image.fileName)
+            }));
+            const response = await window.chrome.runtime.sendMessage({
+                action: 'downloadImageList',
+                images
+            });
 
-                    const item = this.listItems.find(
-                        li => li.dataset.imageId === imageId
-                    );
-                    if (!item) continue;
+            if (response?.success !== true) {
+                throw new Error(response?.error || 'Background download list failed');
+            }
 
-                    item.classList.add('saved');
-                    if (this.downloadButtonState && this.selectedItem === item) {
-                        this.DOM.btnDownload.disabled = true;
-                    }
-                } catch (error) {
-                    console.warn('Cannot download image:', image.url, error);
+            for (const result of response.results ?? []) {
+                if (result.success !== true) {
+                    console.warn('Cannot download image:', result.url, result.error);
+                    continue;
+                }
+
+                const item = this.listItems.find(
+                    li => li.dataset.imageId === result.imageId
+                );
+                if (!item) continue;
+
+                item.classList.add('saved');
+                if (this.downloadButtonState && this.selectedItem === item) {
+                    this.DOM.btnDownload.disabled = true;
                 }
             }
+        } catch (error) {
+            console.warn('Cannot download image list:', error);
         } finally {
             this.isSavingAll = false;
             this.DOM.btnSaveAll.disabled = (this.images.size === 0);
@@ -403,72 +423,18 @@ export class ImageFinder {
     }
 
     async downloadImage(image) {
-        let objectUrl = null;
-        let downloadId = null;
-        let onChanged = null;
+        const response = await window.chrome.runtime.sendMessage({
+            action: 'downloadImage',
+            url: image.url,
+            source: image.source,
+            options: this.getDownloadOptions(image.fileName)
+        });
 
-        const releaseObjectUrl = () => {
-            if (!objectUrl) return;
-
-            if (onChanged) window.chrome.downloads.onChanged.removeListener(onChanged);
-            URL.revokeObjectURL(objectUrl);
-            objectUrl = null;
-        };
-
-        try {
-            if (image.source !== 'dataimages') {
-                const response = await window.chrome.runtime.sendMessage({
-                    action: 'downloadImage',
-                    url: image.url,
-                    options: this.getDownloadOptions(image.fileName)
-                });
-
-                if (response?.success !== true) {
-                    throw new Error(response?.error || 'Background download failed');
-                }
-
-                return response.downloadId;
-            }
-
-            let downloadUrl = image.url;
-
-            if (image.source === 'dataimages') {
-                const response = await fetch(image.url);
-                if (!response.ok) throw new Error('Cannot create download Blob');
-
-                const blob = await response.blob();
-                objectUrl = URL.createObjectURL(blob);
-                downloadUrl = objectUrl;
-
-                onChanged = (delta) => {
-                    const state = delta.state?.current;
-                    if (delta.id !== downloadId || !['complete', 'interrupted'].includes(state)) return;
-
-                    releaseObjectUrl();
-                };
-                window.chrome.downloads.onChanged.addListener(onChanged);
-            }
-
-            downloadId = await window.chrome.downloads.download({
-                url: downloadUrl,
-                ...this.getDownloadOptions(image.fileName)
-            });
-
-            if (objectUrl) {
-                try {
-                    const [download] = await window.chrome.downloads.search({id: downloadId});
-                    if (['complete', 'interrupted'].includes(download?.state)) releaseObjectUrl();
-                } catch (error) {
-                    console.warn('Cannot read download status:', downloadId, error);
-                }
-            }
-
-            return downloadId;
-
-        } catch (error) {
-            releaseObjectUrl();
-            throw error;
+        if (response?.success !== true) {
+            throw new Error(response?.error || 'Background download failed');
         }
+
+        return response.downloadId;
     }
 
     getDownloadOptions(fileName) {

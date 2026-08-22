@@ -1,4 +1,4 @@
-import { Settings } from './Settings.js';
+import { Settings } from './Settings_class.js';
 
 const settings = new Settings('frmSettings'),
       sldMinimumFileSize = document.getElementById('sldMinimumFileSize'),
@@ -22,29 +22,6 @@ async function runSettings() {
     setEventListeners();
     updateUI();
 }
-
-// async function setDefaultDownloadFolder() {
-//     const defaultFolder = settings.get('downloads', 'defaultFolder', '');
-
-//     if (defaultFolder) return;
-
-//     try {
-//         const likelyFolder = await settings.getMostLikelyDownloadFolder();
-
-//         if (!likelyFolder) return;
-
-//         settings.data.downloads.defaultFolder = likelyFolder;
-
-//         if (!settings.get('downloads', 'userFolder', '')) {
-//             inpUserFolder.value = likelyFolder;
-//         }
-
-//         await settings.save();
-
-//     } catch (error) {
-//         console.warn('Could not determine download folder:', error);
-//     }
-// }
 
 async function setDefaultDownloadFolder() {
     let defaultFolder = settings.get('downloads', 'defaultFolder', '');

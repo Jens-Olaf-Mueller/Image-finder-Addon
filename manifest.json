@@ -14,7 +14,8 @@
         "storage",
         "activeTab",
         "scripting",
-        "downloads"
+        "downloads",
+        "offscreen"
     ],
     "background": {
         "scripts": [
