@@ -54,6 +54,7 @@ export class ImageFinder {
         this.progressbar = new Progressbar(this.DOM.divProgressbar);
         this.isSavingAll = false;
         this.currentBlobPreview = null;
+        this.#updateLED();
 
         console.dir(this)
     }
@@ -351,6 +352,7 @@ export class ImageFinder {
         this.DOM.btnSaveAll.disabled = true;
         this.DOM.btnDelete.disabled = true;
         this.DOM.btnClear.disabled = true;
+        this.#updateLED();
     }
 
     async scan() {
@@ -384,6 +386,7 @@ export class ImageFinder {
             this.progressbar.hide();
             this.DOM.btnSaveAll.disabled = (this.images.size === 0);
             this.DOM.btnClear.disabled = (this.images.size === 0);
+            this.#updateLED();
 
         } catch (error) {
             console.warn('Cannot scan this page:', this.scanner.currentTab?.url);
@@ -521,5 +524,10 @@ export class ImageFinder {
         this.DOM.btnDelete.disabled = true;
         this.DOM.btnSaveAll.disabled = (this.images.size === 0);
         this.DOM.btnClear.disabled = (this.images.size === 0);
+        this.#updateLED();
+    }
+
+    #updateLED() {
+        this.DOM.divLED.textContent = this.images.size;
     }
 }

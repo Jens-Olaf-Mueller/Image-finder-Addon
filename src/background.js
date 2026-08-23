@@ -23,7 +23,7 @@ function canCreateObjectUrlHere() {
 }
 
 function canUseOffscreenDocument() {
-    return typeof window.crome.offscreen?.createDocument === 'function';
+    return typeof chrome.offscreen?.createDocument === 'function';
 }
 
 async function dataUrlToBlob(dataUrl) {
@@ -87,7 +87,7 @@ async function resolvePageBlob(tabId, blobUrl) {
 
     let results;
     try {
-        results = await window.crome.scripting.executeScript({
+        results = await chrome.scripting.executeScript({
             target: {tabId},
             func: readPageBlobAsDataUrl,
             args: [blobUrl]
@@ -113,10 +113,10 @@ function releaseBackgroundObjectUrl(downloadId) {
 }
 
 async function isOffscreenDocumentOpen() {
-    const offscreenUrl = window.crome.runtime.getURL(OFFSCREEN_DOCUMENT_PATH);
+    const offscreenUrl = chrome.runtime.getURL(OFFSCREEN_DOCUMENT_PATH);
 
-    if (typeof window.crome.runtime?.getContexts === 'function') {
-        const contexts = await window.crome.runtime.getContexts({
+    if (typeof chrome.runtime?.getContexts === 'function') {
+        const contexts = await chrome.runtime.getContexts({
             contextTypes: ['OFFSCREEN_DOCUMENT'],
             documentUrls: [offscreenUrl]
         });
@@ -140,7 +140,7 @@ async function ensureOffscreenDocument() {
     if (await isOffscreenDocumentOpen()) return;
     if (creatingOffscreenDocument) return creatingOffscreenDocument;
 
-    creatingOffscreenDocument = window.crome.offscreen.createDocument({
+    creatingOffscreenDocument = chrome.offscreen.createDocument({
         url: OFFSCREEN_DOCUMENT_PATH,
         reasons: ['BLOBS'],
         justification: 'Create durable Blob URLs for data-image downloads while the extension popup may close.'
@@ -154,7 +154,7 @@ async function ensureOffscreenDocument() {
 }
 
 async function sendOffscreenMessage(action, payload = {}) {
-    const response = await window.crome.runtime.sendMessage({
+    const response = await chrome.runtime.sendMessage({
         target: OFFSCREEN_TARGET,
         action,
         ...payload
@@ -189,7 +189,7 @@ async function releaseOffscreenObjectUrlForDownload(downloadId) {
 
 async function releaseFinishedDownloadUrl(downloadId) {
     try {
-        const [download] = await window.crome.downloads.search({id: downloadId});
+        const [download] = await chrome.downloads.search({id: downloadId});
         if (!isTerminalDownloadState(download?.state)) return false;
 
         releaseBackgroundObjectUrl(downloadId);
@@ -205,7 +205,7 @@ async function downloadBlobWithBackgroundObjectUrl(blob, options) {
     const objectUrl = URL.createObjectURL(blob);
 
     try {
-        const downloadId = await window.crome.downloads.download({
+        const downloadId = await chrome.downloads.download({
             url: objectUrl,
             ...options
         });
@@ -230,7 +230,7 @@ async function downloadBlobWithOffscreenDocument(blob, options) {
 
     let downloadId;
     try {
-        downloadId = await window.crome.downloads.download({
+        downloadId = await chrome.downloads.download({
             url: objectUrl,
             ...options
         });
@@ -295,7 +295,7 @@ async function startImageDownload(image) {
         return downloadDataImage(dataUrl, options);
     }
 
-    return window.crome.downloads.download({url, ...options});
+    return chrome.downloads.download({url, ...options});
 }
 
 async function resolveImageBytes(image) {
@@ -418,7 +418,7 @@ async function downloadImageList(images, zipOptions = null) {
     return results;
 }
 
-window.crome.downloads.onChanged.addListener((delta) => {
+chrome.downloads.onChanged.addListener((delta) => {
     const state = delta.state?.current;
     if (!isTerminalDownloadState(state)) return;
 
@@ -426,7 +426,7 @@ window.crome.downloads.onChanged.addListener((delta) => {
     void releaseOffscreenObjectUrlForDownload(delta.id);
 });
 
-window.crome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.target === OFFSCREEN_TARGET) {
         return undefined;
     }

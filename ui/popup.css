@@ -65,7 +65,7 @@ div.preview {
     justify-content: center;
     padding: 10px;
     overflow: hidden;
-    background: var(--preview-bg);
+    background-color: var(--preview-bg);
 }
 
 img.preview {
@@ -95,7 +95,7 @@ img.preview:not([src]) {
 
 .toolbar__top {
     display: grid;
-    grid-template-columns: 275px auto;
+    grid-template-columns: 260px auto;
     height: 1.66rem;
     padding: 0 8px;
 }
@@ -160,13 +160,21 @@ img.preview:not([src]) {
     background: transparent;
 }
 
+.toolbar-button:hover {
+    border-color: #a0a0a0;
+    background: #cccccc;
+}
+
+.toolbar-button:active {
+    background: #bbbbbb;
+}
+
 .toolbar-button img ,
 .theme label img {
     width: 1.25rem;
     height: 1.25rem;
     cursor: pointer;
 }
-
 
 .tbr-btn__small {
     min-height: var(--icon-size-small);
@@ -182,6 +190,23 @@ img.preview:not([src]) {
 
 .tbr-btn__small:last-child {
     margin-right: auto;
+}
+
+.toolbar-button.scanner-led {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-style: inset !important;
+    border-color: #a0a0a0;
+    border-radius: 0;
+    background-color: #cccccc;
+    color: #777;
+    font-size: x-small;
+    width: 2.75rem;
+}
+
+.toolbar-button.scanner-led.active {
+    background-color: limegreen;
 }
 
 .theme input {
@@ -200,14 +225,14 @@ img.preview:not([src]) {
     display: block;
 }
 
-.toolbar-button:hover {
+/* .toolbar-button:hover {
     border-color: #a0a0a0;
     background: #cccccc;
 }
 
 .toolbar-button:active {
     background: #bbbbbb;
-}
+} */
 
 #btnSettings[value=true],
 .sorted {
