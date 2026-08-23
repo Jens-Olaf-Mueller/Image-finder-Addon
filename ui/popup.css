@@ -209,7 +209,8 @@ img.preview:not([src]) {
     background: #bbbbbb;
 }
 
-#btnSettings[value=true] {
+#btnSettings[value=true],
+.sorted {
     border-style: inset !important;
     border: 2px solid silver;
     background: #bbbbbb;

@@ -43,9 +43,9 @@ export class ImageFinder {
         };
     }
 
-    get statusBar() { return this.DOM.spnStatusBar?.textContent; }
+    get statusBar() { return this.DOM.spnStatusBar?.innerHTML; }
     set statusBar(text) {
-        if (typeof text === 'string') this.DOM.spnStatusBar.textContent = text;
+        if (typeof text === 'string') this.DOM.spnStatusBar.innerHTML = text;
     }
 
     get info() { return this.DOM.h2_Preview.textContent; }
@@ -54,6 +54,10 @@ export class ImageFinder {
     }
 
     DOM = {};
+    sortState = {
+        criterion: null,
+        direction: 'asc'
+    };
 
     constructor() {
         // register all DOM elements with ID
@@ -78,8 +82,86 @@ export class ImageFinder {
 
     setEventListeners() {
         this.DOM.divToolbar.addEventListener('click', e => this.onButtonClick(e));
+        this.DOM.divToolbarTopLeft.addEventListener('click', e => this.onSortButtonClick(e));
         this.DOM.lstImages.addEventListener('click', e => this.onListItemClick(e));
         this.DOM.lstImages.addEventListener('keydown', e => this.onKeyPress(e));
+    }
+
+    onSortButtonClick(e) {
+        const button = e.target.closest('button');
+        if (!button || !this.DOM.divToolbarTopLeft.contains(button)) return;
+
+        this.DOM.divToolbarTopLeft.querySelectorAll('button').forEach(sortButton => {
+            sortButton.classList.remove('sorted');
+        });
+        button.classList.add('sorted');
+
+        const criterion = button.dataset.sort;
+        this.sort(criterion);
+    }
+
+    sort(criterion) {
+        if (!['filename', 'type', 'size', 'dimensions'].includes(criterion)) return;
+
+        const direction = this.sortState.criterion === criterion &&
+            this.sortState.direction === 'asc'
+            ? 'desc'
+            : 'asc';
+        const directionFactor = direction === 'asc' ? 1 : -1;
+        const selectedItem = this.selectedItem;
+        const compareFileNames = (first, second) => String(first.fileName ?? '')
+            .localeCompare(String(second.fileName ?? ''), undefined, {sensitivity: 'base'});
+        const getKnownSize = image => {
+            const size = image.fileSize ?? image.estimatedSize;
+            return Number.isFinite(size) ? size : null;
+        };
+
+        const items = this.listItems;
+        items.sort((firstItem, secondItem) => {
+            const first = this.images.get(firstItem.dataset.imageId);
+            const second = this.images.get(secondItem.dataset.imageId);
+            if (!first || !second) return 0;
+
+            let comparison = 0;
+
+            switch (criterion) {
+                case 'filename':
+                    comparison = compareFileNames(first, second);
+                    break;
+
+                case 'type':
+                    comparison = String(first.imageType ?? '')
+                        .localeCompare(String(second.imageType ?? ''), undefined, {sensitivity: 'base'}) ||
+                        compareFileNames(first, second);
+                    break;
+
+                case 'size': {
+                    const firstSize = getKnownSize(first);
+                    const secondSize = getKnownSize(second);
+                    const firstSizeUnknown = firstSize === null;
+                    const secondSizeUnknown = secondSize === null;
+
+                    if (firstSizeUnknown || secondSizeUnknown) {
+                        if (firstSizeUnknown && secondSizeUnknown) return 0;
+                        return firstSizeUnknown ? 1 : -1;
+                    }
+
+                    comparison = firstSize - secondSize;
+                    break;
+                }
+
+                case 'dimensions':
+                    comparison = (first.width * first.height) - (second.width * second.height) ||
+                        compareFileNames(first, second);
+                    break;
+            }
+
+            return comparison * directionFactor;
+        });
+
+        this.DOM.lstImages.append(...items);
+        this.sortState = {criterion, direction};
+        selectedItem?.scrollIntoView({block: 'nearest'});
     }
 
     async onKeyPress(e) {
@@ -174,7 +256,11 @@ export class ImageFinder {
         const size = image.fileSize >= 1048576
             ? `${parseInt(image.fileSize / 1024 / 1024)} MB`
             : image.fileSize ? `${parseInt(image.fileSize / 1024)} KB` : '??? KB';
-        this.statusBar = `${image.imageType}: ${image.width} × ${image.height} px [${size}]`;
+        const icon = IMAGE_TYPES[image.imageType].icon;
+        const dims = `${image.width} × ${image.height} px`;
+        this.statusBar = `
+            <img id="imgTypeInfoIcon" src="${icon}" alt="${image.imageType}" style="height: 1.25rem; transform: translateY(4px)" title="${image.imageType.toUpperCase()} image, Resolution: ${dims}, Size: ${size}">
+               ${dims} [${size}]`;
         this.DOM.spnStatusBar.style.display = 'block';
     }
 
@@ -280,6 +366,10 @@ export class ImageFinder {
         });
 
         this.clear();
+        this.sortState = {criterion: null, direction: 'asc'};
+        this.DOM.divToolbarTopLeft.querySelectorAll('button').forEach(sortButton => {
+            sortButton.classList.remove('sorted');
+        });
         this.DOM.spnStatusBar.style.display = 'none';
         this.info = 'Scanning...';
 
@@ -288,7 +378,10 @@ export class ImageFinder {
             const result = await window.chrome.scripting.executeScript({
                 target: {tabId: tab.id},
                 func: scanImages,
-                args: [filters.ignoreHiddenImages === true]
+                args: [
+                    filters.ignoreHiddenImages === true,
+                    filters.scanBlurredImages !== false
+                ]
             });
             const filesFound = result[0]?.result ?? [];
             const filter = this.filter;
@@ -319,9 +412,6 @@ export class ImageFinder {
                             : decodeURIComponent(url.pathname.split('/').pop());
                     if (this.isExcluded(candidateFileName)) continue;
 
-                    // ❌
-                    // let fileInfo = null,
-                    //     imageType = fileName.includes('.') ? fileName.split('.').pop().toLowerCase() : null;
                     let fileInfo = dataImage
                             ? {size: dataImage.size}
                             : blobImage
@@ -438,17 +528,27 @@ export class ImageFinder {
         this.DOM.btnSaveAll.disabled = true;
 
         try {
+            const zipFileList = (this.settings.get('downloads') ?? {}).zipFileList === true;
             const images = Array.from(this.images, ([imageId, image]) => ({
                 imageId,
                 url: image.url,
                 source: image.source,
                 tabId: image.tabId,
+                ...(zipFileList ? {fileName: image.fileName} : {}),
                 options: this.getDownloadOptions(image.fileName)
             }));
-            const response = await window.chrome.runtime.sendMessage({
+            const request = {
                 action: 'downloadImageList',
                 images
-            });
+            };
+            if (zipFileList) {
+                request.zip = {
+                    enabled: true,
+                    options: this.getDownloadOptions('image-finder.zip')
+                };
+            }
+
+            const response = await window.chrome.runtime.sendMessage(request);
 
             if (response?.success !== true) {
                 throw new Error(response?.error || 'Background download list failed');
@@ -655,16 +755,54 @@ export class ImageFinder {
         return size + UTF8_ENCODER.encode(payload.slice(rawStart)).byteLength;
     }
 
+    // getImageType(mime) {
+    //     const key = mime.split(';')[0].trim().toLowerCase();
+    //     const types = {
+    //         'image/jpeg': 'jpg',
+    //         'image/png': 'png',
+    //         'image/bmp': 'bmp',
+    //         'image/x-ms-bmp': 'bmp',
+    //         'image/webp': 'webp',
+    //         'image/gif': 'gif',
+    //         'image/svg+xml': 'svg',
+    //         'image/avif': 'avif'
+    //     };
+    //     return types[key] ?? null;
+    // }
+
     getImageType(mime) {
         const key = mime.split(';')[0].trim().toLowerCase();
-        const types = {
-            'image/jpeg': 'jpg',
-            'image/png': 'png',
-            'image/webp': 'webp',
-            'image/gif': 'gif',
-            'image/svg+xml': 'svg',
-            'image/avif': 'avif'
-        };
-        return types[key] ?? null;
+        return Object.entries(IMAGE_TYPES).find(([_, type]) => type.mime.includes(key))?.[0] ?? null;
     }
 }
+
+const IMAGE_TYPES = Object.freeze({
+    jpg: {
+        mime: ['image/jpeg'],
+        icon: '../assets/icons/jpeg.png'
+    },
+    png: {
+        mime: ['image/png'],
+        icon: '../assets/icons/png.png'
+    },
+    bmp: {
+        mime: ['image/bmp', 'image/x-ms-bmp'],
+        icon: '../assets/icons/bmp.png'
+    },
+    webp: {
+        mime: ['image/webp'],
+        icon: '../assets/icons/webp.png'
+    },
+    gif: {
+        mime: ['image/gif'],
+        icon: '../assets/icons/gif.png'
+    },
+    svg: {
+        mime: ['image/svg+xml'],
+        icon: '../assets/icons/svg.png'
+    },
+    avif: {
+        mime: ['image/avif'],
+        icon: '../assets/icons/avif.png'
+    }
+});

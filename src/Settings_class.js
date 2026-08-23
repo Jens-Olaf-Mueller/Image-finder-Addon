@@ -41,12 +41,28 @@ export class Settings {
     async load() {
         const stored = await window.chrome.storage.local.get(this.storageKey);
         const savedData = stored[this.storageKey] ?? {};
+        const savedFilters = savedData.filters;
+        const hasLegacyBlurSetting = savedFilters &&
+            Object.prototype.hasOwnProperty.call(savedFilters, 'ignoreBlurredImages');
+        let migratedData = savedData;
 
-        this.data = this.mergeData(DEFAULT_SETTINGS, savedData);
+        if (hasLegacyBlurSetting) {
+            const {ignoreBlurredImages, ...filters} = savedFilters;
+
+            if (!Object.prototype.hasOwnProperty.call(filters, 'scanBlurredImages')) {
+                filters.scanBlurredImages = ignoreBlurredImages !== true;
+            }
+
+            migratedData = {...savedData, filters};
+        }
+
+        this.data = this.mergeData(DEFAULT_SETTINGS, migratedData);
 
         if (this.form) {
             this.setFormData(this.data);
+        }
 
+        if (this.form || hasLegacyBlurSetting) {
             // Saves new/default controls automatically if the markup was extended.
             await window.chrome.storage.local.set({
                 [this.storageKey]: this.data
@@ -222,13 +238,14 @@ export const DEFAULT_SETTINGS = {
     },
     filesizes: {
         ignoresizes: true,
-        minwidth: 200,
-        minheight: 200,
-        minimumfilesize: 128
+        minwidth: 16,
+        minheight: 16,
+        minimumfilesize: 16
     },
     imagetypes: {
         jpg: true,
         png: true,
+        bmp: true,
         webp: true,
         gif: true,
         svg: false,
@@ -244,8 +261,8 @@ export const DEFAULT_SETTINGS = {
     filters: {
         removeDuplicates: true,
         ignoreHiddenImages: false,
-        ignoreBlurredImages: false,
+        scanBlurredImages: true,
         hasExcludeList: false,
-        excludeList: ''
+        excludeList: 'logo, avatar'
     }
 };

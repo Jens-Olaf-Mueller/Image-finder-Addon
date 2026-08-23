@@ -90,6 +90,52 @@
             display: none;
             background-image: url('images/test4.jpg');
         }
+
+        .backdrop-test {
+            position: relative;
+            width: 320px;
+            height: 240px;
+            margin-top: .75rem;
+            overflow: hidden;
+            border: 1px dashed #777;
+        }
+
+        .backdrop-test .test-image {
+            width: 100%;
+            height: 100%;
+            max-width: none;
+            max-height: none;
+            margin: 0;
+            object-fit: cover;
+        }
+
+        .backdrop-overlay {
+            position: absolute;
+            inset: 0;
+            background: rgb(255 255 255 / 20%);
+            backdrop-filter: blur(8px);
+        }
+
+        .backdrop-overlay--webkit {
+            -webkit-backdrop-filter: blur(8px);
+            backdrop-filter: blur(8px);
+        }
+
+        .backdrop-overlay--zero {
+            -webkit-backdrop-filter: blur(0px);
+            backdrop-filter: blur(0px);
+        }
+
+        .backdrop-overlay--brightness {
+            -webkit-backdrop-filter: brightness(.8);
+            backdrop-filter: brightness(.8);
+        }
+
+        .backdrop-overlay--corner {
+            inset: 0 auto auto 0;
+            width: 80px;
+            height: 80px;
+        }
     </style>
 </head>
 
@@ -232,6 +278,17 @@
                     <strong>Expected:</strong> save.svg appears once.
                 </p>
                 <img class="test-image" src="images/save.svg" alt="SVG image">
+            </section>
+
+            <section class="test">
+                <h3>10a. BMP image</h3>
+                <p class="requirements">
+                    <strong>Test:</strong> a BMP image element.
+                    <strong>Source:</strong> Image elements = ON.
+                    <strong>Type:</strong> BMP = ON.
+                    <strong>Expected:</strong> Arschkarte.BMP appears once with a BMP preview.
+                </p>
+                <img class="test-image" src="images/Arschkarte.BMP" alt="BMP image">
             </section>
         </section>
 
@@ -523,6 +580,229 @@
                 </div>
                 <div class="background-test hidden-background" aria-label="Hidden JPG background"></div>
                 <img src="images/test5.jpg" style="opacity: 0" alt="Opacity zero but not hidden">
+            </section>
+        </section>
+
+        <section class="test-group" aria-labelledby="blur-filtering">
+            <h2 id="blur-filtering">H. CSS Blur Filtering</h2>
+            <p class="requirements">
+                <strong>Setup:</strong> Image elements and Data images = ON; JPG, PNG and SVG = ON.
+                <strong>Expected:</strong> with Scan blurred images = ON, A through E appear.
+                With it OFF, only D and E appear.
+            </p>
+
+            <section class="test">
+                <h3>32. Direct blur on image</h3>
+                <p class="requirements">
+                    <strong>Test:</strong> <code>filter: blur(5px)</code> on the image itself.
+                    <strong>Expected with Scan blurred images = OFF:</strong> excluded.
+                </p>
+                <img
+                    class="test-image"
+                    style="filter: blur(5px)"
+                    src="images/Schokofrau_blurred.jpeg"
+                    alt="Blurred JPEG with direct blur"
+                >
+            </section>
+
+            <section class="test">
+                <h3>33. Blur on direct parent</h3>
+                <p class="requirements">
+                    <strong>Test:</strong> <code>filter: blur(5px)</code> on the direct parent.
+                    <strong>Expected with Scan blurred images = OFF:</strong> excluded.
+                </p>
+                <div style="filter: blur(5px)">
+                    <img
+                        class="test-image"
+                        src="images/Torte_blurred.jpg"
+                        alt="Blurred JPEG with parent blur"
+                    >
+                </div>
+            </section>
+
+            <section class="test">
+                <h3>34. Blur on nested ancestor</h3>
+                <p class="requirements">
+                    <strong>Test:</strong> <code>filter: blur(5px)</code> on a deeply nested ancestor.
+                    <strong>Expected with Scan blurred images = OFF:</strong> excluded.
+                </p>
+                <div style="filter: blur(5px)">
+                    <div>
+                        <div>
+                            <img
+                                class="test-image"
+                                src="images/smiley_blurred.png"
+                                alt="Blurred PNG with nested ancestor blur"
+                            >
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <section class="test">
+                <h3>35. Zero blur counterexample</h3>
+                <p class="requirements">
+                    <strong>Test:</strong> <code>filter: blur(0px)</code>.
+                    <strong>Expected with Scan blurred images = OFF:</strong> still included.
+                </p>
+                <img
+                    class="test-image"
+                    style="filter: blur(0px)"
+                    src="data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='320'%20height='240'%20viewBox='0%200%20320%20240'%3E%3Crect%20width='320'%20height='240'%20fill='%23fb8c00'/%3E%3Ctext%20x='160'%20y='135'%20fill='white'%20font-family='sans-serif'%20font-size='56'%20text-anchor='middle'%3ED%3C/text%3E%3C/svg%3E"
+                    alt="Orange data SVG with zero blur"
+                >
+            </section>
+
+            <section class="test">
+                <h3>36. Brightness-only counterexample</h3>
+                <p class="requirements">
+                    <strong>Test:</strong> <code>filter: brightness(.8)</code> without blur.
+                    <strong>Expected with Scan blurred images = OFF:</strong> still included.
+                </p>
+                <img
+                    class="test-image"
+                    style="filter: brightness(.8)"
+                    src="data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='320'%20height='240'%20viewBox='0%200%20320%20240'%3E%3Crect%20width='320'%20height='240'%20fill='%23e53935'/%3E%3Ctext%20x='160'%20y='135'%20fill='white'%20font-family='sans-serif'%20font-size='56'%20text-anchor='middle'%3EE%3C/text%3E%3C/svg%3E"
+                    alt="Red data SVG with brightness filter only"
+                >
+            </section>
+
+            <section class="test">
+                <h3>37. Same URL in blurred and unblurred contexts</h3>
+                <p class="requirements">
+                    <strong>Test:</strong> the same Data SVG URL first occurs under
+                    <code>filter: blur(5px)</code>, then without blur.
+                    <strong>Expected with Scan blurred images = OFF:</strong> the first occurrence
+                    is excluded and the unblurred occurrence remains, including when Remove duplicates = ON.
+                </p>
+                <div style="filter: blur(5px)">
+                    <img
+                        class="test-image"
+                        src="data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='320'%20height='240'%20viewBox='0%200%20320%20240'%3E%3Crect%20width='320'%20height='240'%20fill='%2300848a'/%3E%3Ctext%20x='160'%20y='135'%20fill='white'%20font-family='sans-serif'%20font-size='56'%20text-anchor='middle'%3EF%3C/text%3E%3C/svg%3E"
+                        alt="Blurred occurrence of data SVG F"
+                    >
+                </div>
+                <img
+                    class="test-image"
+                    src="data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='320'%20height='240'%20viewBox='0%200%20320%20240'%3E%3Crect%20width='320'%20height='240'%20fill='%2300848a'/%3E%3Ctext%20x='160'%20y='135'%20fill='white'%20font-family='sans-serif'%20font-size='56'%20text-anchor='middle'%3EF%3C/text%3E%3C/svg%3E"
+                    alt="Unblurred occurrence of data SVG F"
+                >
+            </section>
+        </section>
+
+        <section class="test-group" aria-labelledby="backdrop-blur-filtering">
+            <h2 id="backdrop-blur-filtering">I. CSS Backdrop Blur Filtering</h2>
+            <p class="requirements">
+                <strong>Setup:</strong> Image elements = ON; JPG and PNG = ON.
+                <strong>Expected with Scan blurred images = ON:</strong> all backdrops allow their images.
+                <strong>Expected with it OFF:</strong> only images below a non-zero backdrop blur at their
+                center are skipped; zero blur, brightness-only and corner-only overlays remain allowed.
+            </p>
+
+            <section class="test">
+                <h3>38. Standard backdrop blur over image center</h3>
+                <p class="requirements">
+                    <strong>Test:</strong> <code>Aegeri.jpeg</code> beneath
+                    <code>backdrop-filter: blur(8px)</code>.
+                    <strong>Expected with Scan blurred images = OFF:</strong> excluded.
+                </p>
+                <div class="backdrop-test">
+                    <img
+                        class="test-image"
+                        src="images/Aegeri.jpeg"
+                        alt="Aegeri.jpeg below standard backdrop blur"
+                    >
+                    <div class="backdrop-overlay" aria-hidden="true"></div>
+                </div>
+            </section>
+
+            <section class="test">
+                <h3>39. WebKit backdrop blur alias</h3>
+                <p class="requirements">
+                    <strong>Test:</strong> <code>Black sheep.jpg</code> beneath
+                    <code>-webkit-backdrop-filter: blur(8px)</code> (with the standard property as fallback).
+                    <strong>Expected with Scan blurred images = OFF:</strong> excluded.
+                </p>
+                <div class="backdrop-test">
+                    <img
+                        class="test-image"
+                        src="images/Black sheep.jpg"
+                        alt="Black sheep.jpg below WebKit backdrop blur"
+                    >
+                    <div class="backdrop-overlay backdrop-overlay--webkit" aria-hidden="true"></div>
+                </div>
+            </section>
+
+            <section class="test">
+                <h3>40. Zero backdrop blur counterexample</h3>
+                <p class="requirements">
+                    <strong>Test:</strong> <code>Chess.png</code> beneath
+                    <code>backdrop-filter: blur(0px)</code>.
+                    <strong>Expected with Scan blurred images = OFF:</strong> still included.
+                </p>
+                <div class="backdrop-test">
+                    <img
+                        class="test-image"
+                        src="images/Chess.png"
+                        alt="Chess.png below zero backdrop blur"
+                    >
+                    <div class="backdrop-overlay backdrop-overlay--zero" aria-hidden="true"></div>
+                </div>
+            </section>
+
+            <section class="test">
+                <h3>41. Brightness-only backdrop counterexample</h3>
+                <p class="requirements">
+                    <strong>Test:</strong> <code>FOE-Stadt.png</code> beneath
+                    <code>backdrop-filter: brightness(.8)</code>.
+                    <strong>Expected with Scan blurred images = OFF:</strong> still included.
+                </p>
+                <div class="backdrop-test">
+                    <img
+                        class="test-image"
+                        src="images/FOE-Stadt.png"
+                        alt="FOE-Stadt.png below brightness backdrop"
+                    >
+                    <div class="backdrop-overlay backdrop-overlay--brightness" aria-hidden="true"></div>
+                </div>
+            </section>
+
+            <section class="test">
+                <h3>42. Corner-only backdrop blur</h3>
+                <p class="requirements">
+                    <strong>Test:</strong> <code>Latex.jpg</code> with a blur overlay over its top-left corner only.
+                    <strong>Expected with Scan blurred images = OFF:</strong> still included because its center is clear.
+                </p>
+                <div class="backdrop-test">
+                    <img
+                        class="test-image"
+                        src="images/Latex.jpg"
+                        alt="Latex.jpg below corner-only backdrop blur"
+                    >
+                    <div class="backdrop-overlay backdrop-overlay--corner" aria-hidden="true"></div>
+                </div>
+            </section>
+
+            <section class="test">
+                <h3>43. Same URL below blurred and clear backdrops</h3>
+                <p class="requirements">
+                    <strong>Test:</strong> the same synthetic Data SVG first occurs below a backdrop blur and then clear.
+                    <strong>Expected with Scan blurred images = OFF and Remove duplicates = ON:</strong>
+                    the first occurrence is excluded and the clear one remains.
+                </p>
+                <div class="backdrop-test">
+                    <img
+                        class="test-image"
+                        src="data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='320'%20height='240'%20viewBox='0%200%20320%20240'%3E%3Crect%20width='320'%20height='240'%20fill='%23d81b60'/%3E%3Ctext%20x='160'%20y='135'%20fill='white'%20font-family='sans-serif'%20font-size='52'%20text-anchor='middle'%3EF%3C/text%3E%3C/svg%3E"
+                        alt="Pink data SVG below backdrop blur"
+                    >
+                    <div class="backdrop-overlay" aria-hidden="true"></div>
+                </div>
+                <img
+                    class="test-image"
+                    src="data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='320'%20height='240'%20viewBox='0%200%20320%20240'%3E%3Crect%20width='320'%20height='240'%20fill='%23d81b60'/%3E%3Ctext%20x='160'%20y='135'%20fill='white'%20font-family='sans-serif'%20font-size='52'%20text-anchor='middle'%3EF%3C/text%3E%3C/svg%3E"
+                    alt="Pink data SVG without backdrop blur"
+                >
             </section>
         </section>
     </main>

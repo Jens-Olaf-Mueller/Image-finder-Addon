@@ -1,4 +1,4 @@
-export async function scanImages(ignoreHiddenImages = false) {
+export async function scanImages(ignoreHiddenImages = false, scanBlurredImages = true) {
     const getURL = (value) => {
         if (typeof value !== 'string' || !value.trim()) return null;
 
@@ -143,6 +143,141 @@ export async function scanImages(ignoreHiddenImages = false) {
         return false;
     };
 
+    const hasNonZeroBlur = (filter) => {
+        if (typeof filter !== 'string' || filter === 'none') return false;
+
+        const blurPattern = /\bblur\(\s*([+-]?(?:\d+\.?\d*|\.\d+))(?:[a-z%]+)?\s*\)/gi;
+        let match;
+
+        while ((match = blurPattern.exec(filter))) {
+            if (Number(match[1]) !== 0) return true;
+        }
+
+        return false;
+    };
+
+    const isBlurred = (element, computedStyle = null) => {
+        try {
+            for (let current = element; current; current = current.parentElement) {
+                const style = current === element && computedStyle
+                    ? computedStyle
+                    : getComputedStyle(current);
+
+                if (hasNonZeroBlur(style.filter)) return true;
+            }
+        } catch {
+            return false;
+        }
+
+        return false;
+    };
+
+    const hasBackdropBlur = (style) => [
+        style.backdropFilter,
+        style.webkitBackdropFilter,
+        style.WebkitBackdropFilter,
+        style.getPropertyValue?.('backdrop-filter'),
+        style.getPropertyValue?.('-webkit-backdrop-filter')
+    ].some(hasNonZeroBlur);
+
+    const isVisibleBackdropElement = (element, style) => {
+        if (style.display === 'none' ||
+            style.visibility === 'hidden' ||
+            style.visibility === 'collapse' ||
+            Number.parseFloat(style.opacity) === 0) {
+            return false;
+        }
+
+        const rect = element.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+    };
+
+    const elements = Array.from(document.querySelectorAll('*'));
+    const backdropBlurElements = new Set();
+    const initialScrollPosition = {x: window.scrollX, y: window.scrollY};
+    let scrollPositionChanged = false;
+
+    if (!scanBlurredImages) {
+        for (const element of elements) {
+            try {
+                const style = getComputedStyle(element);
+                if (hasBackdropBlur(style) && isVisibleBackdropElement(element, style)) {
+                    backdropBlurElements.add(element);
+                }
+            } catch {
+                continue;
+            }
+        }
+    }
+
+    const rectanglesOverlap = (first, second) => {
+        const firstRight = first.right ?? first.left + first.width;
+        const firstBottom = first.bottom ?? first.top + first.height;
+        const secondRight = second.right ?? second.left + second.width;
+        const secondBottom = second.bottom ?? second.top + second.height;
+
+        return first.left < secondRight && firstRight > second.left &&
+            first.top < secondBottom && firstBottom > second.top;
+    };
+
+    const hasPotentialBackdropOverlap = (rect) => {
+        for (const backdropElement of backdropBlurElements) {
+            try {
+                if (rectanglesOverlap(rect, backdropElement.getBoundingClientRect())) {
+                    return true;
+                }
+            } catch {
+                continue;
+            }
+        }
+
+        return false;
+    };
+
+    const getSourceStackIndex = (stackedElements, element) => stackedElements.findIndex(
+        (stackedElement) => stackedElement === element ||
+            stackedElement.contains?.(element) ||
+            element.contains?.(stackedElement)
+    );
+
+    const isBackdropBlurred = (element) => {
+        if (backdropBlurElements.size === 0 ||
+            typeof element?.getBoundingClientRect !== 'function' ||
+            typeof document.elementsFromPoint !== 'function') {
+            return false;
+        }
+
+        try {
+            let rect = element.getBoundingClientRect();
+            if (rect.width <= 0 || rect.height <= 0) return false;
+
+            const getStackedElementsAtCenter = () => document.elementsFromPoint(
+                rect.left + rect.width / 2,
+                rect.top + rect.height / 2
+            );
+            let stackedElements = getStackedElementsAtCenter();
+            let sourceIndex = getSourceStackIndex(stackedElements, element);
+
+            if (sourceIndex === -1 && hasPotentialBackdropOverlap(rect)) {
+                window.scrollBy(
+                    rect.left + rect.width / 2 - window.innerWidth / 2,
+                    rect.top + rect.height / 2 - window.innerHeight / 2
+                );
+                scrollPositionChanged = true;
+
+                rect = element.getBoundingClientRect();
+                stackedElements = getStackedElementsAtCenter();
+                sourceIndex = getSourceStackIndex(stackedElements, element);
+            }
+
+            return sourceIndex > 0 && stackedElements
+                .slice(0, sourceIndex)
+                .some((stackedElement) => backdropBlurElements.has(stackedElement));
+        } catch {
+            return false;
+        }
+    };
+
     const isLinkedImageURL = (url) => {
         if (isDataImageURL(url) || isBlobImageURL(url)) return true;
 
@@ -151,7 +286,7 @@ export async function scanImages(ignoreHiddenImages = false) {
 
             if (!['http:', 'https:'].includes(protocol)) return false;
 
-            return /\.(?:jpe?g|png|gif|webp|svg|avif)$/i.test(pathname);
+            return /\.(?:jpe?g|png|bmp|gif|webp|svg|avif)$/i.test(pathname);
         } catch {
             return false;
         }
@@ -159,8 +294,13 @@ export async function scanImages(ignoreHiddenImages = false) {
 
     const images = [];
 
-    const addCandidate = (url, width, height, source) => {
+    const addCandidate = (url, width, height, source, element) => {
         if (!url) return;
+
+        if (!scanBlurredImages && (
+            isBlurred(element) ||
+            (source !== 'linkedimages' && isBackdropBlurred(element))
+        )) return;
 
         images.push({
             url,
@@ -194,18 +334,19 @@ export async function scanImages(ignoreHiddenImages = false) {
             url,
             dimensionsKnown ? img.naturalWidth : 0,
             dimensionsKnown ? img.naturalHeight : 0,
-            'imageelements'
+            'imageelements',
+            img
         );
     }
 
-    for (const element of document.querySelectorAll('*')) {
+    for (const element of elements) {
         try {
             const style = getComputedStyle(element);
             if (isHidden(element, style)) continue;
 
             const backgroundImage = style.backgroundImage;
             for (const url of getBackgroundURLs(backgroundImage)) {
-                addCandidate(url, 0, 0, 'backgroundimages');
+                addCandidate(url, 0, 0, 'backgroundimages', element);
             }
         } catch {
             continue;
@@ -219,7 +360,11 @@ export async function scanImages(ignoreHiddenImages = false) {
 
         if (!isLinkedImageURL(url)) continue;
 
-        addCandidate(url, 0, 0, 'linkedimages');
+        addCandidate(url, 0, 0, 'linkedimages', link);
+    }
+
+    if (scrollPositionChanged) {
+        window.scrollTo(initialScrollPosition.x, initialScrollPosition.y);
     }
 
     await Promise.all(images.map(async (image) => {

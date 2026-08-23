@@ -19,6 +19,7 @@
     ],
     "background": {
         "scripts": [
+            "vendor/jszip.min.js",
             "src/background.js"
         ],
         "service_worker": "src/background.js"

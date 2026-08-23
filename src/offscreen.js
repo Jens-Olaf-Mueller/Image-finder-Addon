@@ -8,8 +8,8 @@ function getErrorMessage(error) {
 }
 
 async function dataUrlToBlob(dataUrl) {
-    if (typeof dataUrl !== 'string' || !/^data:image\//i.test(dataUrl)) {
-        throw new Error('The data-image download URL is invalid');
+    if (typeof dataUrl !== 'string' || !/^data:/i.test(dataUrl)) {
+        throw new Error('The download data URL is invalid');
     }
 
     const response = await fetch(dataUrl);

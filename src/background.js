@@ -2,6 +2,10 @@ const OFFSCREEN_DOCUMENT_PATH = 'offscreen.html';
 const OFFSCREEN_TARGET = 'image-finder-offscreen';
 const TERMINAL_DOWNLOAD_STATES = new Set(['complete', 'interrupted']);
 
+if (typeof importScripts === 'function' && typeof JSZip === 'undefined') {
+    importScripts('../vendor/jszip.min.js');
+}
+
 const backgroundObjectUrlsByDownloadId = new Map();
 const offscreenTokensByDownloadId = new Map();
 let creatingOffscreenDocument = null;
@@ -31,6 +35,24 @@ async function dataUrlToBlob(dataUrl) {
     if (!response.ok) throw new Error('Cannot convert data image to Blob');
 
     return response.blob();
+}
+
+function arrayBufferToBase64(buffer) {
+    const bytes = new Uint8Array(buffer);
+    const chunkSize = 0x8000;
+    let binary = '';
+
+    for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+        binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
+    }
+
+    return btoa(binary);
+}
+
+async function blobToDataUrl(blob) {
+    const mimeType = blob.type || 'application/octet-stream';
+    const base64 = arrayBufferToBase64(await blob.arrayBuffer());
+    return `data:${mimeType};base64,${base64}`;
 }
 
 async function readPageBlobAsDataUrl(blobUrl) {
@@ -179,8 +201,7 @@ async function releaseFinishedDownloadUrl(downloadId) {
     }
 }
 
-async function downloadDataImageWithBackgroundObjectUrl(dataUrl, options) {
-    const blob = await dataUrlToBlob(dataUrl);
+async function downloadBlobWithBackgroundObjectUrl(blob, options) {
     const objectUrl = URL.createObjectURL(blob);
 
     try {
@@ -198,9 +219,10 @@ async function downloadDataImageWithBackgroundObjectUrl(dataUrl, options) {
     }
 }
 
-async function downloadDataImageWithOffscreenDocument(dataUrl, options) {
+async function downloadBlobWithOffscreenDocument(blob, options) {
     await ensureOffscreenDocument();
 
+    const dataUrl = await blobToDataUrl(blob);
     const {token, objectUrl} = await sendOffscreenMessage('createObjectUrl', {dataUrl});
     if (typeof token !== 'string' || typeof objectUrl !== 'string') {
         throw new Error('Offscreen document returned an invalid Blob URL');
@@ -234,12 +256,16 @@ async function downloadDataImageWithOffscreenDocument(dataUrl, options) {
     return downloadId;
 }
 
-async function downloadDataImage(dataUrl, options) {
+async function downloadBlob(blob, options) {
     if (canCreateObjectUrlHere()) {
-        return downloadDataImageWithBackgroundObjectUrl(dataUrl, options);
+        return downloadBlobWithBackgroundObjectUrl(blob, options);
     }
 
-    return downloadDataImageWithOffscreenDocument(dataUrl, options);
+    return downloadBlobWithOffscreenDocument(blob, options);
+}
+
+async function downloadDataImage(dataUrl, options) {
+    return downloadBlob(await dataUrlToBlob(dataUrl), options);
 }
 
 function getDownloadRequest(image) {
@@ -272,7 +298,100 @@ async function startImageDownload(image) {
     return chrome.downloads.download({url, ...options});
 }
 
-async function downloadImageList(images) {
+async function resolveImageBytes(image) {
+    const {url, source, tabId} = getDownloadRequest(image);
+    const dataUrl = source === 'blobimages'
+        ? await resolvePageBlob(tabId, url)
+        : source === 'dataimages'
+            ? url
+            : null;
+
+    if (dataUrl) {
+        return (await dataUrlToBlob(dataUrl)).arrayBuffer();
+    }
+
+    const response = await fetch(url);
+    if (!response.ok) {
+        throw new Error(`Cannot fetch image for ZIP: ${response.status}`);
+    }
+
+    return response.arrayBuffer();
+}
+
+function getUniqueZipFileName(fileName, usedNames) {
+    const baseName = String(fileName ?? '')
+        .trim()
+        .split(/[\\/]/)
+        .pop();
+    if (!baseName) throw new Error('The ZIP image file name is invalid');
+
+    const extensionIndex = baseName.lastIndexOf('.');
+    const stem = extensionIndex > 0 ? baseName.slice(0, extensionIndex) : baseName;
+    const extension = extensionIndex > 0 ? baseName.slice(extensionIndex) : '';
+
+    let number = 1;
+    let candidate = baseName;
+    while (usedNames.has(candidate)) {
+        number += 1;
+        candidate = `${stem} (${number})${extension}`;
+    }
+
+    usedNames.add(candidate);
+    return candidate;
+}
+
+async function downloadImageZip(images, options) {
+    if (typeof JSZip !== 'function') {
+        throw new Error('JSZip is not available in the background context');
+    }
+
+    const zip = new JSZip();
+    const results = [];
+    const usedNames = new Set();
+
+    for (const image of images) {
+        try {
+            const data = await resolveImageBytes(image);
+            const fileName = getUniqueZipFileName(image?.fileName, usedNames);
+            zip.file(fileName, data);
+            results.push({
+                imageId: image?.imageId,
+                url: image?.url,
+                success: true
+            });
+        } catch (error) {
+            const message = getErrorMessage(error);
+            console.warn('Cannot add image to ZIP:', image?.url, error);
+            results.push({
+                imageId: image?.imageId,
+                url: image?.url,
+                success: false,
+                error: message
+            });
+        }
+    }
+
+    const successfulResults = results.filter((result) => result.success);
+    if (successfulResults.length === 0) {
+        throw new Error('Cannot create ZIP: no images could be resolved');
+    }
+
+    const zipBlob = await zip.generateAsync({
+        type: 'blob',
+        mimeType: 'application/zip'
+    });
+    const downloadId = await downloadBlob(zipBlob, options);
+
+    successfulResults.forEach((result) => {
+        result.downloadId = downloadId;
+    });
+
+    return results;
+}
+
+async function downloadImageList(images, zipOptions = null) {
+    if (zipOptions) return downloadImageZip(images, zipOptions);
+
     const results = [];
 
     for (const image of images) {
@@ -334,7 +453,15 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         return undefined;
     }
 
-    downloadImageList(message.images).then(
+    const zipRequested = message?.zip?.enabled === true;
+    if (zipRequested && (!message.zip.options || typeof message.zip.options !== 'object')) {
+        sendResponse({success: false, error: 'ZIP download options are invalid'});
+        return undefined;
+    }
+
+    const zipOptions = zipRequested ? message.zip.options : null;
+
+    downloadImageList(message.images, zipOptions).then(
         (results) => sendResponse({success: true, results}),
         (error) => sendResponse({success: false, error: getErrorMessage(error)})
     );
