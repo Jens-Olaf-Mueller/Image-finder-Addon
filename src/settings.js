@@ -1,6 +1,5 @@
-import { Settings } from './Settings_class.js';
-import { loadSettingsForm, SettingsView } from './settingsView.js';
-
+import { Settings } from './classes/Settings_class.js';
+import { loadSettingsForm, SettingsView } from './classes/settingsView.js';
 
 runSettings();
 

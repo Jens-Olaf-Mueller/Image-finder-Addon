@@ -31,7 +31,7 @@ function releaseObjectUrl(token) {
     return true;
 }
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+window.chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.target !== OFFSCREEN_TARGET) return undefined;
 
     if (message.action === 'createObjectUrl') {
