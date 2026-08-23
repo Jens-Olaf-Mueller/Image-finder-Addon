@@ -39,9 +39,14 @@ form#frmSettings {
     min-width: 8rem;
 }
 
+#frmSettings .control input[type=text],
 #frmSettings .control input[type=number] {
-    border: none;
+    border: 1px silver solid;
+    border-radius: 3px;
     outline: none;
+}
+
+#frmSettings .control input[type=number] {
     text-align: center;
 }
 
@@ -55,9 +60,10 @@ form#frmSettings {
 }
 
 .folder-button {
-    height: 1.3rem;
-    width: 1.3rem;
+    height: 1.15rem;
+    width: 1.15rem;
     padding: 0;
+    cursor: pointer;
 }
 
 .folder-button>img {

@@ -8,6 +8,26 @@
             <input type="checkbox" id="chkBackGroundScan" name="backGroundScan">
              Background scan
         </label>
+        <label class="control" title="Scans the current page automatically again when settings panel is closed">
+            <input type="checkbox" id="chkScanOnSettingsChanged" name="scanOnSettingsChanged" checked>
+             Re-scan page after settings are closed
+        </label>
+
+        <label class="control">
+            <input type="checkbox" id="chkSaveSettingsForURL" name="saveSettingsForURL">
+             Remember settings for this website
+        </label>
+        <div class="control">
+            <label for="inpKeepSettingsForDays">Keep settings for</label>
+            <input type="number"
+                id="inpKeepSettingsForDays"
+                name="keepSettingsForDays"
+                min="1"
+                max="365"
+                value="30"
+                disabled>
+            <span> days</span>
+        </div>
     </fieldset>
 
     <fieldset name="downloads"><legend>Downloads</legend>
@@ -18,11 +38,11 @@
         <div class="control ctrl__vertical">
             <label>
                 <input type="radio" id="radUserFolder" name="downloadFolder" value="user">
-                 Use this folder
+                 Use this download subfolder
             </label>
             <div class="control">
                 <input type="text" id="inpUserFolder" name="userFolder" disabled>
-                <button type="button" id="btnDownloadFolder" class="folder-button" disabled>
+                <button type="button" id="btnDownloadFolder" class="folder-button" disabled title="Change the browser's default download folder">
                     <img src="../assets/icons/folder.png" alt="folder">
                 </button>
             </div>
@@ -40,7 +60,7 @@
     <fieldset name="filesizes"><legend>Image Size</legend>
         <label id="lblIgnoreImageSizes" class="control">
             <input type="checkbox" id="chkIgnoreSizes" name="ignoresizes" checked/>
-            Ignore images smaller than:
+             Ignore images smaller than:
         </label>
         <div class="control">
             <label id="lblMinimumWidth" for="inpMinWidth">Minimum width:</label>
@@ -62,20 +82,20 @@
     <fieldset name="filters"><legend>Filtering</legend>
         <label id="lblRemoveDuplicates" class="control">
             <input type="checkbox" id="chkRemoveDuplicates" name="removeDuplicates" checked/>
-            Remove duplicates
+             Remove duplicates
         </label>
         <label id="lblIgnoreHiddenImages" class="control">
             <input type="checkbox" id="chkIgnoreHiddenImages" name="ignoreHiddenImages"/>
-            Ignore hidden images
+             Ignore hidden images
         </label>
         <label id="lblScanBlurredImages" class="control">
             <input type="checkbox" id="chkScanBlurredImages" name="scanBlurredImages" checked/>
-            Scan blurred images
+             Scan blurred images
         </label>
         <div class="control ctrl__vertical">
             <label>
                 <input type="checkbox" id="chkExcludeList" name="hasExcludeList">
-                Ignore images containing in filename:
+                 Ignore images containing in filename:
             </label>
             <input type="text" id="inpExcludeList" name="excludeList" disabled>
         </div>
@@ -84,11 +104,11 @@
     <fieldset name="imagetypes"><legend>Image Types</legend>
         <label id="lblJpg" class="control">
             <input type="checkbox" id="chkJpg" name="jpg" checked/>
-            .jpg / .jpeg
+             .jpg / .jpeg
         </label>
         <label id="lblPng" class="control">
             <input type="checkbox" id="chkPng" name="png" checked/>
-            .png
+             .png
         </label>
         <label id="lblBmp" class="control">
             <input type="checkbox" id="chkBmp" name="bmp" checked/>
@@ -96,42 +116,42 @@
         </label>
         <label id="lblWebp" class="control">
             <input type="checkbox" id="chkWebp" name="webp" checked/>
-            .webp
+             .webp
         </label>
         <label id="lblGif" class="control">
             <input type="checkbox" id="chkGif" name="gif" checked/>
-            .gif
+             .gif
         </label>
         <label id="lblSvg" class="control">
             <input type="checkbox" id="chkSvg" name="svg"/>
-            .svg
+             .svg
         </label>
         <label id="lblAvif" class="control">
             <input type="checkbox" id="chkAvif" name="avif"/>
-            .avif
+             .avif
         </label>
     </fieldset>
 
     <fieldset name="sources"><legend>Image Sources</legend>
         <label id="lblImageElements" class="control">
             <input type="checkbox" id="chkImageElements" name="imageelements" checked/>
-            Image elements
+             Image elements
         </label>
         <label id="lblBackgroundImages" class="control">
             <input type="checkbox" id="chkBackgroundImages" name="backgroundimages" checked/>
-            CSS background images
+             CSS background images
         </label>
         <label id="lblLinkedImages" class="control">
             <input type="checkbox" id="chkLinkedImages" name="linkedimages" checked/>
-            Linked images
+             Linked images
         </label>
         <label id="lblDataImages" class="control">
             <input type="checkbox" id="chkDataImages"  name="dataimages"/>
-            Data images
+             Data images
         </label>
         <label id="lblBlobImages" class="control">
             <input type="checkbox" id="chkBlobImages" name="blobimages"/>
-            Blob images
+             Blob images
         </label>
     </fieldset>
 </form>

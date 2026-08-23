@@ -74,10 +74,24 @@ export class ImageFinder {
     }
 
     async run(onSettingsReady = null) {
+        await this.setWebsiteOriginFromActiveTab();
         await this.settings.run();
         if (typeof onSettingsReady === 'function') await onSettingsReady();
         this.setEventListeners();
         if (this.settings.get('common', 'scanOnStart', true)) await this.scan();
+    }
+
+    async setWebsiteOriginFromActiveTab() {
+        try {
+            const [tab] = await window.chrome.tabs.query({
+                active: true,
+                currentWindow: true
+            });
+
+            this.settings.setWebsiteOrigin(tab?.url);
+        } catch {
+            this.settings.setWebsiteOrigin(null);
+        }
     }
 
     setEventListeners() {
@@ -256,10 +270,13 @@ export class ImageFinder {
         const size = image.fileSize >= 1048576
             ? `${parseInt(image.fileSize / 1024 / 1024)} MB`
             : image.fileSize ? `${parseInt(image.fileSize / 1024)} KB` : '??? KB';
+        const exactSize = Number.isFinite(image.fileSize) && image.fileSize > 0
+            ? ` (${image.fileSize.toLocaleString()} bytes)`
+            : '';
         const icon = IMAGE_TYPES[image.imageType].icon;
         const dims = `${image.width} × ${image.height} px`;
         this.statusBar = `
-            <img id="imgTypeInfoIcon" src="${icon}" alt="${image.imageType}" style="height: 1.25rem; transform: translateY(4px)" title="${image.imageType.toUpperCase()} image, Resolution: ${dims}, Size: ${size}">
+            <img id="imgTypeInfoIcon" src="${icon}" alt="${image.imageType}" style="height: 1.25rem; transform: translateY(4px)" title="${image.imageType.toUpperCase()} image, Resolution: ${dims}, Size: ${size}${exactSize}">
                ${dims} [${size}]`;
         this.DOM.spnStatusBar.style.display = 'block';
     }
@@ -287,7 +304,7 @@ export class ImageFinder {
         const btnName = btn.id.slice(3).toLowerCase() || '';
         switch (btnName) {
             case 'settings':
-                this.toggleSettingsPanel();
+                await this.toggleSettingsPanel();
                 break;
 
             case 'search':
@@ -324,11 +341,18 @@ export class ImageFinder {
         }
     }
 
-    toggleSettingsPanel() {
+    async toggleSettingsPanel() {
         const isOpen = this.DOM.btnSettings.value === 'true';
         const nextState = String(!isOpen);
         this.DOM.btnSettings.value = nextState;
         this.DOM.divSettingsPanel.classList.toggle('open', nextState === 'true');
+
+        if (!isOpen) return;
+
+        await this.settings.waitForPendingSave();
+        if (this.settings.get('common', 'scanOnSettingsChanged', true)) {
+            await this.scan();
+        }
     }
 
     clear() {
@@ -754,21 +778,6 @@ export class ImageFinder {
 
         return size + UTF8_ENCODER.encode(payload.slice(rawStart)).byteLength;
     }
-
-    // getImageType(mime) {
-    //     const key = mime.split(';')[0].trim().toLowerCase();
-    //     const types = {
-    //         'image/jpeg': 'jpg',
-    //         'image/png': 'png',
-    //         'image/bmp': 'bmp',
-    //         'image/x-ms-bmp': 'bmp',
-    //         'image/webp': 'webp',
-    //         'image/gif': 'gif',
-    //         'image/svg+xml': 'svg',
-    //         'image/avif': 'avif'
-    //     };
-    //     return types[key] ?? null;
-    // }
 
     getImageType(mime) {
         const key = mime.split(';')[0].trim().toLowerCase();

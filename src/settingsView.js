@@ -88,6 +88,14 @@ export class SettingsView {
             'change',
             () => this.updateExcludeListControls()
         );
+        this.DOM.chkSaveSettingsForURL.addEventListener(
+            'change',
+            () => this.updateWebsiteProfileControls()
+        );
+        this.DOM.btnDownloadFolder.addEventListener(
+            'click',
+            () => this.openBrowserDownloadSettings()
+        );
         this.downloadFolderRadios.forEach((radio) => {
             radio.addEventListener('change', () => this.updateDownloadFolderControls());
         });
@@ -100,6 +108,7 @@ export class SettingsView {
         this.updateImageSizeControls();
         this.updateDownloadFolderControls();
         this.updateExcludeListControls();
+        this.updateWebsiteProfileControls();
     }
 
     updateMinimumFileSize() {
@@ -126,5 +135,21 @@ export class SettingsView {
 
     updateExcludeListControls() {
         this.DOM.inpExcludeList.disabled = !this.DOM.chkExcludeList.checked;
+    }
+
+    updateWebsiteProfileControls() {
+        this.DOM.inpKeepSettingsForDays.disabled = !this.DOM.chkSaveSettingsForURL.checked;
+    }
+
+    async openBrowserDownloadSettings() {
+        const isFirefox = typeof browser !== 'undefined' &&
+            typeof browser.runtime?.getBrowserInfo === 'function';
+
+        if (isFirefox) {
+            console.info('Firefox does not allow extensions to open privileged about: settings pages.');
+            return;
+        }
+
+        await window.chrome.tabs.create({url: 'chrome://settings/downloads'});
     }
 }

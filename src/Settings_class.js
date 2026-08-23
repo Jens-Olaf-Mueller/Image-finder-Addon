@@ -1,7 +1,18 @@
+const WEBSITE_PROFILES_STORAGE_KEY = 'websiteProfiles';
+const MIN_PROFILE_DURATION_DAYS = 1;
+const MAX_PROFILE_DURATION_DAYS = 365;
+const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000;
+
 export class Settings {
     #form = null;
     #boundForm = null;
-    #onFormChange = () => this.save();
+    #pendingSave = Promise.resolve();
+    #onFormChange = () => {
+        this.#pendingSave = this.save();
+    };
+    #websiteOrigin = null;
+    #activeWebsiteProfile = false;
+    #globalData = {};
 
     get form() { return this.#form; }
     set form(newForm) {
@@ -18,6 +29,20 @@ export class Settings {
         this.form = form;
         this.storageKey = storageKey;
         this.data = {};
+    }
+
+    setWebsiteOrigin(url) {
+        try {
+            const parsedUrl = new URL(url);
+
+            this.#websiteOrigin = ['http:', 'https:'].includes(parsedUrl.protocol)
+                ? parsedUrl.origin
+                : null;
+        } catch {
+            this.#websiteOrigin = null;
+        }
+
+        return this.#websiteOrigin;
     }
 
     async run() {
@@ -57,29 +82,143 @@ export class Settings {
         }
 
         this.data = this.mergeData(DEFAULT_SETTINGS, migratedData);
-
-        if (this.form) {
-            this.setFormData(this.data);
-        }
+        this.#globalData = this.cloneData(this.data);
+        this.#activeWebsiteProfile = false;
 
         if (this.form || hasLegacyBlurSetting) {
             // Saves new/default controls automatically if the markup was extended.
             await window.chrome.storage.local.set({
-                [this.storageKey]: this.data
+                [this.storageKey]: this.#globalData
             });
+        }
+
+        await this.loadWebsiteProfile();
+
+        if (this.form) {
+            this.setFormData(this.data);
         }
 
         return this.data;
     }
 
     async save() {
-        if (this.form) this.data = this.mergeData(this.data, this.getFormData());
+        const nextData = this.form
+            ? this.mergeData(this.data, this.getFormData())
+            : this.data;
+        const saveWebsiteProfile = nextData.common?.saveSettingsForURL === true &&
+            this.#websiteOrigin !== null;
 
-        await window.chrome.storage.local.set({
-            [this.storageKey]: this.data
-        });
+        if (saveWebsiteProfile) {
+            const keepSettingsForDays = this.getProfileDuration(nextData.common.keepSettingsForDays);
+
+            if (keepSettingsForDays === null) {
+                console.warn('Cannot save website profile: invalid keepSettingsForDays value');
+                return this.data;
+            }
+
+            this.data = nextData;
+            this.#activeWebsiteProfile = true;
+            await this.saveWebsiteProfile(keepSettingsForDays);
+            return this.data;
+        }
+
+        if (this.#activeWebsiteProfile && this.#websiteOrigin !== null) {
+            this.#activeWebsiteProfile = false;
+            this.data = this.cloneData(this.#globalData);
+            this.setFormData(this.data);
+            await this.deleteWebsiteProfile();
+            return this.data;
+        }
+
+        this.data = nextData;
+        this.#globalData = this.cloneData(this.data);
+
+        await window.chrome.storage.local.set({[this.storageKey]: this.#globalData});
 
         return this.data;
+    }
+
+    async waitForPendingSave() {
+        await this.#pendingSave;
+    }
+
+    async loadWebsiteProfile() {
+        if (!this.#websiteOrigin) return;
+
+        const stored = await window.chrome.storage.local.get(WEBSITE_PROFILES_STORAGE_KEY);
+        const profiles = stored[WEBSITE_PROFILES_STORAGE_KEY] ?? {};
+        const profile = profiles[this.#websiteOrigin];
+
+        if (!profile) return;
+
+        const isValidProfile = profile.origin === this.#websiteOrigin &&
+            profile.settings && typeof profile.settings === 'object' &&
+            Number.isFinite(profile.expiresAt) && profile.expiresAt > Date.now();
+
+        if (!isValidProfile) {
+            await this.deleteWebsiteProfile(profiles);
+            return;
+        }
+
+        this.data = this.mergeData(DEFAULT_SETTINGS, profile.settings);
+        if (this.getProfileDuration(this.data.common.keepSettingsForDays) === null) {
+            this.data.common.keepSettingsForDays = DEFAULT_SETTINGS.common.keepSettingsForDays;
+        }
+        this.data.common.saveSettingsForURL = true;
+        this.#activeWebsiteProfile = true;
+    }
+
+    async saveWebsiteProfile(keepSettingsForDays) {
+        if (!this.#websiteOrigin) return;
+
+        const stored = await window.chrome.storage.local.get(WEBSITE_PROFILES_STORAGE_KEY);
+        const profiles = {...(stored[WEBSITE_PROFILES_STORAGE_KEY] ?? {})};
+
+        profiles[this.#websiteOrigin] = {
+            origin: this.#websiteOrigin,
+            settings: this.cloneData(this.data),
+            expiresAt: Date.now() + keepSettingsForDays * MILLISECONDS_PER_DAY
+        };
+
+        await window.chrome.storage.local.set({
+            [WEBSITE_PROFILES_STORAGE_KEY]: profiles
+        });
+    }
+
+    async deleteWebsiteProfile(existingProfiles = null) {
+        if (!this.#websiteOrigin) return;
+
+        const profiles = existingProfiles ?? (
+            await window.chrome.storage.local.get(WEBSITE_PROFILES_STORAGE_KEY)
+        )[WEBSITE_PROFILES_STORAGE_KEY] ?? {};
+
+        if (!Object.prototype.hasOwnProperty.call(profiles, this.#websiteOrigin)) return;
+
+        const nextProfiles = {...profiles};
+        delete nextProfiles[this.#websiteOrigin];
+
+        await window.chrome.storage.local.set({
+            [WEBSITE_PROFILES_STORAGE_KEY]: nextProfiles
+        });
+    }
+
+    getProfileDuration(value) {
+        const days = Number(value);
+
+        return Number.isInteger(days) &&
+            days >= MIN_PROFILE_DURATION_DAYS &&
+            days <= MAX_PROFILE_DURATION_DAYS
+            ? days
+            : null;
+    }
+
+    cloneData(data) {
+        return Object.fromEntries(
+            Object.entries(data ?? {}).map(([sectionName, section]) => [
+                sectionName,
+                {...section}
+            ])
+        );
     }
 
     get(section, key = null, defaultValue = null) {
@@ -227,7 +366,10 @@ export class Settings {
 export const DEFAULT_SETTINGS = {
     common: {
         scanOnStart: true,
-        backGroundScan: false
+        backGroundScan: false,
+        scanOnSettingsChanged: true,
+        saveSettingsForURL: false,
+        keepSettingsForDays: 30
     },
     downloads: {
         downloadFolder: 'prompt',

@@ -123,7 +123,7 @@ img.preview:not([src]) {
     position: absolute;
     inset: 0 0 2.5rem;
     z-index: 2;
-    padding: 1rem;
+    padding: 0.5rem;
     background: #f4f4f4;
     transform: translateX(100%);
     transition: transform 200ms ease;
