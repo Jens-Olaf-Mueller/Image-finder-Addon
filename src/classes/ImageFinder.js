@@ -50,6 +50,8 @@ export class ImageFinder {
         });
         this.settings = new Settings();
         this.scanner = new ImageScanner(this.settings);
+        // Internal scan candidates may later remain available for analysis when excluded from the visible image list.
+        this.candidates = new Map();
         this.images = new Map();
         this.progressbar = new Progressbar(this.DOM.divProgressbar);
         this.isSavingAll = false;
@@ -342,6 +344,7 @@ export class ImageFinder {
     }
 
     clear() {
+        this.candidates.clear();
         this.images.clear();
         this.currentBlobPreview = null;
         this.DOM.lstImages.innerHTML = '';
@@ -365,14 +368,12 @@ export class ImageFinder {
         this.info = 'Scanning...';
 
         try {
-            const images = await this.scanner.scan({
+            const scanResults = await this.scanner.scan({
                 onStart: count => this.progressbar.show(count),
                 onProgress: () => this.progressbar.update()
             });
 
-            images.forEach((image) => {
-                this.images.set(image.id, image);
-            });
+            this.#setScanResults(scanResults);
 
             this.images.forEach((image, imageId) => {
                 const li = document.createElement('li');
@@ -517,6 +518,7 @@ export class ImageFinder {
         }
 
         this.images.delete(item.dataset.imageId);
+        this.candidates.delete(item.dataset.imageId);
         item.remove();
 
         this.DOM.imgPreview.removeAttribute('src');
@@ -525,6 +527,13 @@ export class ImageFinder {
         this.DOM.btnSaveAll.disabled = (this.images.size === 0);
         this.DOM.btnClear.disabled = (this.images.size === 0);
         this.#updateLED();
+    }
+
+    #setScanResults(scanResults) {
+        scanResults.forEach((image) => {
+            this.candidates.set(image.id, image);
+            this.images.set(image.id, image);
+        });
     }
 
     #updateLED() {
