@@ -584,18 +584,19 @@
         </section>
 
         <section class="test-group" aria-labelledby="blur-filtering">
-            <h2 id="blur-filtering">H. CSS Blur Filtering</h2>
+            <h2 id="blur-filtering">H. CSS Blur Metadata</h2>
             <p class="requirements">
                 <strong>Setup:</strong> Image elements and Data images = ON; JPG, PNG and SVG = ON.
-                <strong>Expected:</strong> with Scan blurred images = ON, A through E appear.
-                With it OFF, only D and E appear.
+                <strong>Expected:</strong> A through E always appear. CSS blur is recorded only as
+                <code>visuallyBlurred</code>: A through C are <code>true</code>; D and E are
+                <code>false</code>.
             </p>
 
             <section class="test">
                 <h3>32. Direct blur on image</h3>
                 <p class="requirements">
                     <strong>Test:</strong> <code>filter: blur(5px)</code> on the image itself.
-                    <strong>Expected with Scan blurred images = OFF:</strong> excluded.
+                    <strong>Expected:</strong> included with <code>visuallyBlurred = true</code>.
                 </p>
                 <img
                     class="test-image"
@@ -609,7 +610,7 @@
                 <h3>33. Blur on direct parent</h3>
                 <p class="requirements">
                     <strong>Test:</strong> <code>filter: blur(5px)</code> on the direct parent.
-                    <strong>Expected with Scan blurred images = OFF:</strong> excluded.
+                    <strong>Expected:</strong> included with <code>visuallyBlurred = true</code>.
                 </p>
                 <div style="filter: blur(5px)">
                     <img
@@ -624,7 +625,7 @@
                 <h3>34. Blur on nested ancestor</h3>
                 <p class="requirements">
                     <strong>Test:</strong> <code>filter: blur(5px)</code> on a deeply nested ancestor.
-                    <strong>Expected with Scan blurred images = OFF:</strong> excluded.
+                    <strong>Expected:</strong> included with <code>visuallyBlurred = true</code>.
                 </p>
                 <div style="filter: blur(5px)">
                     <div>
@@ -643,7 +644,7 @@
                 <h3>35. Zero blur counterexample</h3>
                 <p class="requirements">
                     <strong>Test:</strong> <code>filter: blur(0px)</code>.
-                    <strong>Expected with Scan blurred images = OFF:</strong> still included.
+                    <strong>Expected:</strong> included with <code>visuallyBlurred = false</code>.
                 </p>
                 <img
                     class="test-image"
@@ -657,7 +658,7 @@
                 <h3>36. Brightness-only counterexample</h3>
                 <p class="requirements">
                     <strong>Test:</strong> <code>filter: brightness(.8)</code> without blur.
-                    <strong>Expected with Scan blurred images = OFF:</strong> still included.
+                    <strong>Expected:</strong> included with <code>visuallyBlurred = false</code>.
                 </p>
                 <img
                     class="test-image"
@@ -672,8 +673,8 @@
                 <p class="requirements">
                     <strong>Test:</strong> the same Data SVG URL first occurs under
                     <code>filter: blur(5px)</code>, then without blur.
-                    <strong>Expected with Scan blurred images = OFF:</strong> the first occurrence
-                    is excluded and the unblurred occurrence remains, including when Remove duplicates = ON.
+                    <strong>Expected:</strong> both occurrences are found. With Remove duplicates = ON,
+                    the final candidate remains and has <code>visuallyBlurred = false</code>.
                 </p>
                 <div style="filter: blur(5px)">
                     <img
@@ -691,12 +692,12 @@
         </section>
 
         <section class="test-group" aria-labelledby="backdrop-blur-filtering">
-            <h2 id="backdrop-blur-filtering">I. CSS Backdrop Blur Filtering</h2>
+            <h2 id="backdrop-blur-filtering">I. CSS Backdrop Blur Metadata</h2>
             <p class="requirements">
                 <strong>Setup:</strong> Image elements = ON; JPG and PNG = ON.
-                <strong>Expected with Scan blurred images = ON:</strong> all backdrops allow their images.
-                <strong>Expected with it OFF:</strong> only images below a non-zero backdrop blur at their
-                center are skipped; zero blur, brightness-only and corner-only overlays remain allowed.
+                <strong>Expected:</strong> all images remain included. Only a non-zero backdrop blur at
+                an image center sets <code>visuallyBlurred = true</code>; zero blur, brightness-only,
+                and corner-only overlays remain <code>false</code>.
             </p>
 
             <section class="test">
@@ -704,7 +705,7 @@
                 <p class="requirements">
                     <strong>Test:</strong> <code>Aegeri.jpeg</code> beneath
                     <code>backdrop-filter: blur(8px)</code>.
-                    <strong>Expected with Scan blurred images = OFF:</strong> excluded.
+                    <strong>Expected:</strong> included with <code>visuallyBlurred = true</code>.
                 </p>
                 <div class="backdrop-test">
                     <img
@@ -721,7 +722,7 @@
                 <p class="requirements">
                     <strong>Test:</strong> <code>Black sheep.jpg</code> beneath
                     <code>-webkit-backdrop-filter: blur(8px)</code> (with the standard property as fallback).
-                    <strong>Expected with Scan blurred images = OFF:</strong> excluded.
+                    <strong>Expected:</strong> included with <code>visuallyBlurred = true</code>.
                 </p>
                 <div class="backdrop-test">
                     <img
@@ -738,7 +739,7 @@
                 <p class="requirements">
                     <strong>Test:</strong> <code>Chess.png</code> beneath
                     <code>backdrop-filter: blur(0px)</code>.
-                    <strong>Expected with Scan blurred images = OFF:</strong> still included.
+                    <strong>Expected:</strong> included with <code>visuallyBlurred = false</code>.
                 </p>
                 <div class="backdrop-test">
                     <img
@@ -755,7 +756,7 @@
                 <p class="requirements">
                     <strong>Test:</strong> <code>FOE-Stadt.png</code> beneath
                     <code>backdrop-filter: brightness(.8)</code>.
-                    <strong>Expected with Scan blurred images = OFF:</strong> still included.
+                    <strong>Expected:</strong> included with <code>visuallyBlurred = false</code>.
                 </p>
                 <div class="backdrop-test">
                     <img
@@ -771,7 +772,8 @@
                 <h3>42. Corner-only backdrop blur</h3>
                 <p class="requirements">
                     <strong>Test:</strong> <code>Latex.jpg</code> with a blur overlay over its top-left corner only.
-                    <strong>Expected with Scan blurred images = OFF:</strong> still included because its center is clear.
+                    <strong>Expected:</strong> included with <code>visuallyBlurred = false</code> because
+                    its center is clear.
                 </p>
                 <div class="backdrop-test">
                     <img
@@ -787,8 +789,8 @@
                 <h3>43. Same URL below blurred and clear backdrops</h3>
                 <p class="requirements">
                     <strong>Test:</strong> the same synthetic Data SVG first occurs below a backdrop blur and then clear.
-                    <strong>Expected with Scan blurred images = OFF and Remove duplicates = ON:</strong>
-                    the first occurrence is excluded and the clear one remains.
+                    <strong>Expected:</strong> both occurrences are found. With Remove duplicates = ON,
+                    the final candidate has <code>visuallyBlurred = false</code>.
                 </p>
                 <div class="backdrop-test">
                     <img

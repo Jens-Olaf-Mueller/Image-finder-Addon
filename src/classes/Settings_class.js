@@ -2,6 +2,37 @@ const WEBSITE_PROFILES_STORAGE_KEY = 'websiteProfiles';
 const MIN_PROFILE_DURATION_DAYS = 1;
 const MAX_PROFILE_DURATION_DAYS = 365;
 const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000;
+const PIXEL_BLUR_SETTINGS_VERSION = 2;
+
+function migrateBlurSettings(data) {
+    const savedFilters = data?.filters;
+    const hasSetting = (key) => savedFilters &&
+        Object.prototype.hasOwnProperty.call(savedFilters, key);
+    const hasLegacyScanBlurSetting = hasSetting('scanBlurredImages');
+    const hasUnmarkedIgnoreBlurredSetting = hasSetting('ignoreBlurredImages') &&
+        savedFilters.blurSettingsVersion !== PIXEL_BLUR_SETTINGS_VERSION;
+
+    if (!hasLegacyScanBlurSetting && !hasUnmarkedIgnoreBlurredSetting) {
+        return {data, migrated: false};
+    }
+
+    const filters = {...savedFilters};
+    delete filters.scanBlurredImages;
+    delete filters.ignoreBlurredImages;
+    delete filters.blurSettingsVersion;
+
+    return {
+        data: {
+            ...data,
+            filters: {
+                ...filters,
+                ignoreBlurredImages: true,
+                blurSettingsVersion: PIXEL_BLUR_SETTINGS_VERSION
+            }
+        },
+        migrated: true
+    };
+}
 
 export class Settings {
     #form = null;
@@ -66,26 +97,14 @@ export class Settings {
     async load() {
         const stored = await window.chrome.storage.local.get(this.storageKey);
         const savedData = stored[this.storageKey] ?? {};
-        const savedFilters = savedData.filters;
-        const hasLegacyBlurSetting = savedFilters &&
-            Object.prototype.hasOwnProperty.call(savedFilters, 'ignoreBlurredImages');
-        let migratedData = savedData;
-
-        if (hasLegacyBlurSetting) {
-            const {ignoreBlurredImages, ...filters} = savedFilters;
-
-            if (!Object.prototype.hasOwnProperty.call(filters, 'scanBlurredImages')) {
-                filters.scanBlurredImages = ignoreBlurredImages !== true;
-            }
-
-            migratedData = {...savedData, filters};
-        }
+        const {data: migratedData, migrated: requiresBlurMigration} =
+            migrateBlurSettings(savedData);
 
         this.data = this.mergeData(DEFAULT_SETTINGS, migratedData);
         this.#globalData = this.cloneData(this.data);
         this.#activeWebsiteProfile = false;
 
-        if (this.form || hasLegacyBlurSetting) {
+        if (this.form || requiresBlurMigration) {
             // Saves new/default controls automatically if the markup was extended.
             await window.chrome.storage.local.set({
                 [this.storageKey]: this.#globalData
@@ -160,12 +179,27 @@ export class Settings {
             return;
         }
 
-        this.data = this.mergeData(DEFAULT_SETTINGS, profile.settings);
+        const {
+            data: migratedProfileSettings,
+            migrated: requiresBlurMigration
+        } = migrateBlurSettings(profile.settings);
+
+        this.data = this.mergeData(DEFAULT_SETTINGS, migratedProfileSettings);
         if (this.getProfileDuration(this.data.common.keepSettingsForDays) === null) {
             this.data.common.keepSettingsForDays = DEFAULT_SETTINGS.common.keepSettingsForDays;
         }
         this.data.common.saveSettingsForURL = true;
         this.#activeWebsiteProfile = true;
+
+        if (requiresBlurMigration) {
+            profiles[this.#websiteOrigin] = {
+                ...profile,
+                settings: this.cloneData(migratedProfileSettings)
+            };
+            await window.chrome.storage.local.set({
+                [WEBSITE_PROFILES_STORAGE_KEY]: profiles
+            });
+        }
     }
 
     async saveWebsiteProfile(keepSettingsForDays) {
@@ -403,7 +437,8 @@ export const DEFAULT_SETTINGS = {
     filters: {
         removeDuplicates: true,
         ignoreHiddenImages: false,
-        scanBlurredImages: true,
+        ignoreBlurredImages: true,
+        blurSettingsVersion: PIXEL_BLUR_SETTINGS_VERSION,
         hasExcludeList: false,
         excludeList: 'logo, avatar'
     }

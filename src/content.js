@@ -1,4 +1,4 @@
-export async function scanImages(ignoreHiddenImages = false, scanBlurredImages = true) {
+export async function scanImages(ignoreHiddenImages = false) {
     const getURL = (value) => {
         if (typeof value !== 'string' || !value.trim()) return null;
 
@@ -197,16 +197,14 @@ export async function scanImages(ignoreHiddenImages = false, scanBlurredImages =
     const initialScrollPosition = {x: window.scrollX, y: window.scrollY};
     let scrollPositionChanged = false;
 
-    if (!scanBlurredImages) {
-        for (const element of elements) {
-            try {
-                const style = getComputedStyle(element);
-                if (hasBackdropBlur(style) && isVisibleBackdropElement(element, style)) {
-                    backdropBlurElements.add(element);
-                }
-            } catch {
-                continue;
+    for (const element of elements) {
+        try {
+            const style = getComputedStyle(element);
+            if (hasBackdropBlur(style) && isVisibleBackdropElement(element, style)) {
+                backdropBlurElements.add(element);
             }
+        } catch {
+            continue;
         }
     }
 
@@ -297,10 +295,9 @@ export async function scanImages(ignoreHiddenImages = false, scanBlurredImages =
     const addCandidate = (url, width, height, source, element) => {
         if (!url) return;
 
-        if (!scanBlurredImages && (
-            isBlurred(element) ||
-            (source !== 'linkedimages' && isBackdropBlurred(element))
-        )) return;
+        const visuallyBlurred = source !== 'linkedimages' && (
+            isBlurred(element) || isBackdropBlurred(element)
+        );
 
         images.push({
             url,
@@ -310,7 +307,8 @@ export async function scanImages(ignoreHiddenImages = false, scanBlurredImages =
                 ? 'dataimages'
                 : isBlobImageURL(url)
                     ? 'blobimages'
-                    : source
+                    : source,
+            visuallyBlurred
         });
     };
 
