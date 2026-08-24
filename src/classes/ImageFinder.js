@@ -3,6 +3,13 @@ import ImageScanner from './ImageScanner.js';
 import { IMAGE_TYPES } from '../image-types.js';
 import Progressbar from './Progressbar.js';
 
+const SORT_ICON_BASE_NAMES = Object.freeze({
+    filename: 'sort-alphabetical',
+    type: 'sort-type',
+    size: 'sort-size',
+    dimensions: 'sort-dims'
+});
+
 export class ImageFinder {
     #activityCounts = {
         scanner: 0,
@@ -101,13 +108,7 @@ export class ImageFinder {
         const button = e.target.closest('button');
         if (!button || !this.DOM.divToolbarTopLeft.contains(button)) return;
 
-        this.DOM.divToolbarTopLeft.querySelectorAll('button').forEach(sortButton => {
-            sortButton.classList.remove('sorted');
-        });
-        button.classList.add('sorted');
-
-        const criterion = button.dataset.sort;
-        this.sort(criterion);
+        this.sort(button.dataset.sort);
     }
 
     sort(criterion) {
@@ -171,6 +172,7 @@ export class ImageFinder {
 
         this.DOM.lstImages.append(...items);
         this.sortState = {criterion, direction};
+        this.#updateSortButtons();
         selectedItem?.scrollIntoView({block: 'nearest'});
     }
 
@@ -386,9 +388,7 @@ export class ImageFinder {
         try {
             this.clear();
             this.sortState = {criterion: null, direction: 'asc'};
-            this.DOM.divToolbarTopLeft.querySelectorAll('button').forEach(sortButton => {
-                sortButton.classList.remove('sorted');
-            });
+            this.#updateSortButtons();
             this.DOM.spnStatusBar.style.display = 'none';
             this.info = 'Scanning...';
 
@@ -563,6 +563,21 @@ export class ImageFinder {
 
     #updateLED() {
         this.DOM.divLED.textContent = this.images.size;
+    }
+
+    #updateSortButtons() {
+        this.DOM.divToolbarTopLeft.querySelectorAll('button[data-sort]').forEach(sortButton => {
+            const criterion = sortButton.dataset.sort;
+            const isActive = criterion === this.sortState.criterion;
+            const iconBaseName = SORT_ICON_BASE_NAMES[criterion];
+            const icon = sortButton.querySelector('img');
+
+            sortButton.classList.toggle('sorted', isActive);
+            if (!icon || !iconBaseName) return;
+
+            const direction = isActive ? this.sortState.direction : 'asc';
+            icon.setAttribute('src', `../assets/icons/${iconBaseName}-${direction}.png`);
+        });
     }
 
     #updateLEDActivity() {
