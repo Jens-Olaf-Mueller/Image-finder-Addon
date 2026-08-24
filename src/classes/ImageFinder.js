@@ -58,6 +58,8 @@ export class ImageFinder {
         // Internal scan candidates may later remain available for analysis when excluded from the visible image list.
         this.candidates = new Map();
         this.images = new Map();
+        // Shared session-scoped cache for future image analysis.
+        this.analysisStore = new Map();
         this.progressbar = new Progressbar(this.DOM.divProgressbar);
         this.isSavingAll = false;
         this.currentBlobPreview = null;
@@ -352,6 +354,7 @@ export class ImageFinder {
     clear() {
         this.candidates.clear();
         this.images.clear();
+        this.analysisStore.clear();
         this.currentBlobPreview = null;
         this.DOM.lstImages.innerHTML = '';
         this.DOM.imgPreview.removeAttribute('src');
