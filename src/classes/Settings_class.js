@@ -366,7 +366,7 @@ export class Settings {
 export const DEFAULT_SETTINGS = {
     common: {
         scanOnStart: true,
-        backGroundScan: false,
+        allowBackgroundScan: false,
         scanOnSettingsChanged: true,
         saveSettingsForURL: false,
         keepSettingsForDays: 30

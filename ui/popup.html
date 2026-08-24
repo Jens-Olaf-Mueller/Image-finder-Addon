@@ -19,25 +19,25 @@
                 title="Sort by filename"
                 aria-label="Sort by filename"
                 data-sort="filename">
-                <img src="../assets/icons/sort-alphabetical.png" alt="sort-alphabetical">
+                <img src="../assets/icons/sort-alphabetical-asc.png" alt="sort-alphabetical">
             </button>
             <button type="button" id="btnSortType" class="toolbar-button tbr-btn__small"
                 title="Sort by image type"
                 aria-label="Sort by image type"
                 data-sort="type">
-                <img src="../assets/icons/sort-type.png" alt="sort type">
+                <img src="../assets/icons/sort-type-asc.png" alt="sort type">
             </button>
             <button type="button" id="btnSortFileSize" class="toolbar-button tbr-btn__small"
                 title="Sort by file size"
                 aria-label="Sort by file size"
                 data-sort="size">
-                <img src="../assets/icons/sort-size.png" alt="sort size">
+                <img src="../assets/icons/sort-size-asc.png" alt="sort size">
             </button>
             <button type="button" id="btnSortDimensions" class="toolbar-button tbr-btn__small"
                 title="Sort by dimensions"
                 aria-label="Sort by dimensions"
                 data-sort="dimensions">
-                <img src="../assets/icons/sort-dims.png" alt="sort dimensions">
+                <img src="../assets/icons/sort-dims-asc.png" alt="sort dimensions">
             </button>
         </div>
         <div id="divToolbarTopRight" class="toolbar-section" role="group" aria-label="Image preview controls">
@@ -73,13 +73,6 @@
             <img src="../assets/icons/search.png" alt="find">
         </button>
 
-        <button type="button" id="btnScan" class="toolbar-button"
-            title="Scan this image"
-            aria-label="Scan this image"
-            disabled>
-            <img src="../assets/icons/scan.png" alt="scan">
-        </button>
-
         <button type="button" id="btnDownload" class="toolbar-button"
             title="Download image"
             aria-label="Download image"
@@ -88,8 +81,8 @@
         </button>
 
         <button type="button" id="btnSaveAll" class="toolbar-button"
-            title="Save all"
-            aria-label="Save all"
+            title="Save all images"
+            aria-label="Save all images"
             disabled>
             <img src="../assets/icons/saveall.png" alt="save all">
         </button>
@@ -106,6 +99,13 @@
             aria-label="Clear list"
             disabled>
             <img src="../assets/icons/clear.png" alt="clear list">
+        </button>
+
+        <button type="button" id="btnOpenDownloadFolder" class="toolbar-button"
+            title="Open download folder"
+            aria-label="Scan this image"
+            disabled>
+            <img src="../assets/icons/folder-open.png" alt="open folder">
         </button>
 
         <button type="button" id="btnRestart" class="toolbar-button"
