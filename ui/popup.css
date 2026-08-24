@@ -205,8 +205,16 @@ img.preview:not([src]) {
     width: 2.75rem;
 }
 
-.toolbar-button.scanner-led.active {
+.toolbar-button.scanner-led.active[data-activity="scanner"] {
     background-color: limegreen;
+}
+
+.toolbar-button.scanner-led.active[data-activity="matcher"] {
+    background-color: goldenrod;
+}
+
+.toolbar-button.scanner-led.active[data-activity="blurScanner"] {
+    background-color: tomato;
 }
 
 .theme input {

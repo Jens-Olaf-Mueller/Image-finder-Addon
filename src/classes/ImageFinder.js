@@ -4,6 +4,11 @@ import { IMAGE_TYPES } from '../image-types.js';
 import Progressbar from './Progressbar.js';
 
 export class ImageFinder {
+    #activityCounts = {
+        scanner: 0,
+        matcher: 0,
+        blurScanner: 0
+    };
 
     get selectedItem() {
         return this.DOM.lstImages.querySelector('.selected') || null;
@@ -57,6 +62,7 @@ export class ImageFinder {
         this.isSavingAll = false;
         this.currentBlobPreview = null;
         this.#updateLED();
+        this.#updateLEDActivity();
 
         console.dir(this)
     }
@@ -358,16 +364,31 @@ export class ImageFinder {
         this.#updateLED();
     }
 
-    async scan() {
-        this.clear();
-        this.sortState = {criterion: null, direction: 'asc'};
-        this.DOM.divToolbarTopLeft.querySelectorAll('button').forEach(sortButton => {
-            sortButton.classList.remove('sorted');
-        });
-        this.DOM.spnStatusBar.style.display = 'none';
-        this.info = 'Scanning...';
+    startActivity(type) {
+        if (!Object.prototype.hasOwnProperty.call(this.#activityCounts, type)) return;
 
+        this.#activityCounts[type] += 1;
+        this.#updateLEDActivity();
+    }
+
+    stopActivity(type) {
+        if (!Object.prototype.hasOwnProperty.call(this.#activityCounts, type)) return;
+
+        this.#activityCounts[type] = Math.max(0, this.#activityCounts[type] - 1);
+        this.#updateLEDActivity();
+    }
+
+    async scan() {
+        this.startActivity('scanner');
         try {
+            this.clear();
+            this.sortState = {criterion: null, direction: 'asc'};
+            this.DOM.divToolbarTopLeft.querySelectorAll('button').forEach(sortButton => {
+                sortButton.classList.remove('sorted');
+            });
+            this.DOM.spnStatusBar.style.display = 'none';
+            this.info = 'Scanning...';
+
             const scanResults = await this.scanner.scan({
                 onStart: count => this.progressbar.show(count),
                 onProgress: () => this.progressbar.update()
@@ -388,13 +409,14 @@ export class ImageFinder {
             this.DOM.btnSaveAll.disabled = (this.images.size === 0);
             this.DOM.btnClear.disabled = (this.images.size === 0);
             this.#updateLED();
+            this.info = 'Image preview';
 
         } catch (error) {
             console.warn('Cannot scan this page:', this.scanner.currentTab?.url);
             this.info = 'Page not allowed to scan!';
-            return;
+        } finally {
+            this.stopActivity('scanner');
         }
-        this.info = 'Image preview';
     }
 
     async saveImage(item) {
@@ -538,5 +560,18 @@ export class ImageFinder {
 
     #updateLED() {
         this.DOM.divLED.textContent = this.images.size;
+    }
+
+    #updateLEDActivity() {
+        const activity = this.#activityCounts.blurScanner > 0
+            ? 'blurScanner'
+            : this.#activityCounts.matcher > 0
+                ? 'matcher'
+                : this.#activityCounts.scanner > 0
+                    ? 'scanner'
+                    : 'none';
+
+        this.DOM.divLED.classList.toggle('active', activity !== 'none');
+        this.DOM.divLED.dataset.activity = activity;
     }
 }
