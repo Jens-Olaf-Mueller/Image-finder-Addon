@@ -2,6 +2,7 @@ import { Settings } from './Settings_class.js';
 import ImageScanner from './ImageScanner.js';
 import { IMAGE_TYPES } from '../image-types.js';
 import Progressbar from './Progressbar.js';
+import BlurScanner from './BlurScanner.js';
 
 const SORT_ICON_BASE_NAMES = Object.freeze({
     filename: 'sort-alphabetical',
@@ -67,6 +68,7 @@ export class ImageFinder {
         this.images = new Map();
         // Shared session-scoped cache for future image analysis.
         this.analysisStore = new Map();
+        this.blurScanner = new BlurScanner(this.analysisStore);
         this.progressbar = new Progressbar(this.DOM.divProgressbar);
         this.isSavingAll = false;
         this.currentBlobPreview = null;
@@ -398,6 +400,7 @@ export class ImageFinder {
             });
 
             this.#setScanResults(scanResults);
+            await this.#setVisibleImages();
 
             this.images.forEach((image, imageId) => {
                 const li = document.createElement('li');
@@ -557,8 +560,49 @@ export class ImageFinder {
     #setScanResults(scanResults) {
         scanResults.forEach((image) => {
             this.candidates.set(image.id, image);
-            this.images.set(image.id, image);
         });
+    }
+
+    async #setVisibleImages() {
+        const filters = this.settings.get('filters') ?? {};
+
+        if (filters.ignoreBlurredImages !== true) {
+            this.candidates.forEach((candidate, candidateId) => {
+                this.images.set(candidateId, candidate);
+            });
+            return;
+        }
+
+        const candidatesToAnalyze = [];
+
+        this.candidates.forEach((candidate, candidateId) => {
+            if (candidate.visuallyBlurred === true) {
+                this.images.set(candidateId, candidate);
+            } else {
+                candidatesToAnalyze.push([candidateId, candidate]);
+            }
+        });
+
+        if (candidatesToAnalyze.length === 0) return;
+
+        this.startActivity('blurScanner');
+        try {
+            for (const [candidateId, candidate] of candidatesToAnalyze) {
+                try {
+                    const measurement = await this.blurScanner.measure(candidate.url, candidateId);
+                    const classification = this.blurScanner.classify(measurement);
+
+                    if (classification !== 'blurred') {
+                        this.images.set(candidateId, candidate);
+                    }
+                } catch (error) {
+                    console.warn('Cannot analyze image blur:', candidate.url, error);
+                    this.images.set(candidateId, candidate);
+                }
+            }
+        } finally {
+            this.stopActivity('blurScanner');
+        }
     }
 
     #updateLED() {

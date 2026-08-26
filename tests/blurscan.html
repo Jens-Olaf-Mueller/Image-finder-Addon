@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BlurScanner Test Page</title>
+
+    <style>
+        :root {
+            color-scheme: light dark;
+            font-family: system-ui, sans-serif;
+        }
+
+        body {
+            margin: 0;
+        }
+
+        main {
+            max-width: 960px;
+            margin: 0 auto;
+            padding: 2rem 1rem 4rem;
+        }
+
+        .test-group {
+            margin-top: 2rem;
+            padding: 1rem;
+            border: 1px solid #777;
+            border-radius: .5rem;
+        }
+
+        .test-group h2 {
+            margin-top: 0;
+        }
+
+        .image-pair {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 1rem;
+        }
+
+        .image-card {
+            padding: 1rem;
+            border: 1px solid #777;
+            border-radius: .5rem;
+        }
+
+        .image-card h3 {
+            margin-top: 0;
+        }
+
+        .test-image {
+            display: block;
+            max-width: 100%;
+            height: auto;
+        }
+
+        .analysis-result {
+            margin-top: 1rem;
+            font-size: .875rem;
+        }
+
+        .analysis-summary {
+            display: grid;
+            grid-template-columns: max-content 1fr;
+            gap: .35rem .75rem;
+            margin: 0;
+        }
+
+        .analysis-summary dt {
+            font-weight: 700;
+        }
+
+        .analysis-summary dd {
+            margin: 0;
+        }
+
+        .analysis-result details {
+            margin-top: .75rem;
+        }
+
+        .analysis-result table {
+            width: 100%;
+            margin-top: .5rem;
+            border-collapse: collapse;
+        }
+
+        .analysis-result th,
+        .analysis-result td {
+            padding: .25rem;
+            border: 1px solid #777;
+            text-align: right;
+        }
+
+        .analysis-result th:first-child,
+        .analysis-result th:nth-child(2),
+        .analysis-result td:first-child,
+        .analysis-result td:nth-child(2) {
+            text-align: left;
+        }
+
+        .analysis-failed {
+            color: #c62828;
+        }
+
+        .run-analysis-button {
+            padding: .5rem .75rem;
+            border: 1px solid #777;
+            border-radius: .25rem;
+            font: inherit;
+            cursor: pointer;
+        }
+
+        @media (max-width: 640px) {
+            .image-pair {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <main>
+        <h1>BlurScanner Test Page</h1>
+        <p>Controlled sharp/blurred image pairs for BlurScanner calibration.</p>
+        <button type="button" id="btnRunBlurScan" class="run-analysis-button">
+            Run BlurScanner analysis
+        </button>
+
+        <section class="test-group" aria-labelledby="test-1">
+            <h2 id="test-1">Test 1</h2>
+            <div class="image-pair">
+                <article class="image-card">
+                    <h3>Sharp</h3>
+                    <!-- TODO Button to load image here... -->
+                    <img
+                        id="imgTest1Sharp"
+                        class="test-image"
+                        src="../tests/imgblur/sharp/snowfall.jpg"
+                        alt="Test 1 sharp"
+                    >
+                    <div class="analysis-result" data-analysis-result aria-live="polite">Ready to analyze</div>
+                </article>
+                <article class="image-card">
+                    <h3>Blurred</h3>
+                    <!-- TODO Button to load image here... -->
+                    <img
+                        id="imgTest1Blurred"
+                        class="test-image"
+                        src="../tests/imgblur/blurred/snowfall.jpg"
+                        alt="Test 1 blurred"
+                    >
+                    <div class="analysis-result" data-analysis-result aria-live="polite">Ready to analyze</div>
+                </article>
+            </div>
+        </section>
+
+        <section class="test-group" aria-labelledby="test-2">
+            <h2 id="test-2">Test 2</h2>
+            <div class="image-pair">
+                <article class="image-card">
+                    <h3>Sharp</h3>
+                    <img
+                        id="imgTest2Sharp"
+                        class="test-image"
+                        src="../tests/imgblur/sharp/speed_blur.jpg"
+                        alt="Test 2 sharp"
+                    >
+                    <div class="analysis-result" data-analysis-result aria-live="polite">Ready to analyze</div>
+                </article>
+                <article class="image-card">
+                    <h3>Blurred</h3>
+                    <img
+                        id="imgTest2Blurred"
+                        class="test-image"
+                        src="../tests/imgblur/blurred/speed_blur.jpg"
+                        alt="Test 2 blurred"
+                    >
+                    <div class="analysis-result" data-analysis-result aria-live="polite">Ready to analyze</div>
+                </article>
+            </div>
+        </section>
+
+        <section class="test-group" aria-labelledby="test-3">
+            <h2 id="test-3">Test 3</h2>
+            <div class="image-pair">
+                <article class="image-card">
+                    <h3>Sharp</h3>
+                    <img
+                        id="imgTest3Sharp"
+                        class="test-image"
+                        src="../tests/imgblur/sharp/Aegeri.jpeg"
+                        alt="Test 3 sharp"
+                    >
+                    <div class="analysis-result" data-analysis-result aria-live="polite">Ready to analyze</div>
+                </article>
+                <article class="image-card">
+                    <h3>Blurred</h3>
+                    <img
+                        id="imgTest3Blurred"
+                        class="test-image"
+                        src="../tests/imgblur/blurred/Aegeri.jpeg"
+                        alt="Test 3 blurred"
+                    >
+                    <div class="analysis-result" data-analysis-result aria-live="polite">Ready to analyze</div>
+                </article>
+            </div>
+        </section>
+    </main>
+    <script type="module" src="./blurscan.js"></script>
+</body>
+</html>
