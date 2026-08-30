@@ -34,6 +34,39 @@ function migrateBlurSettings(data) {
     };
 }
 
+function migrateDuplicateSettings(data) {
+    const savedFilters = data?.filters;
+    const hasLegacySetting = savedFilters &&
+        Object.prototype.hasOwnProperty.call(savedFilters, 'removeDuplicates');
+
+    if (!hasLegacySetting) return {data, migrated: false};
+
+    const filters = {...savedFilters};
+
+    if (!Object.prototype.hasOwnProperty.call(filters, 'ignoreDuplicates')) {
+        filters.ignoreDuplicates = filters.removeDuplicates;
+    }
+    delete filters.removeDuplicates;
+
+    return {
+        data: {
+            ...data,
+            filters
+        },
+        migrated: true
+    };
+}
+
+function migrateSettings(data) {
+    const blurMigration = migrateBlurSettings(data);
+    const duplicateMigration = migrateDuplicateSettings(blurMigration.data);
+
+    return {
+        data: duplicateMigration.data,
+        migrated: blurMigration.migrated || duplicateMigration.migrated
+    };
+}
+
 export class Settings {
     #form = null;
     #boundForm = null;
@@ -97,14 +130,14 @@ export class Settings {
     async load() {
         const stored = await window.chrome.storage.local.get(this.storageKey);
         const savedData = stored[this.storageKey] ?? {};
-        const {data: migratedData, migrated: requiresBlurMigration} =
-            migrateBlurSettings(savedData);
+        const {data: migratedData, migrated: requiresMigration} =
+            migrateSettings(savedData);
 
         this.data = this.mergeData(DEFAULT_SETTINGS, migratedData);
         this.#globalData = this.cloneData(this.data);
         this.#activeWebsiteProfile = false;
 
-        if (this.form || requiresBlurMigration) {
+        if (this.form || requiresMigration) {
             // Saves new/default controls automatically if the markup was extended.
             await window.chrome.storage.local.set({
                 [this.storageKey]: this.#globalData
@@ -181,8 +214,8 @@ export class Settings {
 
         const {
             data: migratedProfileSettings,
-            migrated: requiresBlurMigration
-        } = migrateBlurSettings(profile.settings);
+            migrated: requiresMigration
+        } = migrateSettings(profile.settings);
 
         this.data = this.mergeData(DEFAULT_SETTINGS, migratedProfileSettings);
         if (this.getProfileDuration(this.data.common.keepSettingsForDays) === null) {
@@ -191,7 +224,7 @@ export class Settings {
         this.data.common.saveSettingsForURL = true;
         this.#activeWebsiteProfile = true;
 
-        if (requiresBlurMigration) {
+        if (requiresMigration) {
             profiles[this.#websiteOrigin] = {
                 ...profile,
                 settings: this.cloneData(migratedProfileSettings)
@@ -435,7 +468,7 @@ export const DEFAULT_SETTINGS = {
         blobimages: false
     },
     filters: {
-        removeDuplicates: true,
+        ignoreDuplicates: true,
         ignoreHiddenImages: false,
         ignoreBlurredImages: true,
         blurSettingsVersion: PIXEL_BLUR_SETTINGS_VERSION,

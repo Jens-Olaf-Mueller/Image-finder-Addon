@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ImageMatcher Test Page</title>
+
+    <style>
+        :root {
+            color-scheme: light dark;
+            font-family: system-ui, sans-serif;
+        }
+
+        body {
+            margin: 0;
+        }
+
+        main {
+            max-width: 960px;
+            margin: 0 auto;
+            padding: 2rem 1rem 4rem;
+        }
+
+        .test-group {
+            margin-top: 2rem;
+            padding: 1rem;
+            border: 1px solid #777;
+            border-radius: .5rem;
+        }
+
+        .test-group h2,
+        .image-card h3 {
+            margin-top: 0;
+        }
+
+        .image-pair {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 1rem;
+        }
+
+        .image-card {
+            padding: 1rem;
+            border: 1px solid #777;
+            border-radius: .5rem;
+        }
+
+        .test-image {
+            display: block;
+            max-width: 100%;
+            height: auto;
+        }
+
+        .analysis-result {
+            margin-top: 1rem;
+            font-size: .875rem;
+        }
+
+        .analysis-summary {
+            display: grid;
+            grid-template-columns: max-content 1fr;
+            gap: .35rem .75rem;
+            margin: 0;
+        }
+
+        .analysis-summary dt {
+            font-weight: 700;
+        }
+
+        .analysis-summary dd {
+            margin: 0;
+            overflow-wrap: anywhere;
+        }
+
+        .analysis-failed {
+            color: #c62828;
+        }
+
+        .run-analysis-button {
+            padding: .5rem .75rem;
+            border: 1px solid #777;
+            border-radius: .25rem;
+            font: inherit;
+            cursor: pointer;
+        }
+
+        @media (max-width: 640px) {
+            .image-pair {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <main>
+        <h1>ImageMatcher Test Page</h1>
+        <p>Replace the placeholder sources, then compare the three image pairs manually.</p>
+        <button type="button" id="btnRunMatcherTests" class="run-analysis-button">
+            Run matcher tests
+        </button>
+
+        <section class="test-group" aria-labelledby="test-1">
+            <h2 id="test-1">Test 1</h2>
+            <div class="image-pair">
+                <article class="image-card">
+                    <h3>Reference</h3>
+                    <img id="imgTest1Reference" class="test-image"
+                        src="./images/Wasbek-large1500.jpg" alt="Test 1 reference">
+                </article>
+                <article class="image-card">
+                    <h3>Candidate</h3>
+                    <img id="imgTest1Candidate" class="test-image"
+                        src="./images/Wasbek-small500.jpg" alt="Test 1 candidate">
+                </article>
+            </div>
+            <div class="analysis-result" data-analysis-result aria-live="polite">Ready to compare</div>
+        </section>
+
+        <section class="test-group" aria-labelledby="test-2">
+            <h2 id="test-2">Test 2</h2>
+            <div class="image-pair">
+                <article class="image-card">
+                    <h3>Reference</h3>
+                    <img id="imgTest2Reference" class="test-image"
+                        src="./images/Lory1_2316x3088.jpg" alt="Test 2 reference">
+                </article>
+                <article class="image-card">
+                    <h3>Candidate</h3>
+                    <img id="imgTest2Candidate" class="test-image"
+                        src="./images/Lory2_2316x3088.jpg" alt="Test 2 candidate">
+                </article>
+            </div>
+            <div class="analysis-result" data-analysis-result aria-live="polite">Ready to compare</div>
+        </section>
+
+        <section class="test-group" aria-labelledby="test-3">
+            <h2 id="test-3">Test 3</h2>
+            <div class="image-pair">
+                <article class="image-card">
+                    <h3>Reference</h3>
+                    <img id="imgTest3Reference" class="test-image"
+                        src="./images/Lory1_2316x3088.jpg" alt="Test 3 reference">
+                </article>
+                <article class="image-card">
+                    <h3>Candidate</h3>
+                    <img id="imgTest3Candidate" class="test-image"
+                        src="./images/Lory1_926x1236.png" alt="Test 3 candidate">
+                </article>
+            </div>
+            <div class="analysis-result" data-analysis-result aria-live="polite">Ready to compare</div>
+        </section>
+    </main>
+    <script type="module" src="./imagematcher.js"></script>
+</body>
+</html>

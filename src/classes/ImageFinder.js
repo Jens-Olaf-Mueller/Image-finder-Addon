@@ -3,7 +3,7 @@ import ImageScanner from './ImageScanner.js';
 import { IMAGE_TYPES } from '../image-types.js';
 import Progressbar from './Progressbar.js';
 import BlurScanner from './BlurScanner.js';
-
+import ImageMatcher from './ImageMatcher.js';
 const SORT_ICON_BASE_NAMES = Object.freeze({
     filename: 'sort-alphabetical',
     type: 'sort-type',
@@ -69,6 +69,8 @@ export class ImageFinder {
         // Shared session-scoped cache for future image analysis.
         this.analysisStore = new Map();
         this.blurScanner = new BlurScanner(this.analysisStore);
+        this.imageMatcher = new ImageMatcher(this.analysisStore);
+        this.imageMatcher.mode = 'strict';
         this.progressbar = new Progressbar(this.DOM.divProgressbar);
         this.isSavingAll = false;
         this.currentBlobPreview = null;
@@ -564,45 +566,133 @@ export class ImageFinder {
     }
 
     async #setVisibleImages() {
-        const filters = this.settings.get('filters') ?? {};
+        this.images.clear();
+        const blurAcceptedCandidates = await this.#getBlurAcceptedCandidates();
+        const visibleCandidates = await this.#getDuplicateWinners(blurAcceptedCandidates);
 
-        if (filters.ignoreBlurredImages !== true) {
-            this.candidates.forEach((candidate, candidateId) => {
-                this.images.set(candidateId, candidate);
-            });
-            return;
-        }
-
-        const candidatesToAnalyze = [];
-
-        this.candidates.forEach((candidate, candidateId) => {
-            if (candidate.visuallyBlurred === true) {
-                this.images.set(candidateId, candidate);
-            } else {
-                candidatesToAnalyze.push([candidateId, candidate]);
-            }
+        visibleCandidates.forEach(([candidateId, candidate]) => {
+            this.images.set(candidateId, candidate);
         });
+    }
 
-        if (candidatesToAnalyze.length === 0) return;
+    async #getBlurAcceptedCandidates() {
+        const filters = this.settings.get('filters') ?? {};
+        const candidates = Array.from(this.candidates);
+
+        if (filters.ignoreBlurredImages !== true) return candidates;
+
+        const acceptedCandidateIds = new Set();
+
+        if (candidates.length === 0) return candidates;
 
         this.startActivity('blurScanner');
         try {
-            for (const [candidateId, candidate] of candidatesToAnalyze) {
+            for (const [candidateId, candidate] of candidates) {
                 try {
                     const measurement = await this.blurScanner.measure(candidate.url, candidateId);
                     const classification = this.blurScanner.classify(measurement);
 
                     if (classification !== 'blurred') {
-                        this.images.set(candidateId, candidate);
+                        acceptedCandidateIds.add(candidateId);
                     }
                 } catch (error) {
                     console.warn('Cannot analyze image blur:', candidate.url, error);
-                    this.images.set(candidateId, candidate);
+                    acceptedCandidateIds.add(candidateId);
                 }
             }
         } finally {
             this.stopActivity('blurScanner');
         }
+
+        return candidates.filter(([candidateId]) => acceptedCandidateIds.has(candidateId));
+    }
+
+    async #getDuplicateWinners(acceptedCandidates) {
+        const filters = this.settings.get('filters') ?? {};
+
+        if (filters.ignoreDuplicates !== true || acceptedCandidates.length < 2) {
+            return acceptedCandidates;
+        }
+
+        this.startActivity('matcher');
+        try {
+            const duplicateGroups = [];
+
+            for (const candidateEntry of acceptedCandidates) {
+                const matchingGroups = [];
+
+                for (const group of duplicateGroups) {
+                    if (await this.#matchesDuplicateGroup(candidateEntry, group)) {
+                        matchingGroups.push(group);
+                    }
+                }
+
+                if (matchingGroups.length === 0) {
+                    duplicateGroups.push([candidateEntry]);
+                    continue;
+                }
+
+                const [targetGroup, ...groupsToMerge] = matchingGroups;
+
+                targetGroup.push(candidateEntry);
+                groupsToMerge.forEach((group) => {
+                    targetGroup.push(...group);
+                    duplicateGroups.splice(duplicateGroups.indexOf(group), 1);
+                });
+            }
+
+            return duplicateGroups.map(group => this.#selectDuplicateWinner(group));
+        } finally {
+            this.stopActivity('matcher');
+        }
+    }
+
+    async #matchesDuplicateGroup([candidateId, candidate], group) {
+        for (const [groupCandidateId, groupCandidate] of group) {
+            if (candidate.url === groupCandidate.url) {
+                if (candidate.visuallyBlurred === false) {
+                    groupCandidate.visuallyBlurred = false;
+                }
+                return true;
+            }
+
+            try {
+                const comparison = await this.imageMatcher.compare(
+                    candidate.url,
+                    candidateId,
+                    groupCandidate.url,
+                    groupCandidateId
+                );
+
+                if (this.imageMatcher.isStrictMatch(comparison)) return true;
+            } catch (error) {
+                console.error(
+                    'Cannot compare possible duplicate images:',
+                    candidate.url,
+                    groupCandidate.url,
+                    error
+                );
+            }
+        }
+
+        return false;
+    }
+
+    #selectDuplicateWinner(group) {
+        return group.reduce((winner, candidateEntry) =>
+            this.#getPixelCount(candidateEntry[1]) > this.#getPixelCount(winner[1])
+                ? candidateEntry
+                : winner
+        );
+    }
+
+    #getPixelCount(candidate) {
+        const width = Number(candidate?.width);
+        const height = Number(candidate?.height);
+
+        return Number.isFinite(width) && Number.isFinite(height)
+            ? Math.max(0, width) * Math.max(0, height)
+            : 0;
     }
 
     #updateLED() {

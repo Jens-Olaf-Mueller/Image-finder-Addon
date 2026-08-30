@@ -42,8 +42,6 @@ export default class ImageScanner {
         const filesFound = result[0]?.result ?? [];
         const filter = this.filter;
         const sources = this.settings.get('sources') ?? {};
-        const seenUrls = new Set();
-        const firstImageByUrl = new Map();
         const images = [];
 
         onStart?.(filesFound.length);
@@ -51,15 +49,6 @@ export default class ImageScanner {
         for (const image of filesFound) {
             try {
                 if (sources[image.source] === false) continue;
-                if (filters.removeDuplicates && seenUrls.has(image.url)) {
-                    const firstImage = firstImageByUrl.get(image.url);
-                    if (firstImage?.visuallyBlurred === true &&
-                        image.visuallyBlurred === false) {
-                        firstImage.visuallyBlurred = false;
-                    }
-                    continue;
-                }
-
                 const dataImage = image.source === 'dataimages'
                     ? this.getDataImageInfo(image.url)
                     : null;
@@ -143,11 +132,6 @@ export default class ImageScanner {
                     tabId: tab.id,
                     visuallyBlurred: image.visuallyBlurred === true
                 };
-                if (filters.removeDuplicates) {
-                    seenUrls.add(image.url);
-                    firstImageByUrl.set(image.url, candidate);
-                }
-
                 images.push(candidate);
             } catch (error) {
                 console.warn('Cannot process image:', image.url, error);

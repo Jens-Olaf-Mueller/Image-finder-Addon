@@ -559,7 +559,7 @@
                     <strong>Test:</strong> exactly two image elements with the same normal JPG URL.
                     <strong>Source:</strong> Image elements = ON.
                     <strong>Type:</strong> JPG = ON.
-                    <strong>Expected:</strong> Coffee.jpg appears twice when Remove duplicates = OFF, and once when it is ON.
+                    <strong>Expected:</strong> Coffee.jpg appears twice when Ignore duplicates = OFF, and once when it is ON.
                 </p>
                 <img class="test-image" src="images/Coffee.jpg" alt="Duplicate JPG A">
                 <img class="test-image" src="images/Coffee.jpg" alt="Duplicate JPG B">
@@ -673,7 +673,7 @@
                 <p class="requirements">
                     <strong>Test:</strong> the same Data SVG URL first occurs under
                     <code>filter: blur(5px)</code>, then without blur.
-                    <strong>Expected:</strong> both occurrences are found. With Remove duplicates = ON,
+                    <strong>Expected:</strong> both occurrences are found. With Ignore duplicates = ON,
                     the final candidate remains and has <code>visuallyBlurred = false</code>.
                 </p>
                 <div style="filter: blur(5px)">
@@ -789,7 +789,7 @@
                 <h3>43. Same URL below blurred and clear backdrops</h3>
                 <p class="requirements">
                     <strong>Test:</strong> the same synthetic Data SVG first occurs below a backdrop blur and then clear.
-                    <strong>Expected:</strong> both occurrences are found. With Remove duplicates = ON,
+                    <strong>Expected:</strong> both occurrences are found. With Ignore duplicates = ON,
                     the final candidate has <code>visuallyBlurred = false</code>.
                 </p>
                 <div class="backdrop-test">
