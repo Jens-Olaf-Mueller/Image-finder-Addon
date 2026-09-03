@@ -67,57 +67,66 @@
 
     <!-- Toolbar -->
     <div id="divToolbar" class="toolbar" role="toolbar" aria-label="Image actions">
-        <button type="button" id="btnSearch" class="toolbar-button"
-            title="Find images"
-            aria-label="Find images">
-            <img src="../assets/icons/search.png" alt="find">
-        </button>
+        <div id="divToolbarActions" class="toolbar-actions" role="group" aria-label="Image actions">
+            <button type="button" id="btnSearch" class="toolbar-button"
+                title="Find images"
+                aria-label="Find images">
+                <img src="../assets/icons/search.png" alt="find">
+            </button>
 
-        <button type="button" id="btnDownload" class="toolbar-button"
-            title="Download image"
-            aria-label="Download image"
-            disabled>
-            <img src="../assets/icons/download.png" alt="download">
-        </button>
+            <button type="button" id="btnDownload" class="toolbar-button"
+                title="Download image"
+                aria-label="Download image"
+                disabled>
+                <img src="../assets/icons/download.png" alt="download">
+            </button>
 
-        <button type="button" id="btnSaveAll" class="toolbar-button"
-            title="Save all images"
-            aria-label="Save all images"
-            disabled>
-            <img src="../assets/icons/saveall.png" alt="save all">
-        </button>
+            <button type="button" id="btnSaveAll" class="toolbar-button"
+                title="Save all images"
+                aria-label="Save all images"
+                disabled>
+                <img src="../assets/icons/saveall.png" alt="save all">
+            </button>
 
-        <button type="button" id="btnDelete" class="toolbar-button"
-            title="Delete image"
-            aria-label="Delete image"
-            disabled>
-            <img src="../assets/icons/bin.png" alt="delete">
-        </button>
+            <button type="button" id="btnDelete" class="toolbar-button"
+                title="Delete image"
+                aria-label="Delete image"
+                disabled>
+                <img src="../assets/icons/bin.png" alt="delete">
+            </button>
 
-        <button type="button" id="btnClear" class="toolbar-button"
-            title="Clear list"
-            aria-label="Clear list"
-            disabled>
-            <img src="../assets/icons/clear.png" alt="clear list">
-        </button>
+            <button type="button" id="btnClear" class="toolbar-button"
+                title="Clear list"
+                aria-label="Clear list"
+                disabled>
+                <img src="../assets/icons/clear.png" alt="clear list">
+            </button>
 
-        <button type="button" id="btnOpenDownloadFolder" class="toolbar-button"
-            title="Open download folder"
-            aria-label="Scan this image"
-            disabled>
-            <img src="../assets/icons/folder-open.png" alt="open folder">
-        </button>
+            <button type="button" id="btnOpenDownloadFolder" class="toolbar-button"
+                title="Open download folder"
+                aria-label="Scan this image"
+                disabled>
+                <img src="../assets/icons/folder-open.png" alt="open folder">
+            </button>
 
-        <button type="button" id="btnRestart" class="toolbar-button"
-            title="Start addon new"
-            aria-label="Start addon new">
-            <img src="../assets/icons/restart.png" alt="restart">
-        </button>
+            <button type="button" id="btnRestart" class="toolbar-button"
+                title="Start addon new"
+                aria-label="Start addon new">
+                <img src="../assets/icons/restart.png" alt="restart">
+            </button>
+        </div>
 
         <div id="divToolbarSpacer" class="toolbar-spacer">
             <span id="spnStatusBar" class="statusbar"></span>
             <div id="divProgressbar" class="progressbar">0%</div>
         </div>
+
+        <button type="button" id="btnDefaultSettings" class="toolbar-button"
+            title="Load addon default settings"
+            aria-label="Load addon default settings"
+            disabled>
+            <img src="../assets/icons/default-settings.png" alt="defaults">
+        </button>
 
         <button type="button" id="btnSettings" class="toolbar-button"
             title="Settings"

@@ -106,6 +106,16 @@ img.preview:not([src]) {
     justify-content: space-between;
 }
 
+.toolbar-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.toolbar-actions[hidden] {
+    display: none;
+}
+
 #divToolbarSpacer.toolbar-spacer {
     display: flex;
     align-items: center;
@@ -249,7 +259,8 @@ img.preview:not([src]) {
     background: #bbbbbb;
 }
 
-.toolbar-button:disabled {
+.toolbar-button:disabled,
+.folder-button:disabled {
     opacity: 0.4;
     cursor: default;
 }

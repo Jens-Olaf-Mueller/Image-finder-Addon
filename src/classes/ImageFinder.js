@@ -72,6 +72,7 @@ export class ImageFinder {
         this.imageMatcher = new ImageMatcher(this.analysisStore);
         this.imageMatcher.mode = 'strict';
         this.progressbar = new Progressbar(this.DOM.divProgressbar);
+        this.settingsView = null;
         this.isSavingAll = false;
         this.currentBlobPreview = null;
         this.#updateLED();
@@ -84,8 +85,13 @@ export class ImageFinder {
         await this.setWebsiteOriginFromActiveTab();
         await this.settings.run();
         if (typeof onSettingsReady === 'function') await onSettingsReady();
+        this.updateDownloadTitles();
         this.setEventListeners();
         if (this.settings.get('common', 'scanOnStart', true)) await this.scan();
+    }
+
+    setSettingsView(settingsView) {
+        this.settingsView = settingsView;
     }
 
     async setWebsiteOriginFromActiveTab() {
@@ -115,13 +121,14 @@ export class ImageFinder {
         this.sort(button.dataset.sort);
     }
 
-    sort(criterion) {
+    sort(criterion, initialDirection = null) {
         if (!['filename', 'type', 'size', 'dimensions'].includes(criterion)) return;
 
-        const direction = this.sortState.criterion === criterion &&
+        const direction = initialDirection ?? (this.sortState.criterion === criterion &&
             this.sortState.direction === 'asc'
             ? 'desc'
-            : 'asc';
+            : 'asc');
+        if (!['asc', 'desc'].includes(direction)) return;
         const directionFactor = direction === 'asc' ? 1 : -1;
         const selectedItem = this.selectedItem;
         const compareFileNames = (first, second) => String(first.fileName ?? '')
@@ -256,6 +263,7 @@ export class ImageFinder {
         this.DOM.btnDelete.disabled = false;
         const downloadOff = this.downloadButtonState && item.classList.contains('saved');
         this.DOM.btnDownload.disabled = false || downloadOff;
+        this.updateDownloadTitles();
 
         if (image.fileSize === null &&
             image.source !== 'dataimages' &&
@@ -309,6 +317,10 @@ export class ImageFinder {
                 await this.toggleSettingsPanel();
                 break;
 
+            case 'defaultsettings':
+                await this.resetSettingsToDefaults();
+                break;
+
             case 'search':
                 await this.scan();
                 break;
@@ -349,12 +361,28 @@ export class ImageFinder {
         this.DOM.btnSettings.value = nextState;
         this.DOM.divSettingsPanel.classList.toggle('open', nextState === 'true');
 
-        if (!isOpen) return;
+        this.DOM.divToolbarActions.hidden = !isOpen;
+        this.DOM.btnDefaultSettings.disabled = isOpen;
+
+        if (!isOpen) {
+            await this.settingsView?.updateUI();
+            return;
+        }
 
         await this.settings.waitForPendingSave();
+        this.updateDownloadTitles();
         if (this.settings.get('common', 'scanOnSettingsChanged', true)) {
             await this.scan();
         }
+    }
+
+    async resetSettingsToDefaults() {
+        if (this.DOM.btnSettings.value !== 'true') return;
+
+        await this.settings.waitForPendingSave();
+        await this.settings.resetToDefaults();
+        await this.settingsView?.updateUI();
+        this.updateDownloadTitles();
     }
 
     clear() {
@@ -371,6 +399,7 @@ export class ImageFinder {
         this.DOM.btnDelete.disabled = true;
         this.DOM.btnClear.disabled = true;
         this.#updateLED();
+        this.#updateLEDActivity();
     }
 
     startActivity(type) {
@@ -388,13 +417,14 @@ export class ImageFinder {
     }
 
     async scan() {
+        let scanCompleted = false;
+
         this.startActivity('scanner');
         try {
             this.clear();
             this.sortState = {criterion: null, direction: 'asc'};
             this.#updateSortButtons();
             this.DOM.spnStatusBar.style.display = 'none';
-            this.info = 'Scanning...';
 
             const scanResults = await this.scanner.scan({
                 onStart: count => this.progressbar.show(count),
@@ -413,17 +443,21 @@ export class ImageFinder {
                 this.DOM.lstImages.appendChild(li);
             });
 
+            this.sort('dimensions', 'desc');
             this.progressbar.hide();
             this.DOM.btnSaveAll.disabled = (this.images.size === 0);
             this.DOM.btnClear.disabled = (this.images.size === 0);
             this.#updateLED();
-            this.info = 'Image preview';
+            scanCompleted = true;
 
         } catch (error) {
             console.warn('Cannot scan this page:', this.scanner.currentTab?.url);
             this.info = 'Page not allowed to scan!';
         } finally {
             this.stopActivity('scanner');
+            if (scanCompleted) {
+                this.info = this.images.size === 0 ? 'No images found!' : 'Image preview';
+            }
         }
     }
 
@@ -515,7 +549,7 @@ export class ImageFinder {
         return response.downloadId;
     }
 
-    getDownloadOptions(fileName) {
+    getDownloadTarget() {
         const downloads = this.settings.get('downloads') ?? {};
         const userFolder = String(downloads.userFolder ?? '')
             .trim()
@@ -534,10 +568,42 @@ export class ImageFinder {
             relativeFolder = '';
         }
 
+        const isAbsoluteUserFolder = userFolder.startsWith('/') || /^[A-Za-z]:\//.test(userFolder);
+        const effectiveFolder = downloads.downloadFolder === 'user' && userFolder
+            ? isAbsoluteUserFolder || !defaultFolder
+                ? userFolder
+                : `${defaultFolder}/${userFolder}`
+            : '';
+
         return {
-            filename: relativeFolder ? `${relativeFolder}/${fileName}` : fileName,
+            relativeFolder,
+            effectiveFolder,
             saveAs: downloads.downloadFolder !== 'user'
         };
+    }
+
+    getDownloadOptions(fileName) {
+        const {relativeFolder, saveAs} = this.getDownloadTarget();
+
+        return {
+            filename: relativeFolder ? `${relativeFolder}/${fileName}` : fileName,
+            saveAs
+        };
+    }
+
+    getEffectiveDownloadFolder() {
+        return this.getDownloadTarget().effectiveFolder;
+    }
+
+    updateDownloadTitles() {
+        const folder = this.getEffectiveDownloadFolder();
+
+        this.DOM.btnDownload.title = folder
+            ? `Download image to: ${folder}`
+            : 'Download image';
+        this.DOM.btnSaveAll.title = folder
+            ? `Save all images to: ${folder}`
+            : 'Save all images';
     }
 
     deleteImage(item) {
@@ -725,5 +791,11 @@ export class ImageFinder {
 
         this.DOM.divLED.classList.toggle('active', activity !== 'none');
         this.DOM.divLED.dataset.activity = activity;
+
+        if (activity === 'scanner') {
+            this.info = 'Scanning...';
+        } else if (activity !== 'none') {
+            this.info = 'Filtering list...';
+        }
     }
 }

@@ -17,9 +17,10 @@ export async function loadSettingsForm(container) {
 }
 
 export class SettingsView {
-    constructor(settings, form) {
+    constructor(settings, form, {onSettingsChanged = null} = {}) {
         this.settings = settings;
         this.form = form;
+        this.onSettingsChanged = onSettingsChanged;
         this.DOM = {};
         this.hasEventListeners = false;
 
@@ -42,12 +43,13 @@ export class SettingsView {
 
         await this.setDefaultDownloadFolder();
         this.setEventListeners();
-        this.updateUI();
+        await this.updateUI();
     }
 
     async setDefaultDownloadFolder() {
         let defaultFolder = this.settings.get('downloads', 'defaultFolder', '');
         let shouldSave = false;
+        const changedSettings = [];
 
         if (!defaultFolder) {
             try {
@@ -57,6 +59,7 @@ export class SettingsView {
 
                 this.settings.data.downloads.defaultFolder = defaultFolder;
                 shouldSave = true;
+                changedSettings.push({section: 'downloads', key: 'defaultFolder'});
             } catch (error) {
                 console.warn('Could not determine download folder:', error);
                 return;
@@ -65,54 +68,47 @@ export class SettingsView {
 
         if (!this.settings.get('downloads', 'userFolder', '')) {
             this.DOM.inpUserFolder.value = defaultFolder;
+            this.settings.data.downloads.userFolder = defaultFolder;
             shouldSave = true;
+            changedSettings.push({section: 'downloads', key: 'userFolder'});
         }
 
         if (shouldSave) {
-            await this.settings.save();
+            for (const changedSetting of changedSettings) {
+                await this.settings.save(changedSetting);
+            }
         }
     }
 
     setEventListeners() {
         if (this.hasEventListeners) return;
 
-        this.DOM.sldMinimumFileSize.addEventListener(
-            'input',
-            () => this.updateMinimumFileSize()
-        );
-        this.DOM.chkIgnoreSizes.addEventListener(
-            'change',
-            () => this.updateImageSizeControls()
-        );
-        this.DOM.chkExcludeList.addEventListener(
-            'change',
-            () => this.updateExcludeListControls()
-        );
-        this.DOM.chkSaveSettingsForURL.addEventListener(
-            'change',
-            () => this.updateWebsiteProfileControls()
-        );
-        this.DOM.btnDownloadFolder.addEventListener(
-            'click',
-            () => this.openBrowserDownloadSettings()
-        );
-        this.downloadFolderRadios.forEach((radio) => {
-            radio.addEventListener('change', () => this.updateDownloadFolderControls());
+        this.DOM.chkIgnoreSizes.addEventListener('change',() => this.updateImageSizeControls());
+        this.DOM.chkExcludeList.addEventListener('change',() => this.updateExcludeListControls());
+        this.DOM.chkSaveSettingsForURL.addEventListener('change',() => this.updateWebsiteProfileControls());
+        this.DOM.btnDownloadFolder.addEventListener('click',() => this.openBrowserDownloadSettings());
+        this.DOM.btnDeleteProfile?.addEventListener('click', () => {
+            this.deleteCurrentWebsiteProfile().catch(error => {
+                console.warn('Cannot delete website profile:', error);
+            });
         });
-
+        this.downloadFolderRadios.forEach(rad => {
+            rad.addEventListener('change', () => this.updateDownloadFolderControls());
+        });
+        this.form.addEventListener('change', () => {
+            this.handleSettingsChange().catch(error => {
+                console.warn('Cannot update settings UI:', error);
+            });
+        });
         this.hasEventListeners = true;
     }
 
-    updateUI() {
-        this.updateMinimumFileSize();
+    async updateUI() {
         this.updateImageSizeControls();
         this.updateDownloadFolderControls();
         this.updateExcludeListControls();
         this.updateWebsiteProfileControls();
-    }
-
-    updateMinimumFileSize() {
-        this.DOM.spnMinSize.innerText = ` ${this.DOM.sldMinimumFileSize.value} KB`;
+        await this.updateDeleteProfileButton();
     }
 
     updateImageSizeControls() {
@@ -120,7 +116,7 @@ export class SettingsView {
 
         this.DOM.inpMinWidth.disabled = disabled;
         this.DOM.inpMinHeight.disabled = disabled;
-        this.DOM.sldMinimumFileSize.disabled = disabled;
+        this.DOM.inpMinimumFileSize.disabled = disabled;
         this.DOM.spnMinSize.toggleAttribute('disabled', disabled);
     }
 
@@ -139,6 +135,31 @@ export class SettingsView {
 
     updateWebsiteProfileControls() {
         this.DOM.inpKeepSettingsForDays.disabled = !this.DOM.chkSaveSettingsForURL.checked;
+    }
+
+    async updateDeleteProfileButton() {
+        if (!this.DOM.btnDeleteProfile) return;
+
+        this.DOM.btnDeleteProfile.disabled = !(await this.settings.hasCurrentWebsiteProfile());
+    }
+
+    async handleSettingsChange() {
+        await this.settings.waitForPendingSave();
+        await this.updateDeleteProfileButton();
+        await this.notifySettingsChanged();
+    }
+
+    async deleteCurrentWebsiteProfile() {
+        await this.settings.waitForPendingSave();
+        await this.settings.deleteCurrentWebsiteProfile();
+        await this.updateUI();
+        await this.notifySettingsChanged();
+    }
+
+    async notifySettingsChanged() {
+        if (typeof this.onSettingsChanged === 'function') {
+            await this.onSettingsChanged(this.settings.data);
+        }
     }
 
     async openBrowserDownloadSettings() {

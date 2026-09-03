@@ -48,9 +48,6 @@ form#frmSettings {
 
 #frmSettings .control input[type=number] {
     text-align: center;
-}
-
-#frmSettings .control input[type=range] {
     width: 5rem;
 }
 
@@ -66,7 +63,7 @@ form#frmSettings {
     cursor: pointer;
 }
 
-.folder-button>img {
+.folder-button img {
     height: 100%;
 }
 

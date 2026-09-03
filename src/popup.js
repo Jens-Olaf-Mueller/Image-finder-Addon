@@ -18,7 +18,10 @@ async function runPopup() {
     await imageFinder.run(async () => {
         if (!settingsForm) return;
 
-        const settingsView = new SettingsView(imageFinder.settings, settingsForm);
+        const settingsView = new SettingsView(imageFinder.settings, settingsForm, {
+            onSettingsChanged: () => imageFinder.updateDownloadTitles()
+        });
+        imageFinder.setSettingsView(settingsView);
         await settingsView.run({loadSettings: false});
     });
 }

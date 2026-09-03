@@ -1,4 +1,5 @@
 <form id="frmSettings">
+    <!-- <button id="btnLoadDefaults" type="button">Load default settings</button> -->
     <fieldset name="common"><legend>Common settings</legend>
         <label class="control">
             <input type="checkbox" id="chkScanOnStart" name="scanOnStart" checked>
@@ -17,6 +18,17 @@
             <input type="checkbox" id="chkSaveSettingsForURL" name="saveSettingsForURL">
              Remember settings for this website
         </label>
+        <div class="control ctrl__vertical">
+            <span>Save settings for:</span>
+            <label>
+                <input type="radio" id="radWebsiteProfileOrigin" name="websiteProfileScope" value="origin" data-profile-scope="true" checked>
+                 This website (origin)
+            </label>
+            <label>
+                <input type="radio" id="radWebsiteProfilePathname" name="websiteProfileScope" value="pathname" data-profile-scope="true">
+                 Current URL path
+            </label>
+        </div>
         <div class="control">
             <label for="inpKeepSettingsForDays">Keep settings for</label>
             <input type="number"
@@ -28,6 +40,14 @@
                 disabled>
             <span> days</span>
         </div>
+
+        <div class="control">
+            <button type="button" id="btnDeleteProfile" class="folder-button" disabled>
+                <img src="../assets/icons/bin.png" alt="delete">
+            </button>
+            <span> Delete settings for this profile</span>
+        </div>
+
     </fieldset>
 
     <fieldset name="downloads"><legend>Downloads</legend>
@@ -55,6 +75,7 @@
             <input type="checkbox" id="chkDisableDownloadWhenDone" name="disableDownloadWhenDone">
              Disable download button on done files
         </label>
+
     </fieldset>
 
     <fieldset name="filesizes"><legend>Image Size</legend>
@@ -73,9 +94,9 @@
             <span> px</span>
         </div>
         <div class="control">
-            <label id="lblMinimumFileSize" for="sldMinimumFileSize">Minimum file size:</label>
-            <input type="range" id="sldMinimumFileSize" name="minimumfilesize" min="16" max="1024" step="16" value="64"/>
-            <span id="spnMinSize"> 64 KB</span>
+            <label id="lblMinimumFileSize" for="inpMinimumFileSize">Minimum file size:</label>
+            <input type="number" id="inpMinimumFileSize" name="minimumfilesize" min="16" max="1024" step="16" value="64"/>
+            <span id="spnMinSize"> KB</span>
         </div>
     </fieldset>
 
