@@ -1,12 +1,12 @@
-import { Settings } from './classes/Settings_class.js';
-import { loadSettingsForm, SettingsView } from './classes/settingsView.js';
+import { Settings } from './classes/Settings.js';
+import { loadSettingsForm, SettingsForm } from './classes/SettingsForm.js';
 
 runSettings();
 
 async function runSettings() {
     const form = await loadSettingsForm('divSettingsContent');
-    const settings = new Settings(form);
-    const settingsView = new SettingsView(settings, form);
+    const settings = new Settings();
+    const settingsForm = new SettingsForm(settings, form);
 
-    await settingsView.run();
+    await settingsForm.run();
 }

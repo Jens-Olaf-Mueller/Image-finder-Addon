@@ -1,5 +1,4 @@
 <form id="frmSettings">
-    <!-- <button id="btnLoadDefaults" type="button">Load default settings</button> -->
     <fieldset name="common"><legend>Common settings</legend>
         <label class="control">
             <input type="checkbox" id="chkScanOnStart" name="scanOnStart" checked>
@@ -16,19 +15,8 @@
 
         <label class="control">
             <input type="checkbox" id="chkSaveSettingsForURL" name="saveSettingsForURL">
-             Remember settings for this website
+             Remember settings for this URL
         </label>
-        <div class="control ctrl__vertical">
-            <span>Save settings for:</span>
-            <label>
-                <input type="radio" id="radWebsiteProfileOrigin" name="websiteProfileScope" value="origin" data-profile-scope="true" checked>
-                 This website (origin)
-            </label>
-            <label>
-                <input type="radio" id="radWebsiteProfilePathname" name="websiteProfileScope" value="pathname" data-profile-scope="true">
-                 Current URL path
-            </label>
-        </div>
         <div class="control">
             <label for="inpKeepSettingsForDays">Keep settings for</label>
             <input type="number"

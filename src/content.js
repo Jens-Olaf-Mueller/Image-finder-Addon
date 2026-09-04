@@ -197,11 +197,11 @@ export async function scanImages(ignoreHiddenImages = false) {
     const initialScrollPosition = {x: window.scrollX, y: window.scrollY};
     let scrollPositionChanged = false;
 
-    for (const element of elements) {
+    for (const elmt of elements) {
         try {
-            const style = getComputedStyle(element);
-            if (hasBackdropBlur(style) && isVisibleBackdropElement(element, style)) {
-                backdropBlurElements.add(element);
+            const style = getComputedStyle(elmt);
+            if (hasBackdropBlur(style) && isVisibleBackdropElement(elmt, style)) {
+                backdropBlurElements.add(elmt);
             }
         } catch {
             continue;

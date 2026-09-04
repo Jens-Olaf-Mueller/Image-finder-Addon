@@ -1,4 +1,4 @@
-import { Settings } from './Settings_class.js';
+import { Settings } from './Settings.js';
 import ImageScanner from './ImageScanner.js';
 import { IMAGE_TYPES } from '../image-types.js';
 import Progressbar from './Progressbar.js';
@@ -72,7 +72,7 @@ export class ImageFinder {
         this.imageMatcher = new ImageMatcher(this.analysisStore);
         this.imageMatcher.mode = 'strict';
         this.progressbar = new Progressbar(this.DOM.divProgressbar);
-        this.settingsView = null;
+        this.settingsForm = null;
         this.isSavingAll = false;
         this.currentBlobPreview = null;
         this.#updateLED();
@@ -82,7 +82,7 @@ export class ImageFinder {
     }
 
     async run(onSettingsReady = null) {
-        await this.setWebsiteOriginFromActiveTab();
+        await this.setWebsiteURLFromActiveTab();
         await this.settings.run();
         if (typeof onSettingsReady === 'function') await onSettingsReady();
         this.updateDownloadTitles();
@@ -90,20 +90,20 @@ export class ImageFinder {
         if (this.settings.get('common', 'scanOnStart', true)) await this.scan();
     }
 
-    setSettingsView(settingsView) {
-        this.settingsView = settingsView;
+    setSettingsForm(settingsForm) {
+        this.settingsForm = settingsForm;
     }
 
-    async setWebsiteOriginFromActiveTab() {
+    async setWebsiteURLFromActiveTab() {
         try {
             const [tab] = await window.chrome.tabs.query({
                 active: true,
                 currentWindow: true
             });
 
-            this.settings.setWebsiteOrigin(tab?.url);
+            this.settings.setWebsiteURL(tab?.url);
         } catch {
-            this.settings.setWebsiteOrigin(null);
+            this.settings.setWebsiteURL(null);
         }
     }
 
@@ -365,11 +365,11 @@ export class ImageFinder {
         this.DOM.btnDefaultSettings.disabled = isOpen;
 
         if (!isOpen) {
-            await this.settingsView?.updateUI();
+            await this.settingsForm?.refresh();
             return;
         }
 
-        await this.settings.waitForPendingSave();
+        await this.settingsForm?.waitForPendingSave();
         this.updateDownloadTitles();
         if (this.settings.get('common', 'scanOnSettingsChanged', true)) {
             await this.scan();
@@ -379,9 +379,9 @@ export class ImageFinder {
     async resetSettingsToDefaults() {
         if (this.DOM.btnSettings.value !== 'true') return;
 
-        await this.settings.waitForPendingSave();
+        await this.settingsForm?.waitForPendingSave();
         await this.settings.resetToDefaults();
-        await this.settingsView?.updateUI();
+        await this.settingsForm?.refresh();
         this.updateDownloadTitles();
     }
 

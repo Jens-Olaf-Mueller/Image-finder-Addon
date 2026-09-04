@@ -1,27 +1,27 @@
 
 import { ImageFinder } from './classes/ImageFinder.js';
-import { loadSettingsForm, SettingsView } from './classes/settingsView.js';
+import { loadSettingsForm, SettingsForm } from './classes/SettingsForm.js';
 
 const imageFinder = new ImageFinder();
 
 runPopup();
 
 async function runPopup() {
-    let settingsForm = null;
+    let form = null;
 
     try {
-        settingsForm = await loadSettingsForm('divSettingsContentPopup');
+        form = await loadSettingsForm('divSettingsContentPopup');
     } catch (error) {
         console.warn('Cannot load settings form:', error);
     }
 
     await imageFinder.run(async () => {
-        if (!settingsForm) return;
+        if (!form) return;
 
-        const settingsView = new SettingsView(imageFinder.settings, settingsForm, {
+        const settingsForm = new SettingsForm(imageFinder.settings, form, {
             onSettingsChanged: () => imageFinder.updateDownloadTitles()
         });
-        imageFinder.setSettingsView(settingsView);
-        await settingsView.run({loadSettings: false});
+        imageFinder.setSettingsForm(settingsForm);
+        await settingsForm.run({loadSettings: false});
     });
 }

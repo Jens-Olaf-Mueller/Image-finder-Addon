@@ -243,15 +243,6 @@ img.preview:not([src]) {
     display: block;
 }
 
-/* .toolbar-button:hover {
-    border-color: #a0a0a0;
-    background: #cccccc;
-}
-
-.toolbar-button:active {
-    background: #bbbbbb;
-} */
-
 #btnSettings[value=true],
 .sorted {
     border-style: inset !important;
