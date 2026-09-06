@@ -4,6 +4,7 @@ import { IMAGE_TYPES } from '../image-types.js';
 import Progressbar from './Progressbar.js';
 import BlurScanner from './BlurScanner.js';
 import ImageMatcher from './ImageMatcher.js';
+import { ScanContext } from './ScanContext.js';
 const SORT_ICON_BASE_NAMES = Object.freeze({
     filename: 'sort-alphabetical',
     type: 'sort-type',
@@ -62,6 +63,7 @@ export class ImageFinder {
             this.DOM[elmt.id] = elmt;
         });
         this.settings = new Settings();
+        this.scanContext = new ScanContext();
         this.scanner = new ImageScanner(this.settings);
         // Internal scan candidates may later remain available for analysis when excluded from the visible image list.
         this.candidates = new Map();
@@ -101,8 +103,10 @@ export class ImageFinder {
                 currentWindow: true
             });
 
+            this.scanContext.setTab(tab);
             this.settings.setWebsiteURL(tab?.url);
         } catch {
+            this.scanContext.clear();
             this.settings.setWebsiteURL(null);
         }
     }
@@ -430,6 +434,7 @@ export class ImageFinder {
                 onStart: count => this.progressbar.show(count),
                 onProgress: () => this.progressbar.update()
             });
+            this.scanContext.setTab(this.scanner.currentTab);
 
             this.#setScanResults(scanResults);
             await this.#setVisibleImages();

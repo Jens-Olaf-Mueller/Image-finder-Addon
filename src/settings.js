@@ -7,6 +7,5 @@ async function runSettings() {
     const form = await loadSettingsForm('divSettingsContent');
     const settings = new Settings();
     const settingsForm = new SettingsForm(settings, form);
-
     await settingsForm.run();
 }
