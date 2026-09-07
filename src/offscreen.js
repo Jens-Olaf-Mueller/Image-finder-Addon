@@ -1,7 +1,9 @@
 const OFFSCREEN_TARGET = 'image-finder-offscreen';
+const ISOLATED_DEEP_SCAN_TARGET = 'image-finder-isolated-deepscan';
 
 const objectUrlsByToken = new Map();
 const tokensByDownloadId = new Map();
+let isolatedDeepScanHost = null;
 
 function getErrorMessage(error) {
     return error instanceof Error ? error.message : String(error);
@@ -29,6 +31,22 @@ function releaseObjectUrl(token) {
 
     URL.revokeObjectURL(objectUrl);
     return true;
+}
+
+function getIsolatedDeepScanHost() {
+    if (isolatedDeepScanHost) return isolatedDeepScanHost;
+    if (typeof globalThis.createIsolatedDeepScanHost !== 'function') {
+        throw new Error('The isolated DeepScan host is unavailable');
+    }
+
+    isolatedDeepScanHost = globalThis.createIsolatedDeepScanHost({
+        emit: (event) => chrome.runtime.sendMessage({
+            target: ISOLATED_DEEP_SCAN_TARGET,
+            source: 'isolated-host',
+            ...event
+        })
+    });
+    return isolatedDeepScanHost;
 }
 
 window.chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -68,6 +86,22 @@ window.chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => 
         const token = tokensByDownloadId.get(message.downloadId);
         sendResponse({success: true, released: token ? releaseObjectUrl(token) : false});
         return undefined;
+    }
+
+    if (message.action === 'startDeepScan') {
+        Promise.resolve(getIsolatedDeepScanHost().start(message.job)).then(
+            (result) => sendResponse({success: true, ...result}),
+            (error) => sendResponse({success: false, error: getErrorMessage(error)})
+        );
+        return true;
+    }
+
+    if (message.action === 'cancelDeepScan') {
+        Promise.resolve(getIsolatedDeepScanHost().cancel(message.scanId)).then(
+            (cancelled) => sendResponse({success: true, cancelled}),
+            (error) => sendResponse({success: false, error: getErrorMessage(error)})
+        );
+        return true;
     }
 
     sendResponse({success: false, error: `Unknown offscreen action "${message.action}"`});

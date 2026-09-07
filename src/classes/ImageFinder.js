@@ -11,6 +11,8 @@ const SORT_ICON_BASE_NAMES = Object.freeze({
     size: 'sort-size',
     dimensions: 'sort-dims'
 });
+const SCAN_PROGRESS_COLOR = '#32CD32';
+const FILTER_PROGRESS_COLOR = '#FF6347';
 
 export class ImageFinder {
     #activityCounts = {
@@ -398,6 +400,7 @@ export class ImageFinder {
 
     clear({invalidateScan = true} = {}) {
         if (invalidateScan) {
+            void this.scanner.cancelDeepScan();
             this.#scanGeneration += 1;
             this.#resetScanActivities();
         }
@@ -435,6 +438,7 @@ export class ImageFinder {
     }
 
     async scan() {
+        void this.scanner.cancelDeepScan();
         const scanGeneration = this.#scanGeneration + 1;
         this.#scanGeneration = scanGeneration;
         let scanCompleted = false;
@@ -449,6 +453,8 @@ export class ImageFinder {
             this.sortState = {criterion: null, direction: 'asc'};
             this.#updateSortButtons();
             this.DOM.spnStatusBar.style.display = 'none';
+            this.progressbar.backgroundColor = SCAN_PROGRESS_COLOR;
+            this.progressbar.reset();
 
             const scanResults = await this.scanner.scan({
                 onStart: count => this.progressbar.show(count),
@@ -459,12 +465,23 @@ export class ImageFinder {
             this.scanContext.setTab(this.scanner.currentTab);
 
             this.#setScanResults(scanResults);
-            if (!(await this.#refreshVisibleImages(scanGeneration, {initialSort: true}))) return;
-            this.progressbar.hide();
+            let visibleImagesUpdated = false;
+            try {
+                visibleImagesUpdated = await this.#refreshVisibleImages(scanGeneration, {
+                    initialSort: true,
+                    showFilteringProgress: true
+                });
+            } finally {
+                this.#finishFilteringProgress();
+            }
+            if (!visibleImagesUpdated) return;
             scanCompleted = true;
 
-            if (this.settings.get('common', 'allowBackgroundScan', false) === true &&
-                this.scanContext.isScannable && Number.isInteger(this.scanContext.tabId)) {
+            const allowBackgroundScan = this.settings.get('common', 'allowBackgroundScan', false);
+            const canDeepScan = allowBackgroundScan === true &&
+                this.scanContext.isScannable && Number.isInteger(this.scanContext.tabId);
+
+            if (canDeepScan) {
                 const deepScanTabId = this.scanContext.tabId;
 
                 this.stopActivity('scanner', scanGeneration);
@@ -475,13 +492,9 @@ export class ImageFinder {
 
                 try {
                     await this.scanner.scanDeepImages(this.scanContext, async (rawCandidates) => {
-                        if (!this.#isCurrentScan(scanGeneration)) return false;
-
-                        // TEMP DEBUG: DeepScan added-image verification
-                        const imagesBeforeDeepBatch = new Set(
-                            Array.from(this.images.values(), (image) => image.url)
-                        );
-                        // END TEMP DEBUG
+                        if (!this.#isCurrentScan(scanGeneration)) {
+                            return false;
+                        }
 
                         const newCandidates = this.#getNewURLCandidates(rawCandidates);
                         if (newCandidates.length === 0) return true;
@@ -494,20 +507,6 @@ export class ImageFinder {
                         const visibleImagesUpdated = await this.#refreshVisibleImages(
                             scanGeneration
                         );
-
-                        // TEMP DEBUG: DeepScan added-image verification
-                        if (visibleImagesUpdated) {
-                            this.images.forEach((image) => {
-                                if (imagesBeforeDeepBatch.has(image.url)) return;
-
-                                console.log(
-                                    '[DeepScan] Added image:',
-                                    image.url,
-                                    `${image.width} × ${image.height}`
-                                );
-                            });
-                        }
-                        // END TEMP DEBUG
 
                         return visibleImagesUpdated;
                     });
@@ -805,8 +804,13 @@ export class ImageFinder {
         return selectedItem;
     }
 
-    async #refreshVisibleImages(scanGeneration, {initialSort = false} = {}) {
-        const visibleImagesUpdated = await this.#setVisibleImages(scanGeneration);
+    async #refreshVisibleImages(
+        scanGeneration,
+        {initialSort = false, showFilteringProgress = false} = {}
+    ) {
+        const visibleImagesUpdated = await this.#setVisibleImages(scanGeneration, {
+            showFilteringProgress
+        });
         if (!visibleImagesUpdated || !this.#isCurrentScan(scanGeneration)) return false;
 
         const renderState = this.#captureRenderState();
@@ -837,17 +841,66 @@ export class ImageFinder {
         this.#updateLED();
     }
 
-    async #setVisibleImages(scanGeneration) {
+    #createFilteringProgress(candidates) {
+        const filters = this.settings.get('filters') ?? {};
+        const runsBlurScanner = filters.ignoreBlurredImages === true && candidates.length > 0;
+        const runsImageMatcher = filters.ignoreDuplicates === true && candidates.length >= 2;
+        const stages = [
+            ...(runsBlurScanner ? ['blurScanner'] : []),
+            ...(runsImageMatcher ? ['matcher'] : [])
+        ];
+
+        if (stages.length === 0) return null;
+
+        this.progressbar.backgroundColor = FILTER_PROGRESS_COLOR;
+        this.progressbar.show(100);
+
+        const progressByStage = Object.fromEntries(stages.map((stage, index) => [
+            stage,
+            {
+                start: index * 100 / stages.length,
+                span: 100 / stages.length
+            }
+        ]));
+        const updateStage = (stage, completed, total) => {
+            if (!Number.isFinite(total) || total <= 0) return;
+
+            const progress = progressByStage[stage];
+            if (!progress) return;
+
+            this.progressbar.setValue(
+                progress.start + progress.span * Math.min(1, completed / total)
+            );
+        };
+
+        return {
+            onBlurProgress: (completed, total) => updateStage('blurScanner', completed, total),
+            onMatcherProgress: (completed, total) => updateStage('matcher', completed, total)
+        };
+    }
+
+    #finishFilteringProgress() {
+        this.progressbar.setValue(this.progressbar.max);
+        this.progressbar.hide();
+        this.progressbar.backgroundColor = SCAN_PROGRESS_COLOR;
+    }
+
+    async #setVisibleImages(scanGeneration, {showFilteringProgress = false} = {}) {
         const candidates = Array.from(this.candidates);
+        const filteringProgress = showFilteringProgress
+            ? this.#createFilteringProgress(candidates)
+            : null;
         const blurAcceptedCandidates = await this.#getBlurAcceptedCandidates(
             candidates,
-            scanGeneration
+            scanGeneration,
+            filteringProgress?.onBlurProgress
         );
         if (!blurAcceptedCandidates || !this.#isCurrentScan(scanGeneration)) return false;
 
         const visibleCandidates = await this.#getDuplicateWinners(
             blurAcceptedCandidates,
-            scanGeneration
+            scanGeneration,
+            filteringProgress?.onMatcherProgress
         );
         if (!visibleCandidates || !this.#isCurrentScan(scanGeneration)) return false;
 
@@ -859,7 +912,7 @@ export class ImageFinder {
         return true;
     }
 
-    async #getBlurAcceptedCandidates(candidates, scanGeneration) {
+    async #getBlurAcceptedCandidates(candidates, scanGeneration, onProgress = null) {
         const filters = this.settings.get('filters') ?? {};
 
         if (filters.ignoreBlurredImages !== true) return candidates;
@@ -870,7 +923,8 @@ export class ImageFinder {
 
         this.startActivity('blurScanner', scanGeneration);
         try {
-            for (const [candidateId, candidate] of candidates) {
+            for (let index = 0; index < candidates.length; index++) {
+                const [candidateId, candidate] = candidates[index];
                 if (!this.#isCurrentScan(scanGeneration)) return null;
 
                 try {
@@ -884,6 +938,8 @@ export class ImageFinder {
                     console.warn('Cannot analyze image blur:', candidate.url, error);
                     acceptedCandidateIds.add(candidateId);
                 }
+
+                onProgress?.(index + 1, candidates.length);
             }
         } finally {
             this.stopActivity('blurScanner', scanGeneration);
@@ -892,7 +948,7 @@ export class ImageFinder {
         return candidates.filter(([candidateId]) => acceptedCandidateIds.has(candidateId));
     }
 
-    async #getDuplicateWinners(acceptedCandidates, scanGeneration) {
+    async #getDuplicateWinners(acceptedCandidates, scanGeneration, onProgress = null) {
         const filters = this.settings.get('filters') ?? {};
 
         if (filters.ignoreDuplicates !== true || acceptedCandidates.length < 2) {
@@ -903,7 +959,8 @@ export class ImageFinder {
         try {
             const duplicateGroups = [];
 
-            for (const candidateEntry of acceptedCandidates) {
+            for (let index = 0; index < acceptedCandidates.length; index++) {
+                const candidateEntry = acceptedCandidates[index];
                 if (!this.#isCurrentScan(scanGeneration)) return null;
 
                 const matchingGroups = [];
@@ -916,16 +973,17 @@ export class ImageFinder {
 
                 if (matchingGroups.length === 0) {
                     duplicateGroups.push([candidateEntry]);
-                    continue;
+                } else {
+                    const [targetGroup, ...groupsToMerge] = matchingGroups;
+
+                    targetGroup.push(candidateEntry);
+                    groupsToMerge.forEach((group) => {
+                        targetGroup.push(...group);
+                        duplicateGroups.splice(duplicateGroups.indexOf(group), 1);
+                    });
                 }
 
-                const [targetGroup, ...groupsToMerge] = matchingGroups;
-
-                targetGroup.push(candidateEntry);
-                groupsToMerge.forEach((group) => {
-                    targetGroup.push(...group);
-                    duplicateGroups.splice(duplicateGroups.indexOf(group), 1);
-                });
+                onProgress?.(index + 1, acceptedCandidates.length);
             }
 
             return duplicateGroups.map(group => this.#selectDuplicateWinner(group));

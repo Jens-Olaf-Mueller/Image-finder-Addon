@@ -24,6 +24,30 @@
         ],
         "service_worker": "src/background.js"
     },
+    "content_scripts": [
+        {
+            "matches": [
+                "http://*/*",
+                "https://*/*"
+            ],
+            "js": [
+                "src/deepscan-frame.js"
+            ],
+            "all_frames": true,
+            "run_at": "document_start"
+        }
+    ],
+    "web_accessible_resources": [
+        {
+            "resources": [
+                "src/content.js"
+            ],
+            "matches": [
+                "http://*/*",
+                "https://*/*"
+            ]
+        }
+    ],
     "action": {
         "default_title": "Image Finder",
         "default_icon": "assets/icons/icon64.png",

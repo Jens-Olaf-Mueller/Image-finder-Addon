@@ -228,7 +228,7 @@ img.preview:not([src]) {
 }
 
 .toolbar-button.scanner-led.active[data-activity="deepScan"] {
-    background-color: rgb(255, 230, 0);
+    background-color: #ffe600;
 }
 
 .theme input {

@@ -1,13 +1,28 @@
 export async function scanImages(
     ignoreHiddenImages = false,
     includeAllImageSources = false,
-    includeSupplementarySources = true
+    includeSupplementarySources = true,
+    mutationObserverOptions = null,
+    includeLightboxSources = false
 ) {
     const getURL = (value) => {
         if (typeof value !== 'string' || !value.trim()) return null;
 
         try {
             return new URL(value.trim(), document.baseURI).href;
+        } catch {
+            return null;
+        }
+    };
+
+    const getImageURL = (value) => {
+        const url = getURL(value);
+        if (!url) return null;
+        if (/^(?:data:image\/|blob:)/i.test(url)) return url;
+
+        try {
+            const {protocol} = new URL(url);
+            return ['http:', 'https:'].includes(protocol) ? url : null;
         } catch {
             return null;
         }
@@ -52,6 +67,17 @@ export async function scanImages(
         }
 
         return candidates[0].url;
+    };
+
+    const getPictureSourceURLs = (img) => {
+        const picture = img.closest?.('picture');
+        if (!picture) return [];
+
+        return Array.from(picture.querySelectorAll('source[srcset], source[data-srcset]'))
+            .map((source) => getPreferredSrcsetURL(
+                source.getAttribute('data-srcset') || source.getAttribute('srcset')
+            ))
+            .filter(Boolean);
     };
 
     const getBackgroundURLs = (bgImage) => {
@@ -260,8 +286,9 @@ export async function scanImages(
 
     const images = [];
 
-    const addCandidate = (url, width, height, source, element) => {
-        if (!url) return;
+    const addCandidate = (url, width, height, source, element, seenURLs = null) => {
+        if (!url || seenURLs?.has(url)) return;
+        seenURLs?.add(url);
 
         const visuallyBlurred = source !== 'linkedimages' && (
             isBlurred(element) || isBackdropBlurred(element)
@@ -280,8 +307,13 @@ export async function scanImages(
         });
     };
 
-    for (const img of document.images) {
-        if (isHidden(img)) continue;
+    const collectImageElement = (
+        img,
+        includeAllSources,
+        seenURLs = null,
+        includeHiddenImages = false
+    ) => {
+        if (!includeHiddenImages && isHidden(img)) return;
 
         const currentSrc = getURL(img.currentSrc);
         const src = getURL(img.getAttribute('src'));
@@ -290,13 +322,14 @@ export async function scanImages(
         const hasLazySource = Boolean(dataSrc || dataSrcset);
         const currentSrcLooksLikePlaceholder = hasLazySource && (!currentSrc || currentSrc === src);
 
-        if (includeAllImageSources) {
+        if (includeAllSources) {
             const imageSources = [
                 currentSrc,
                 src,
                 getPreferredSrcsetURL(img.getAttribute('srcset')),
                 dataSrc,
-                getPreferredSrcsetURL(dataSrcset)
+                getPreferredSrcsetURL(dataSrcset),
+                ...getPictureSourceURLs(img)
             ];
 
             for (const url of new Set(imageSources.filter(Boolean))) {
@@ -306,10 +339,11 @@ export async function scanImages(
                     dimensionsKnown ? img.naturalWidth : 0,
                     dimensionsKnown ? img.naturalHeight : 0,
                     'imageelements',
-                    img
+                    img,
+                    seenURLs
                 );
             }
-            continue;
+            return;
         }
 
         let url = currentSrc;
@@ -323,8 +357,272 @@ export async function scanImages(
             dimensionsKnown ? img.naturalWidth : 0,
             dimensionsKnown ? img.naturalHeight : 0,
             'imageelements',
-            img
+            img,
+            seenURLs
         );
+    };
+
+    const LIGHTBOX_SOURCE_ATTRIBUTE_NAMES = [
+        'data-src',
+        'data-srcset',
+        'data-image',
+        'data-image-src',
+        'data-full',
+        'data-full-src',
+        'data-fullsize',
+        'data-large',
+        'data-original',
+        'data-lightbox-src'
+    ];
+    const LIGHTBOX_MUTATION_ATTRIBUTE_NAMES = [
+        'src',
+        'srcset',
+        ...LIGHTBOX_SOURCE_ATTRIBUTE_NAMES,
+        'href',
+        'aria-controls',
+        'data-target',
+        'onclick'
+    ];
+
+    const addLightboxSource = (value, element, seenURLs, {srcset = false} = {}) => {
+        const url = getImageURL(srcset ? getPreferredSrcsetURL(value) : value);
+        addCandidate(url, 0, 0, 'linkedimages', element, seenURLs);
+    };
+
+    const collectLightboxDataSources = (element, seenURLs) => {
+        if (!element?.getAttribute) return;
+
+        LIGHTBOX_SOURCE_ATTRIBUTE_NAMES.forEach((attributeName) => {
+            const value = element.getAttribute(attributeName);
+            if (!value) return;
+
+            addLightboxSource(value, element, seenURLs, {
+                srcset: attributeName.endsWith('srcset')
+            });
+        });
+    };
+
+    const getClickableTarget = (img) => [
+        img.closest?.('a'),
+        img.closest?.('button'),
+        img.closest?.('[role="button"]'),
+        img.closest?.('[aria-haspopup]'),
+        img.closest?.('[aria-controls]')
+    ].find(Boolean) ?? (
+        typeof img.onclick === 'function' || Boolean(img.getAttribute?.('onclick'))
+            ? img
+            : null
+    );
+
+    const getAssociatedLightboxElements = (elements) => {
+        const ids = new Set();
+        const addFragmentID = (value) => {
+            const match = typeof value === 'string' && value.trim().match(/^#(.+)$/);
+            if (match?.[1]) ids.add(match[1]);
+        };
+
+        elements.forEach((element) => {
+            if (!element?.getAttribute) return;
+
+            element.getAttribute('aria-controls')?.trim().split(/\s+/).forEach((id) => {
+                if (id) ids.add(id);
+            });
+            addFragmentID(element.getAttribute('href'));
+
+            const target = element.getAttribute('data-target')?.trim();
+            if (!target) return;
+            if (target.startsWith('#')) {
+                addFragmentID(target);
+            } else if (/^[A-Za-z][\w:.-]*$/.test(target)) {
+                ids.add(target);
+            }
+        });
+
+        return Array.from(ids, (id) => document.getElementById(id)).filter(Boolean);
+    };
+
+    const collectLightboxSources = (img, seenURLs = null) => {
+        const target = getClickableTarget(img);
+        if (!target) return;
+
+        const relatedElements = new Set([img, target]);
+        const href = target.tagName?.toLowerCase() === 'a'
+            ? target.getAttribute('href')
+            : null;
+        if (href && !href.trim().startsWith('#')) {
+            addLightboxSource(href, target, seenURLs);
+        }
+
+        relatedElements.forEach((element) => collectLightboxDataSources(element, seenURLs));
+
+        getAssociatedLightboxElements(relatedElements).forEach((lightboxElement) => {
+            collectLightboxDataSources(lightboxElement, seenURLs);
+
+            const lightboxImages = [
+                ...(lightboxElement.matches?.('img') ? [lightboxElement] : []),
+                ...(lightboxElement.querySelectorAll?.('img') ?? [])
+            ];
+            lightboxImages.forEach((lightboxImage) => {
+                collectImageElement(lightboxImage, true, seenURLs, true);
+                collectLightboxDataSources(lightboxImage, seenURLs);
+            });
+        });
+    };
+
+    const enrichBlobCandidates = async () => {
+        await Promise.all(images.map(async (image) => {
+            if (image.source !== 'blobimages') return;
+
+            const [metadata, dimensions] = await Promise.all([
+                getBlobMetadata(image.url),
+                image.width > 0 && image.height > 0
+                    ? null
+                    : getBlobDimensions(image.url)
+            ]);
+            if (metadata) Object.assign(image, metadata);
+            if (dimensions) {
+                image.width = dimensions.width;
+                image.height = dimensions.height;
+            }
+        }));
+    };
+
+    if (mutationObserverOptions?.enabled === true) {
+        const debounceMs = Number.isFinite(mutationObserverOptions.debounceMs)
+            ? Math.max(0, mutationObserverOptions.debounceMs)
+            : 100;
+        const quietPeriodMs = Number.isFinite(mutationObserverOptions.quietPeriodMs)
+            ? Math.max(0, mutationObserverOptions.quietPeriodMs)
+            : 1000;
+        const hardLimitMs = Number.isFinite(mutationObserverOptions.hardLimitMs)
+            ? Math.max(quietPeriodMs, mutationObserverOptions.hardLimitMs)
+            : 5000;
+        const seenURLs = new Set();
+        const pendingImages = new Set();
+
+        await new Promise((resolve) => {
+            const target = document.documentElement;
+            if (!target || typeof MutationObserver !== 'function') {
+                resolve();
+                return;
+            }
+
+            let observer = null;
+            let debounceTimer = null;
+            let quietTimer = null;
+            let hardLimitTimer = null;
+            let finished = false;
+
+            const processPendingImages = () => {
+                debounceTimer = null;
+
+                const imagesToProcess = Array.from(pendingImages);
+                pendingImages.clear();
+
+                imagesToProcess.forEach((image) => {
+                    try {
+                        collectImageElement(image, true, seenURLs);
+                        if (includeLightboxSources && !isHidden(image)) {
+                            collectLightboxSources(image, seenURLs);
+                        }
+                    } catch {
+                        // Ignore one invalid page-owned element and keep observing.
+                    }
+                });
+            };
+
+            const finish = () => {
+                if (finished) return;
+                finished = true;
+
+                if (debounceTimer !== null) clearTimeout(debounceTimer);
+                if (quietTimer !== null) clearTimeout(quietTimer);
+                if (hardLimitTimer !== null) clearTimeout(hardLimitTimer);
+                processPendingImages();
+                observer?.disconnect();
+                resolve();
+            };
+
+            const resetQuietPeriod = () => {
+                if (quietTimer !== null) clearTimeout(quietTimer);
+                quietTimer = setTimeout(finish, quietPeriodMs);
+            };
+
+            const queueImages = (node) => {
+                if (!node || (node.nodeType !== Node.ELEMENT_NODE &&
+                    node.nodeType !== Node.DOCUMENT_FRAGMENT_NODE)) {
+                    return false;
+                }
+
+                let foundImage = false;
+                if (node.nodeType === Node.ELEMENT_NODE && node.matches?.('img')) {
+                    pendingImages.add(node);
+                    foundImage = true;
+                }
+
+                node.querySelectorAll?.('img').forEach((image) => {
+                    pendingImages.add(image);
+                    foundImage = true;
+                });
+
+                return foundImage;
+            };
+
+            const scheduleProcessing = () => {
+                if (debounceTimer !== null) clearTimeout(debounceTimer);
+                debounceTimer = setTimeout(processPendingImages, debounceMs);
+            };
+
+            observer = new MutationObserver((records) => {
+                let hasRelevantMutation = false;
+
+                records.forEach((record) => {
+                    if (record.type === 'childList') {
+                        record.addedNodes.forEach((node) => {
+                            hasRelevantMutation = queueImages(node) || hasRelevantMutation;
+                        });
+                    } else if (record.type === 'attributes') {
+                        const mutationTarget = record.target;
+                        if (mutationTarget?.matches?.('img')) {
+                            pendingImages.add(mutationTarget);
+                            hasRelevantMutation = true;
+                        } else if (includeLightboxSources && mutationTarget?.matches?.(
+                            'a, button, [role="button"], [aria-haspopup], [aria-controls]'
+                        )) {
+                            hasRelevantMutation = queueImages(mutationTarget) || hasRelevantMutation;
+                        }
+                    }
+                });
+
+                if (!hasRelevantMutation) return;
+
+                resetQuietPeriod();
+                scheduleProcessing();
+            });
+
+            try {
+                observer.observe(target, {
+                    subtree: true,
+                    childList: true,
+                    attributes: true,
+                    attributeFilter: LIGHTBOX_MUTATION_ATTRIBUTE_NAMES
+                });
+                resetQuietPeriod();
+                hardLimitTimer = setTimeout(finish, hardLimitMs);
+            } catch {
+                finish();
+            }
+        });
+
+        await enrichBlobCandidates();
+        return images;
+    }
+
+    for (const img of document.images) {
+        collectImageElement(img, includeAllImageSources);
+        if (includeLightboxSources && !isHidden(img)) {
+            collectLightboxSources(img);
+        }
     }
 
     if (includeSupplementarySources) {
@@ -353,23 +651,409 @@ export async function scanImages(
         }
     }
 
-    await Promise.all(images.map(async (image) => {
-        if (image.source !== 'blobimages') return;
-
-        const [metadata, dimensions] = await Promise.all([
-            getBlobMetadata(image.url),
-            image.width > 0 && image.height > 0
-                ? null
-                : getBlobDimensions(image.url)
-        ]);
-        if (metadata) Object.assign(image, metadata);
-        if (dimensions) {
-            image.width = dimensions.width;
-            image.height = dimensions.height;
-        }
-    }));
+    await enrichBlobCandidates();
 
     return images;
+}
+
+const DEEP_SCAN_READINESS_POLL_INTERVAL_MS = 100;
+const DEEP_SCAN_READINESS_STABLE_MS = 300;
+const DEEP_SCAN_READINESS_MAX_WAIT_MS = 2000;
+
+export async function runIsolatedDeepScan({
+    ignoreHiddenImages = false,
+    onBatch = null,
+    signal = null,
+    totalLimitMs = 30000,
+    scrollStepFactor = 0.8,
+    scrollSettleMs = 150,
+    maxScrollSteps = 40,
+    lightboxSettleMs = 250,
+    maxLightboxActivations = 40,
+    finalSettleMs = 1000
+} = {}) {
+    const startedAt = Date.now();
+    const deadline = startedAt + Math.max(0, totalLimitMs);
+    const seenURLs = new Set();
+    const pendingCollections = [];
+    const imageSourceAttributes = [
+        'data-src',
+        'data-srcset',
+        'data-image',
+        'data-image-src',
+        'data-full',
+        'data-full-src',
+        'data-fullsize',
+        'data-large',
+        'data-original',
+        'data-lightbox-src'
+    ];
+    const explicitLightboxSourceAttributes = imageSourceAttributes.filter((attribute) => ![
+        'data-src',
+        'data-srcset'
+    ].includes(attribute));
+    const mutationAttributes = [
+        'src',
+        'srcset',
+        ...imageSourceAttributes,
+        'href',
+        'aria-controls',
+        'data-target',
+        'onclick'
+    ];
+    const clickedTargets = new WeakSet();
+    let collectionQueue = Promise.resolve();
+    let observer = null;
+    let mutationTimer = null;
+    let lightboxActivations = 0;
+    const isActive = () => signal?.aborted !== true && Date.now() < deadline;
+    const getURL = (value) => {
+        if (typeof value !== 'string' || !value.trim()) return null;
+
+        try {
+            return new URL(value.trim(), document.baseURI).href;
+        } catch {
+            return null;
+        }
+    };
+    const isImageLikeURL = (value) => {
+        const url = getURL(value);
+        if (!url) return false;
+        if (/^(?:data:image\/|blob:)/i.test(url)) return true;
+
+        try {
+            return /\.(?:jpe?g|png|bmp|gif|webp|svg|avif)(?:$|[?#])/i.test(new URL(url).pathname);
+        } catch {
+            return false;
+        }
+    };
+    const wait = (milliseconds) => new Promise((resolve) => {
+        if (signal?.aborted) {
+            resolve(false);
+            return;
+        }
+
+        const finish = (completed) => {
+            clearTimeout(timeout);
+            signal?.removeEventListener?.('abort', onAbort);
+            resolve(completed);
+        };
+        const timeout = setTimeout(() => finish(true), milliseconds);
+        const onAbort = () => finish(false);
+
+        signal?.addEventListener?.('abort', onAbort, {once: true});
+    });
+    const scrollToDocumentPosition = (position) => {
+        const parent = document.body ?? document.documentElement;
+        if (!parent || typeof document.createElement !== 'function') return false;
+
+        const anchor = document.createElement('div');
+        anchor.setAttribute('aria-hidden', 'true');
+        anchor.style.cssText = [
+            'position:absolute!important',
+            'display:block!important',
+            'left:0!important',
+            `top:${Math.max(0, position)}px!important`,
+            'width:1px!important',
+            'height:1px!important',
+            'margin:0!important',
+            'padding:0!important',
+            'border:0!important',
+            'pointer-events:none!important',
+            'opacity:0!important'
+        ].join(';');
+
+        try {
+            parent.append(anchor);
+            try {
+                anchor.scrollIntoView({behavior: 'instant', block: 'start'});
+            } catch {
+                anchor.scrollIntoView({behavior: 'auto', block: 'start'});
+            }
+            return true;
+        } finally {
+            anchor.remove();
+        }
+    };
+    const getReadinessState = () => {
+        const documentElement = document.documentElement;
+        const body = document.body;
+        const scrollHeight = Math.max(
+            documentElement?.scrollHeight ?? 0,
+            body?.scrollHeight ?? 0
+        );
+        const images = document.images?.length ?? 0;
+        const relevantElementCount = body?.childElementCount ?? 0;
+
+        return {
+            readyState: document.readyState,
+            viewportReady: window.innerWidth > 0 && window.innerHeight > 0,
+            images,
+            scrollHeight,
+            relevantElementCount,
+            layoutSignature: [
+                scrollHeight,
+                images,
+                relevantElementCount
+            ].join(':')
+        };
+    };
+    const waitForScanReadiness = async () => {
+        const readinessStartedAt = Date.now();
+        const readinessDeadline = Math.min(
+            deadline,
+            readinessStartedAt + DEEP_SCAN_READINESS_MAX_WAIT_MS
+        );
+        let layoutSignature = null;
+        let stableSince = null;
+
+        while (isActive()) {
+            const state = getReadinessState();
+            const now = Date.now();
+            const layoutChanged = layoutSignature !== state.layoutSignature;
+
+            if (!state.viewportReady) {
+                layoutSignature = null;
+                stableSince = null;
+            } else if (layoutChanged) {
+                layoutSignature = state.layoutSignature;
+                stableSince = now;
+            }
+            if (state.viewportReady && stableSince !== null &&
+                now - stableSince >= DEEP_SCAN_READINESS_STABLE_MS) {
+                return state;
+            }
+
+            if (now >= readinessDeadline) {
+                return state;
+            }
+
+            await wait(Math.min(
+                DEEP_SCAN_READINESS_POLL_INTERVAL_MS,
+                Math.max(0, readinessDeadline - Date.now())
+            ));
+        }
+
+        return getReadinessState();
+    };
+    const serializeCandidate = (candidate) => ({
+        url: candidate.url,
+        width: Number.isFinite(candidate.width) ? Math.max(0, candidate.width) : 0,
+        height: Number.isFinite(candidate.height) ? Math.max(0, candidate.height) : 0,
+        source: candidate.source,
+        visuallyBlurred: candidate.visuallyBlurred === true,
+        ...(typeof candidate.mimeType === 'string' ? {mimeType: candidate.mimeType} : {}),
+        ...(Number.isFinite(candidate.fileSize) ? {fileSize: candidate.fileSize} : {})
+    });
+    const collectSources = async () => {
+        if (!isActive()) return;
+
+        const foundCandidates = await scanImages(
+            ignoreHiddenImages,
+            true,
+            false,
+            null,
+            true
+        );
+        const newCandidates = [];
+
+        for (const candidate of foundCandidates) {
+            if (typeof candidate?.url !== 'string' || seenURLs.has(candidate.url)) continue;
+
+            seenURLs.add(candidate.url);
+            newCandidates.push(serializeCandidate(candidate));
+        }
+
+        if (newCandidates.length > 0 && typeof onBatch === 'function' && isActive()) {
+            await onBatch(newCandidates);
+        }
+    };
+    const queueCollection = () => {
+        const collection = collectionQueue.then(collectSources).catch(() => undefined);
+        collectionQueue = collection;
+        pendingCollections.push(collection);
+        return collection;
+    };
+    const scheduleCollection = () => {
+        if (mutationTimer !== null) clearTimeout(mutationTimer);
+        mutationTimer = setTimeout(() => {
+            mutationTimer = null;
+            void queueCollection();
+        }, 100);
+    };
+    const isRelevantMutation = (record) => {
+        if (record.type === 'attributes') return true;
+
+        return Array.from(record.addedNodes ?? []).some((node) => node.nodeType === Node.ELEMENT_NODE && (
+            node.matches?.('img') || node.querySelector?.('img')
+        ));
+    };
+    const getClickableTarget = (image) => [
+        image.closest?.('a'),
+        image.closest?.('button'),
+        image.closest?.('[role="button"]'),
+        image.closest?.('[aria-haspopup]'),
+        image.closest?.('[aria-controls]')
+    ].find(Boolean) ?? (
+        typeof image.onclick === 'function' || Boolean(image.getAttribute?.('onclick'))
+            ? image
+            : null
+    );
+    const getAssociatedElements = (elements) => {
+        const ids = new Set();
+        const addFragmentID = (value) => {
+            const match = typeof value === 'string' && value.trim().match(/^#(.+)$/);
+            if (match?.[1]) ids.add(match[1]);
+        };
+
+        elements.forEach((element) => {
+            if (!element?.getAttribute) return;
+
+            element.getAttribute('aria-controls')?.trim().split(/\s+/).forEach((id) => {
+                if (id) ids.add(id);
+            });
+            addFragmentID(element.getAttribute('href'));
+
+            const target = element.getAttribute('data-target')?.trim();
+            if (target?.startsWith('#')) addFragmentID(target);
+            else if (/^[A-Za-z][\w:.-]*$/.test(target)) ids.add(target);
+        });
+
+        return Array.from(ids, (id) => document.getElementById(id)).filter(Boolean);
+    };
+    const hasPassiveSource = (image, target) => {
+        const hasDirectSource = [image, target].some((element) => {
+            if (!element?.getAttribute) return false;
+            if (element.tagName?.toLowerCase() === 'a' && isImageLikeURL(element.getAttribute('href'))) {
+                return true;
+            }
+
+            return explicitLightboxSourceAttributes.some((attribute) => element.getAttribute(attribute));
+        });
+        if (hasDirectSource) return true;
+
+        return getAssociatedElements([image, target]).some((element) => {
+            if (element.tagName?.toLowerCase() === 'a' && isImageLikeURL(element.getAttribute('href'))) {
+                return true;
+            }
+            if (explicitLightboxSourceAttributes.some((attribute) => element.getAttribute(attribute))) {
+                return true;
+            }
+
+            return element.matches?.('img') || Boolean(element.querySelector?.('img'));
+        });
+    };
+    const hasLightboxIndicator = (target) => Boolean(
+        target.matches?.('button, [role="button"], [aria-haspopup], [aria-controls]') ||
+        target.getAttribute?.('data-target') ||
+        target.getAttribute?.('onclick') ||
+        typeof target.onclick === 'function'
+    );
+    const isExcludedNavigationTarget = (target) => {
+        const label = [
+            target.textContent,
+            target.getAttribute?.('aria-label'),
+            target.getAttribute?.('title')
+        ].filter(Boolean).join(' ').trim();
+
+        return target.matches?.('[rel~="next"], [rel~="prev"], [data-carousel], [data-slide]') ||
+            /\b(?:view|load|show)\s+more\b|\b(?:next|previous|carousel)\b/i.test(label);
+    };
+    const canActivate = (image, target) => {
+        if (!target || clickedTargets.has(target) || isExcludedNavigationTarget(target) ||
+            hasPassiveSource(image, target)) {
+            return false;
+        }
+
+        const isLink = target.tagName?.toLowerCase() === 'a';
+        const href = isLink ? target.getAttribute('href')?.trim() : null;
+
+        if (isLink && href && !href.startsWith('#') && !hasLightboxIndicator(target)) return false;
+        return !isLink || !href || href.startsWith('#') || hasLightboxIndicator(target);
+    };
+    const activateLightboxTargets = async () => {
+        for (const image of document.images) {
+            if (!isActive() || lightboxActivations >= maxLightboxActivations) return;
+
+            const target = getClickableTarget(image);
+            if (!canActivate(image, target)) continue;
+
+            clickedTargets.add(target);
+            try {
+                target.click();
+                lightboxActivations += 1;
+            } catch {
+                continue;
+            }
+
+            if (!(await wait(lightboxSettleMs)) || !isActive()) return;
+            await queueCollection();
+        }
+    };
+    try {
+        if (typeof MutationObserver === 'function' && document.documentElement) {
+            observer = new MutationObserver((records) => {
+                if (records.some(isRelevantMutation)) scheduleCollection();
+            });
+            observer.observe(document.documentElement, {
+                subtree: true,
+                childList: true,
+                attributes: true,
+                attributeFilter: mutationAttributes
+            });
+        }
+
+        await waitForScanReadiness();
+        await queueCollection();
+        await activateLightboxTargets();
+
+        let previousScrollHeight = document.scrollingElement?.scrollHeight ?? document.documentElement.scrollHeight;
+        const hasLazyViewport = window.innerHeight > 0;
+        const viewportHeight = Math.max(window.innerHeight || 0, 1);
+        for (let step = 0; step < maxScrollSteps && isActive() && hasLazyViewport; step += 1) {
+            const scrollElement = document.scrollingElement ?? document.documentElement;
+            const before = window.scrollY;
+            const scrollHeightBefore = scrollElement.scrollHeight;
+            const maximumScrollY = Math.max(0, scrollHeightBefore - viewportHeight);
+            const target = Math.min(
+                maximumScrollY,
+                before + Math.ceil(viewportHeight * scrollStepFactor)
+            );
+
+            if (target <= before) break;
+            if (!scrollToDocumentPosition(target)) break;
+
+            if (!(await wait(scrollSettleMs)) || !isActive()) break;
+            const after = window.scrollY;
+            let scrollHeight = scrollElement.scrollHeight;
+            if (after <= before) break;
+
+            await queueCollection();
+            await activateLightboxTargets();
+            scrollHeight = scrollElement.scrollHeight;
+            const reachedBottom = after + viewportHeight >= scrollHeight - 2;
+            if (reachedBottom && scrollHeight <= previousScrollHeight) break;
+
+            previousScrollHeight = scrollHeight;
+        }
+
+        if (isActive() && await wait(finalSettleMs)) {
+            await queueCollection();
+        }
+    } finally {
+        if (mutationTimer !== null) clearTimeout(mutationTimer);
+        observer?.disconnect();
+        await Promise.allSettled(pendingCollections);
+    }
+
+    return {
+        status: signal?.aborted === true
+            ? 'cancelled'
+            : Date.now() >= deadline
+                ? 'timedOut'
+                : 'completed',
+        lightboxActivations
+    };
 }
 
 export function getPageURL() {

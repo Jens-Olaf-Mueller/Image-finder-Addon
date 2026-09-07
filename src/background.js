@@ -1,14 +1,18 @@
 const OFFSCREEN_DOCUMENT_PATH = 'offscreen.html';
 const OFFSCREEN_TARGET = 'image-finder-offscreen';
+const ISOLATED_DEEP_SCAN_TARGET = 'image-finder-isolated-deepscan';
 const TERMINAL_DOWNLOAD_STATES = new Set(['complete', 'interrupted']);
 
-if (typeof importScripts === 'function' && typeof JSZip === 'undefined') {
-    importScripts('../vendor/jszip.min.js');
+if (typeof importScripts === 'function') {
+    importScripts('isolated-deepscan-host.js');
+    if (typeof JSZip === 'undefined') importScripts('../vendor/jszip.min.js');
 }
 
 const backgroundObjectUrlsByDownloadId = new Map();
 const offscreenTokensByDownloadId = new Map();
 let creatingOffscreenDocument = null;
+let activeIsolatedDeepScan = null;
+let backgroundDeepScanHost = null;
 
 function getErrorMessage(error) {
     return error instanceof Error ? error.message : String(error);
@@ -142,8 +146,8 @@ async function ensureOffscreenDocument() {
 
     creatingOffscreenDocument = chrome.offscreen.createDocument({
         url: OFFSCREEN_DOCUMENT_PATH,
-        reasons: ['BLOBS'],
-        justification: 'Create durable Blob URLs for data-image downloads while the extension popup may close.'
+        reasons: ['BLOBS', 'IFRAME_SCRIPTING', 'DOM_SCRAPING'],
+        justification: 'Create durable Blob URLs and host an isolated iframe for background image discovery.'
     });
 
     try {
@@ -165,6 +169,145 @@ async function sendOffscreenMessage(action, payload = {}) {
     }
 
     return response;
+}
+
+async function sendDeepScanClientMessage(message) {
+    try {
+        await chrome.runtime.sendMessage({
+            target: ISOLATED_DEEP_SCAN_TARGET,
+            source: 'background',
+            ...message
+        });
+    } catch {
+        // The popup may already be closed; the isolated job is intentionally not persistent.
+    }
+}
+
+function logIsolatedDeepScanFailure(job, status, reason = null) {
+    if (!job || job.errorLogged) return;
+    job.errorLogged = true;
+
+    if (status === 'unavailable') {
+        console.error('[DeepScan] Isolated context unavailable:', job.url);
+        return;
+    }
+    if (status === 'timedOut') {
+        console.error('[DeepScan] Time limit reached:', job.url);
+        return;
+    }
+    console.error('[DeepScan] Isolated scan failed:', job.url, reason || 'UNKNOWN_ERROR');
+}
+
+function handleIsolatedDeepScanHostEvent(event) {
+    const job = activeIsolatedDeepScan;
+    if (!job || event?.scanId !== job.scanId || event.url !== job.url) return;
+
+    if (event.action === 'batch' && Array.isArray(event.candidates)) {
+        void sendDeepScanClientMessage({
+            action: 'batch',
+            scanId: job.scanId,
+            url: job.url,
+            candidates: event.candidates
+        });
+        return;
+    }
+    if (event.action !== 'complete') return;
+
+    const status = ['completed', 'cancelled', 'timedOut', 'unavailable', 'failed'].includes(event.status)
+        ? event.status
+        : 'failed';
+    if (!['completed', 'cancelled'].includes(status)) {
+        logIsolatedDeepScanFailure(job, status, event.reason);
+    }
+    activeIsolatedDeepScan = null;
+    void sendDeepScanClientMessage({
+        action: 'complete',
+        scanId: job.scanId,
+        url: job.url,
+        status,
+        ...(typeof event.reason === 'string' ? {reason: event.reason} : {})
+    });
+}
+
+function getBackgroundDeepScanHost() {
+    if (backgroundDeepScanHost) return backgroundDeepScanHost;
+    if (typeof document === 'undefined' || typeof globalThis.createIsolatedDeepScanHost !== 'function') {
+        throw new Error('This browser has no isolated DeepScan document context');
+    }
+
+    backgroundDeepScanHost = globalThis.createIsolatedDeepScanHost({
+        emit: handleIsolatedDeepScanHostEvent
+    });
+    return backgroundDeepScanHost;
+}
+
+async function cancelIsolatedDeepScan(scanId = null) {
+    const job = activeIsolatedDeepScan;
+    if (!job || (scanId && job.scanId !== scanId)) return false;
+
+    activeIsolatedDeepScan = null;
+    try {
+        if (canUseOffscreenDocument()) {
+            if (await isOffscreenDocumentOpen()) {
+                await sendOffscreenMessage('cancelDeepScan', {scanId: job.scanId});
+            }
+        } else if (backgroundDeepScanHost) {
+            await backgroundDeepScanHost.cancel(job.scanId);
+        }
+    } catch {
+        // Cancelling a discarded host must still finish the popup-side DeepScan cleanly.
+    }
+
+    await sendDeepScanClientMessage({
+        action: 'complete',
+        scanId: job.scanId,
+        url: job.url,
+        status: 'cancelled'
+    });
+    return true;
+}
+
+async function startIsolatedDeepScan(request) {
+    if (typeof request?.scanId !== 'string' || !request.scanId ||
+        typeof request?.url !== 'string' || !request.url || !Number.isInteger(request.tabId)) {
+        throw new Error('The isolated DeepScan request is invalid');
+    }
+
+    await cancelIsolatedDeepScan();
+    const job = {
+        scanId: request.scanId,
+        token: crypto.randomUUID(),
+        url: request.url,
+        tabId: request.tabId,
+        ignoreHiddenImages: request.ignoreHiddenImages === true,
+        errorLogged: false
+    };
+    activeIsolatedDeepScan = job;
+
+    try {
+        const tab = await chrome.tabs.get(job.tabId);
+        if (tab?.url !== job.url) {
+            await cancelIsolatedDeepScan(job.scanId);
+            return {scanId: job.scanId};
+        }
+
+        if (canUseOffscreenDocument()) {
+            await ensureOffscreenDocument();
+            await sendOffscreenMessage('startDeepScan', {job});
+        } else {
+            await getBackgroundDeepScanHost().start(job);
+        }
+    } catch (error) {
+        handleIsolatedDeepScanHostEvent({
+            action: 'complete',
+            scanId: job.scanId,
+            url: job.url,
+            status: 'unavailable',
+            reason: getErrorMessage(error)
+        });
+    }
+
+    return {scanId: job.scanId};
 }
 
 async function releaseOffscreenObjectUrlForDownload(downloadId) {
@@ -426,8 +569,48 @@ chrome.downloads.onChanged.addListener((delta) => {
     void releaseOffscreenObjectUrlForDownload(delta.id);
 });
 
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+    const job = activeIsolatedDeepScan;
+    if (!job || tabId !== job.tabId || typeof changeInfo.url !== 'string' || changeInfo.url === job.url) {
+        return;
+    }
+
+    void cancelIsolatedDeepScan(job.scanId);
+});
+
+chrome.tabs.onRemoved.addListener((tabId) => {
+    if (activeIsolatedDeepScan?.tabId === tabId) {
+        void cancelIsolatedDeepScan(activeIsolatedDeepScan.scanId);
+    }
+});
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.target === OFFSCREEN_TARGET) {
+        return undefined;
+    }
+
+    if (message?.target === ISOLATED_DEEP_SCAN_TARGET) {
+        if (message.source === 'isolated-host') {
+            handleIsolatedDeepScanHostEvent(message);
+            return undefined;
+        }
+        if (message.source === 'background') return undefined;
+
+        if (message.action === 'start') {
+            Promise.resolve(startIsolatedDeepScan(message)).then(
+                (result) => sendResponse({success: true, ...result}),
+                (error) => sendResponse({success: false, error: getErrorMessage(error)})
+            );
+            return true;
+        }
+        if (message.action === 'cancel') {
+            Promise.resolve(cancelIsolatedDeepScan(message.scanId)).then(
+                (cancelled) => sendResponse({success: true, cancelled}),
+                (error) => sendResponse({success: false, error: getErrorMessage(error)})
+            );
+            return true;
+        }
+
         return undefined;
     }
 

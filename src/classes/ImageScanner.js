@@ -1,11 +1,13 @@
-import { getPageURL, scanImages } from '../content.js';
+import { scanImages } from '../content.js';
 import { getImageType } from '../image-types.js';
 
 const DEFAULT_BYTES_PER_PIXEL = 0.1;
 const UTF8_ENCODER = new TextEncoder();
+const ISOLATED_DEEP_SCAN_TARGET = 'image-finder-isolated-deepscan';
 
 export default class ImageScanner {
     #imageDimensionsByURL = new Map();
+    #activeDeepScan = null;
 
     get filter() {
         const fileSize = this.settings.get('filesizes') ?? {};
@@ -157,44 +159,121 @@ export default class ImageScanner {
         return null;
     }
 
-    async scanDeepImages(scanContext, onCandidates = null) {
-        if (!scanContext?.isScannable || !Number.isInteger(scanContext.tabId)) return [];
+    async cancelDeepScan() {
+        const session = this.#activeDeepScan;
+        if (!session) return false;
 
-        const tabId = scanContext.tabId;
-        const startURL = scanContext.url;
+        session.cancelled = true;
+        session.finish({status: 'cancelled'});
+        try {
+            await window.chrome.runtime.sendMessage({
+                target: ISOLATED_DEEP_SCAN_TARGET,
+                action: 'cancel',
+                scanId: session.scanId
+            });
+        } catch {
+            // The background may already have discarded the isolated host.
+        }
+
+        return true;
+    }
+
+    async scanDeepImages(scanContext, onCandidates = null) {
+        if (!scanContext?.isScannable || !Number.isInteger(scanContext.tabId)) {
+            return [];
+        }
+
         const filters = this.settings.get('filters') ?? {};
         const candidatesByURL = new Map();
-        const executeInTab = async (func, args = []) => {
-            const results = await window.chrome.scripting.executeScript({
-                target: {tabId},
-                func,
-                args
-            });
+        await this.cancelDeepScan();
 
-            return results[0]?.result ?? null;
+        const scanId = crypto.randomUUID();
+        let batchQueue = Promise.resolve();
+        let resolveCompletion = null;
+        const completion = new Promise((resolve) => {
+            resolveCompletion = resolve;
+        });
+        const session = {
+            scanId,
+            cancelled: false,
+            finished: false,
+            finish: (result) => {
+                if (session.finished) return;
+
+                session.finished = true;
+                window.chrome.runtime.onMessage.removeListener(onMessage);
+                if (this.#activeDeepScan === session) this.#activeDeepScan = null;
+                resolveCompletion(result);
+            }
         };
-
-        try {
-            const foundCandidates = await executeInTab(scanImages, [
-                filters.ignoreHiddenImages === true,
-                true,
-                false
-            ]);
-            if (await executeInTab(getPageURL) !== startURL) return [];
+        const processCandidates = async (foundCandidates) => {
+            if (session.cancelled) return;
 
             const newCandidates = [];
             for (const candidate of foundCandidates ?? []) {
-                if (typeof candidate?.url === 'string' && !candidatesByURL.has(candidate.url)) {
-                    candidatesByURL.set(candidate.url, candidate);
-                    newCandidates.push(candidate);
-                }
+                if (typeof candidate?.url !== 'string' || candidatesByURL.has(candidate.url)) continue;
+
+                candidatesByURL.set(candidate.url, candidate);
+                newCandidates.push(candidate);
+            }
+            if (newCandidates.length === 0 || typeof onCandidates !== 'function') return;
+
+            if ((await onCandidates(newCandidates)) === false) {
+                session.cancelled = true;
+                session.finish({status: 'cancelled'});
+                void window.chrome.runtime.sendMessage({
+                    target: ISOLATED_DEEP_SCAN_TARGET,
+                    action: 'cancel',
+                    scanId
+                }).catch(() => undefined);
+            }
+        };
+        const onMessage = (message) => {
+            if (message?.target !== ISOLATED_DEEP_SCAN_TARGET || message.source !== 'background') {
+                return;
+            }
+            if (message.scanId !== scanId) {
+                return;
             }
 
-            if (newCandidates.length > 0 && typeof onCandidates === 'function') {
-                await onCandidates(newCandidates);
+            if (message.action === 'batch' && Array.isArray(message.candidates)) {
+                batchQueue = batchQueue.then(() => processCandidates(message.candidates)).catch(() => {
+                    session.cancelled = true;
+                    session.finish({status: 'failed'});
+                    void window.chrome.runtime.sendMessage({
+                        target: ISOLATED_DEEP_SCAN_TARGET,
+                        action: 'cancel',
+                        scanId
+                    }).catch(() => undefined);
+                });
+                return;
             }
-        } catch (error) {
-            console.warn('Cannot deep scan this page:', error);
+            if (message.action === 'complete') {
+                void batchQueue.then(() => session.finish(message));
+            }
+        };
+
+        this.#activeDeepScan = session;
+        window.chrome.runtime.onMessage.addListener(onMessage);
+
+        try {
+            const response = await window.chrome.runtime.sendMessage({
+                target: ISOLATED_DEEP_SCAN_TARGET,
+                action: 'start',
+                scanId,
+                url: scanContext.url,
+                tabId: scanContext.tabId,
+                ignoreHiddenImages: filters.ignoreHiddenImages === true
+            });
+            if (response?.success !== true) {
+                session.finish({status: 'failed'});
+            }
+
+            await completion;
+        } catch {
+            session.finish({status: 'failed'});
+        } finally {
+            session.finish({status: 'finished'});
         }
 
         return Array.from(candidatesByURL.values());
