@@ -220,11 +220,15 @@ img.preview:not([src]) {
 }
 
 .toolbar-button.scanner-led.active[data-activity="matcher"] {
-    background-color: goldenrod;
+    background-color: tomato;
 }
 
 .toolbar-button.scanner-led.active[data-activity="blurScanner"] {
     background-color: tomato;
+}
+
+.toolbar-button.scanner-led.active[data-activity="deepScan"] {
+    background-color: rgb(255, 230, 0);
 }
 
 .theme input {

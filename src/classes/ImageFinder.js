@@ -16,8 +16,10 @@ export class ImageFinder {
     #activityCounts = {
         scanner: 0,
         matcher: 0,
-        blurScanner: 0
+        blurScanner: 0,
+        deepScan: 0
     };
+    #scanGeneration = 0;
 
     get selectedItem() {
         return this.DOM.lstImages.querySelector('.selected') || null;
@@ -228,7 +230,9 @@ export class ImageFinder {
         await this.#showImage(item);
     }
 
-    async #showImage(item) {
+    async #showImage(item, scanGeneration = null) {
+        if (scanGeneration !== null && !this.#isCurrentScan(scanGeneration)) return;
+
         const imageId = item?.dataset.imageId;
         const image = imageId ? this.images.get(imageId) ?? null : null;
         if (!image) return;
@@ -250,7 +254,8 @@ export class ImageFinder {
                     blobUrl: image.url
                 });
 
-                if (this.selectedItem?.dataset.imageId !== imageId) return;
+                if ((scanGeneration !== null && !this.#isCurrentScan(scanGeneration)) ||
+                    this.selectedItem?.dataset.imageId !== imageId) return;
                 if (response?.success !== true || typeof response.dataUrl !== 'string') {
                     throw new Error(response?.error || 'Cannot resolve Blob image for preview');
                 }
@@ -274,12 +279,14 @@ export class ImageFinder {
             image.source !== 'blobimages') {
             const fileInfo = await this.scanner.getFileInfo(item.dataset.url);
 
-            if (this.selectedItem?.dataset.imageId !== imageId) return;
+            if ((scanGeneration !== null && !this.#isCurrentScan(scanGeneration)) ||
+                this.selectedItem?.dataset.imageId !== imageId) return;
 
             image.fileSize = fileInfo?.size ?? null;
         }
 
-        if (this.selectedItem?.dataset.imageId !== imageId) return;
+        if ((scanGeneration !== null && !this.#isCurrentScan(scanGeneration)) ||
+            this.selectedItem?.dataset.imageId !== imageId) return;
 
         const size = image.fileSize >= 1048576
             ? `${parseInt(image.fileSize / 1024 / 1024)} MB`
@@ -389,7 +396,12 @@ export class ImageFinder {
         this.updateDownloadTitles();
     }
 
-    clear() {
+    clear({invalidateScan = true} = {}) {
+        if (invalidateScan) {
+            this.#scanGeneration += 1;
+            this.#resetScanActivities();
+        }
+
         this.candidates.clear();
         this.images.clear();
         this.analysisStore.clear();
@@ -406,26 +418,34 @@ export class ImageFinder {
         this.#updateLEDActivity();
     }
 
-    startActivity(type) {
+    startActivity(type, scanGeneration = null) {
         if (!Object.prototype.hasOwnProperty.call(this.#activityCounts, type)) return;
+        if (scanGeneration !== null && !this.#isCurrentScan(scanGeneration)) return;
 
         this.#activityCounts[type] += 1;
         this.#updateLEDActivity();
     }
 
-    stopActivity(type) {
+    stopActivity(type, scanGeneration = null) {
         if (!Object.prototype.hasOwnProperty.call(this.#activityCounts, type)) return;
+        if (scanGeneration !== null && !this.#isCurrentScan(scanGeneration)) return;
 
         this.#activityCounts[type] = Math.max(0, this.#activityCounts[type] - 1);
         this.#updateLEDActivity();
     }
 
     async scan() {
+        const scanGeneration = this.#scanGeneration + 1;
+        this.#scanGeneration = scanGeneration;
         let scanCompleted = false;
+        let scannerActivityActive = false;
+        let deepScanActivityActive = false;
 
-        this.startActivity('scanner');
+        this.#resetScanActivities();
+        this.startActivity('scanner', scanGeneration);
+        scannerActivityActive = true;
         try {
-            this.clear();
+            this.clear({invalidateScan: false});
             this.sortState = {criterion: null, direction: 'asc'};
             this.#updateSortButtons();
             this.DOM.spnStatusBar.style.display = 'none';
@@ -434,33 +454,81 @@ export class ImageFinder {
                 onStart: count => this.progressbar.show(count),
                 onProgress: () => this.progressbar.update()
             });
+            if (!this.#isCurrentScan(scanGeneration)) return;
+
             this.scanContext.setTab(this.scanner.currentTab);
 
             this.#setScanResults(scanResults);
-            await this.#setVisibleImages();
-
-            this.images.forEach((image, imageId) => {
-                const li = document.createElement('li');
-                li.textContent = image.fileName;
-                li.title = image.fileName;
-                li.dataset.imageId = imageId;
-                li.dataset.url = image.url;
-                this.DOM.lstImages.appendChild(li);
-            });
-
-            this.sort('dimensions', 'desc');
+            if (!(await this.#refreshVisibleImages(scanGeneration, {initialSort: true}))) return;
             this.progressbar.hide();
-            this.DOM.btnSaveAll.disabled = (this.images.size === 0);
-            this.DOM.btnClear.disabled = (this.images.size === 0);
-            this.#updateLED();
             scanCompleted = true;
 
+            if (this.settings.get('common', 'allowBackgroundScan', false) === true &&
+                this.scanContext.isScannable && Number.isInteger(this.scanContext.tabId)) {
+                const deepScanTabId = this.scanContext.tabId;
+
+                this.stopActivity('scanner', scanGeneration);
+                scannerActivityActive = false;
+                this.info = 'Image preview';
+                this.startActivity('deepScan', scanGeneration);
+                deepScanActivityActive = true;
+
+                try {
+                    await this.scanner.scanDeepImages(this.scanContext, async (rawCandidates) => {
+                        if (!this.#isCurrentScan(scanGeneration)) return false;
+
+                        // TEMP DEBUG: DeepScan added-image verification
+                        const imagesBeforeDeepBatch = new Set(
+                            Array.from(this.images.values(), (image) => image.url)
+                        );
+                        // END TEMP DEBUG
+
+                        const newCandidates = this.#getNewURLCandidates(rawCandidates);
+                        if (newCandidates.length === 0) return true;
+
+                        const candidates = await this.scanner.createCandidates(newCandidates, deepScanTabId);
+                        if (!this.#isCurrentScan(scanGeneration)) return false;
+                        if (candidates.length === 0) return true;
+
+                        this.#setScanResults(candidates);
+                        const visibleImagesUpdated = await this.#refreshVisibleImages(
+                            scanGeneration
+                        );
+
+                        // TEMP DEBUG: DeepScan added-image verification
+                        if (visibleImagesUpdated) {
+                            this.images.forEach((image) => {
+                                if (imagesBeforeDeepBatch.has(image.url)) return;
+
+                                console.log(
+                                    '[DeepScan] Added image:',
+                                    image.url,
+                                    `${image.width} × ${image.height}`
+                                );
+                            });
+                        }
+                        // END TEMP DEBUG
+
+                        return visibleImagesUpdated;
+                    });
+                } catch (error) {
+                    if (this.#isCurrentScan(scanGeneration)) {
+                        console.warn('Cannot deep scan this page:', error);
+                    }
+                } finally {
+                    this.stopActivity('deepScan', scanGeneration);
+                    deepScanActivityActive = false;
+                }
+            }
         } catch (error) {
-            console.warn('Cannot scan this page:', this.scanner.currentTab?.url);
-            this.info = 'Page not allowed to scan!';
+            if (this.#isCurrentScan(scanGeneration)) {
+                console.warn('Cannot scan this page:', this.scanner.currentTab?.url);
+                this.info = 'Page not allowed to scan!';
+            }
         } finally {
-            this.stopActivity('scanner');
-            if (scanCompleted) {
+            if (scannerActivityActive) this.stopActivity('scanner', scanGeneration);
+            if (deepScanActivityActive) this.stopActivity('deepScan', scanGeneration);
+            if (scanCompleted && this.#isCurrentScan(scanGeneration)) {
                 this.info = this.images.size === 0 ? 'No images found!' : 'Image preview';
             }
         }
@@ -636,19 +704,163 @@ export class ImageFinder {
         });
     }
 
-    async #setVisibleImages() {
-        this.images.clear();
-        const blurAcceptedCandidates = await this.#getBlurAcceptedCandidates();
-        const visibleCandidates = await this.#getDuplicateWinners(blurAcceptedCandidates);
+    #isCurrentScan(scanGeneration) {
+        return scanGeneration === this.#scanGeneration;
+    }
 
+    #resetScanActivities() {
+        Object.keys(this.#activityCounts).forEach((type) => {
+            this.#activityCounts[type] = 0;
+        });
+        this.#updateLEDActivity();
+    }
+
+    #getNewURLCandidates(rawCandidates) {
+        if (!Array.isArray(rawCandidates)) return [];
+
+        const candidatesByURL = new Map();
+        this.candidates.forEach((candidate) => {
+            if (typeof candidate?.url !== 'string') return;
+
+            const matchingCandidates = candidatesByURL.get(candidate.url) ?? [];
+            matchingCandidates.push(candidate);
+            candidatesByURL.set(candidate.url, matchingCandidates);
+        });
+
+        const newCandidatesByURL = new Map();
+        rawCandidates.forEach((candidate) => {
+            if (typeof candidate?.url !== 'string' || !candidate.url) return;
+
+            const matchingCandidates = candidatesByURL.get(candidate.url);
+            if (matchingCandidates) {
+                if (candidate.visuallyBlurred === false) {
+                    matchingCandidates.forEach((existingCandidate) => {
+                        existingCandidate.visuallyBlurred = false;
+                    });
+                }
+                return;
+            }
+
+            const alreadyAddedCandidate = newCandidatesByURL.get(candidate.url);
+            if (alreadyAddedCandidate) {
+                if (candidate.visuallyBlurred === false) {
+                    alreadyAddedCandidate.visuallyBlurred = false;
+                }
+                return;
+            }
+
+            newCandidatesByURL.set(candidate.url, candidate);
+        });
+
+        return Array.from(newCandidatesByURL.values());
+    }
+
+    #captureRenderState() {
+        const selectedItem = this.selectedItem;
+
+        return {
+            selectedImageId: selectedItem?.dataset.imageId ?? null,
+            selectedImageURL: selectedItem?.dataset.url ?? null,
+            savedImageIds: new Set(
+                this.listItems
+                    .filter(item => item.classList.contains('saved'))
+                    .map(item => item.dataset.imageId)
+            )
+        };
+    }
+
+    #renderImages(renderState) {
+        let selectedItem = null;
+        let selectedItemByURL = null;
+
+        this.DOM.lstImages.innerHTML = '';
+        this.images.forEach((image, imageId) => {
+            const item = document.createElement('li');
+
+            item.textContent = image.fileName;
+            item.title = image.fileName;
+            item.dataset.imageId = imageId;
+            item.dataset.url = image.url;
+            if (renderState.savedImageIds.has(imageId)) item.classList.add('saved');
+            if (imageId === renderState.selectedImageId) selectedItem = item;
+            if (!selectedItemByURL && image.url === renderState.selectedImageURL) {
+                selectedItemByURL = item;
+            }
+
+            this.DOM.lstImages.appendChild(item);
+        });
+
+        selectedItem ??= selectedItemByURL;
+        if (selectedItem) {
+            selectedItem.classList.add('selected');
+        } else if (renderState.selectedImageId) {
+            this.currentBlobPreview = null;
+            this.DOM.imgPreview.removeAttribute('src');
+            this.DOM.h2_Preview.style.display = 'block';
+            this.DOM.spnStatusBar.style.display = 'none';
+            this.DOM.btnDownload.disabled = true;
+            this.DOM.btnDelete.disabled = true;
+        }
+
+        return selectedItem;
+    }
+
+    async #refreshVisibleImages(scanGeneration, {initialSort = false} = {}) {
+        const visibleImagesUpdated = await this.#setVisibleImages(scanGeneration);
+        if (!visibleImagesUpdated || !this.#isCurrentScan(scanGeneration)) return false;
+
+        const renderState = this.#captureRenderState();
+        const selectedItem = this.#renderImages(renderState);
+        if (!this.#isCurrentScan(scanGeneration)) return false;
+
+        if (initialSort) {
+            this.sort('dimensions', 'desc');
+        } else if (this.sortState.criterion) {
+            this.sort(this.sortState.criterion, this.sortState.direction);
+        }
+
+        this.#updateImageListState();
+        if (selectedItem && selectedItem.dataset.imageId !== renderState.selectedImageId) {
+            try {
+                await this.#showImage(selectedItem, scanGeneration);
+            } catch (error) {
+                console.warn('Cannot show replacement image:', selectedItem.dataset.url, error);
+            }
+        }
+
+        return this.#isCurrentScan(scanGeneration);
+    }
+
+    #updateImageListState() {
+        this.DOM.btnSaveAll.disabled = this.isSavingAll || this.images.size === 0;
+        this.DOM.btnClear.disabled = this.images.size === 0;
+        this.#updateLED();
+    }
+
+    async #setVisibleImages(scanGeneration) {
+        const candidates = Array.from(this.candidates);
+        const blurAcceptedCandidates = await this.#getBlurAcceptedCandidates(
+            candidates,
+            scanGeneration
+        );
+        if (!blurAcceptedCandidates || !this.#isCurrentScan(scanGeneration)) return false;
+
+        const visibleCandidates = await this.#getDuplicateWinners(
+            blurAcceptedCandidates,
+            scanGeneration
+        );
+        if (!visibleCandidates || !this.#isCurrentScan(scanGeneration)) return false;
+
+        this.images.clear();
         visibleCandidates.forEach(([candidateId, candidate]) => {
             this.images.set(candidateId, candidate);
         });
+
+        return true;
     }
 
-    async #getBlurAcceptedCandidates() {
+    async #getBlurAcceptedCandidates(candidates, scanGeneration) {
         const filters = this.settings.get('filters') ?? {};
-        const candidates = Array.from(this.candidates);
 
         if (filters.ignoreBlurredImages !== true) return candidates;
 
@@ -656,9 +868,11 @@ export class ImageFinder {
 
         if (candidates.length === 0) return candidates;
 
-        this.startActivity('blurScanner');
+        this.startActivity('blurScanner', scanGeneration);
         try {
             for (const [candidateId, candidate] of candidates) {
+                if (!this.#isCurrentScan(scanGeneration)) return null;
+
                 try {
                     const measurement = await this.blurScanner.measure(candidate.url, candidateId);
                     const classification = this.blurScanner.classify(measurement);
@@ -672,24 +886,26 @@ export class ImageFinder {
                 }
             }
         } finally {
-            this.stopActivity('blurScanner');
+            this.stopActivity('blurScanner', scanGeneration);
         }
 
         return candidates.filter(([candidateId]) => acceptedCandidateIds.has(candidateId));
     }
 
-    async #getDuplicateWinners(acceptedCandidates) {
+    async #getDuplicateWinners(acceptedCandidates, scanGeneration) {
         const filters = this.settings.get('filters') ?? {};
 
         if (filters.ignoreDuplicates !== true || acceptedCandidates.length < 2) {
             return acceptedCandidates;
         }
 
-        this.startActivity('matcher');
+        this.startActivity('matcher', scanGeneration);
         try {
             const duplicateGroups = [];
 
             for (const candidateEntry of acceptedCandidates) {
+                if (!this.#isCurrentScan(scanGeneration)) return null;
+
                 const matchingGroups = [];
 
                 for (const group of duplicateGroups) {
@@ -714,7 +930,7 @@ export class ImageFinder {
 
             return duplicateGroups.map(group => this.#selectDuplicateWinner(group));
         } finally {
-            this.stopActivity('matcher');
+            this.stopActivity('matcher', scanGeneration);
         }
     }
 
@@ -786,20 +1002,22 @@ export class ImageFinder {
     }
 
     #updateLEDActivity() {
-        const activity = this.#activityCounts.blurScanner > 0
-            ? 'blurScanner'
-            : this.#activityCounts.matcher > 0
-                ? 'matcher'
-                : this.#activityCounts.scanner > 0
-                    ? 'scanner'
-                    : 'none';
+        const activity = this.#activityCounts.deepScan > 0
+            ? 'deepScan'
+            : this.#activityCounts.blurScanner > 0
+                ? 'blurScanner'
+                : this.#activityCounts.matcher > 0
+                    ? 'matcher'
+                    : this.#activityCounts.scanner > 0
+                        ? 'scanner'
+                        : 'none';
 
         this.DOM.divLED.classList.toggle('active', activity !== 'none');
         this.DOM.divLED.dataset.activity = activity;
 
         if (activity === 'scanner') {
             this.info = 'Scanning...';
-        } else if (activity !== 'none') {
+        } else if (activity === 'blurScanner' || activity === 'matcher') {
             this.info = 'Filtering list...';
         }
     }

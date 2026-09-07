@@ -1,10 +1,11 @@
-import { scanImages } from '../content.js';
+import { getPageURL, scanImages } from '../content.js';
 import { getImageType } from '../image-types.js';
 
 const DEFAULT_BYTES_PER_PIXEL = 0.1;
 const UTF8_ENCODER = new TextEncoder();
 
 export default class ImageScanner {
+    #imageDimensionsByURL = new Map();
 
     get filter() {
         const fileSize = this.settings.get('filesizes') ?? {};
@@ -27,6 +28,7 @@ export default class ImageScanner {
 
     async scan({onStart = null, onProgress = null} = {}) {
         this.currentTab = null;
+        this.#imageDimensionsByURL.clear();
         const [tab] = await window.chrome.tabs.query({
             active: true,
             currentWindow: true
@@ -40,6 +42,13 @@ export default class ImageScanner {
             args: [filters.ignoreHiddenImages === true]
         });
         const filesFound = result[0]?.result ?? [];
+
+        return this.createCandidates(filesFound, tab.id, {onStart, onProgress});
+    }
+
+    async createCandidates(filesFound, tabId, {onStart = null, onProgress = null} = {}) {
+        if (!Array.isArray(filesFound) || !Number.isInteger(tabId)) return [];
+
         const filter = this.filter;
         const sources = this.settings.get('sources') ?? {};
         const images = [];
@@ -92,13 +101,13 @@ export default class ImageScanner {
                     height = image.height,
                     dimensionsKnown = width > 0 && height > 0;
 
-                if (filter.ignoreSize && !dimensionsKnown) {
+                if (!dimensionsKnown) {
                     const dimensions = await this.getImageDimensions(image.url);
-                    if (dimensions) {
-                        width = dimensions.width;
-                        height = dimensions.height;
-                        dimensionsKnown = true;
-                    }
+                    if (!dimensions) continue;
+
+                    width = dimensions.width;
+                    height = dimensions.height;
+                    dimensionsKnown = true;
                 }
 
                 const isValid = (dimensionsKnown && width >= filter.minWidth && height >= filter.minHeight);
@@ -129,7 +138,7 @@ export default class ImageScanner {
                     fileSize: fileInfo?.size ?? null,
                     estimatedSize,
                     source: image.source,
-                    tabId: tab.id,
+                    tabId,
                     visuallyBlurred: image.visuallyBlurred === true
                 };
                 images.push(candidate);
@@ -148,6 +157,49 @@ export default class ImageScanner {
         return null;
     }
 
+    async scanDeepImages(scanContext, onCandidates = null) {
+        if (!scanContext?.isScannable || !Number.isInteger(scanContext.tabId)) return [];
+
+        const tabId = scanContext.tabId;
+        const startURL = scanContext.url;
+        const filters = this.settings.get('filters') ?? {};
+        const candidatesByURL = new Map();
+        const executeInTab = async (func, args = []) => {
+            const results = await window.chrome.scripting.executeScript({
+                target: {tabId},
+                func,
+                args
+            });
+
+            return results[0]?.result ?? null;
+        };
+
+        try {
+            const foundCandidates = await executeInTab(scanImages, [
+                filters.ignoreHiddenImages === true,
+                true,
+                false
+            ]);
+            if (await executeInTab(getPageURL) !== startURL) return [];
+
+            const newCandidates = [];
+            for (const candidate of foundCandidates ?? []) {
+                if (typeof candidate?.url === 'string' && !candidatesByURL.has(candidate.url)) {
+                    candidatesByURL.set(candidate.url, candidate);
+                    newCandidates.push(candidate);
+                }
+            }
+
+            if (newCandidates.length > 0 && typeof onCandidates === 'function') {
+                await onCandidates(newCandidates);
+            }
+        } catch (error) {
+            console.warn('Cannot deep scan this page:', error);
+        }
+
+        return Array.from(candidatesByURL.values());
+    }
+
     isExcluded(fileName) {
         const filters = this.settings.get('filters') ?? {};
 
@@ -164,7 +216,11 @@ export default class ImageScanner {
     }
 
     async getImageDimensions(url) {
-        return new Promise((resolve) => {
+        if (this.#imageDimensionsByURL.has(url)) {
+            return this.#imageDimensionsByURL.get(url);
+        }
+
+        const dimensionsPromise = new Promise((resolve) => {
             const image = new Image();
 
             const finish = (dimensions) => {
@@ -195,6 +251,9 @@ export default class ImageScanner {
                 finish(null);
             }
         });
+
+        this.#imageDimensionsByURL.set(url, dimensionsPromise);
+        return dimensionsPromise;
     }
 
     async getFileInfo(url) {

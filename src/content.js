@@ -1,4 +1,8 @@
-export async function scanImages(ignoreHiddenImages = false) {
+export async function scanImages(
+    ignoreHiddenImages = false,
+    includeAllImageSources = false,
+    includeSupplementarySources = true
+) {
     const getURL = (value) => {
         if (typeof value !== 'string' || !value.trim()) return null;
 
@@ -192,10 +196,10 @@ export async function scanImages(ignoreHiddenImages = false) {
         return rect.width > 0 && rect.height > 0;
     };
 
-    const elements = Array.from(document.querySelectorAll('*'));
+    const elements = includeSupplementarySources
+        ? Array.from(document.querySelectorAll('*'))
+        : [];
     const backdropBlurElements = new Set();
-    const initialScrollPosition = {x: window.scrollX, y: window.scrollY};
-    let scrollPositionChanged = false;
 
     for (const elmt of elements) {
         try {
@@ -207,30 +211,6 @@ export async function scanImages(ignoreHiddenImages = false) {
             continue;
         }
     }
-
-    const rectanglesOverlap = (first, second) => {
-        const firstRight = first.right ?? first.left + first.width;
-        const firstBottom = first.bottom ?? first.top + first.height;
-        const secondRight = second.right ?? second.left + second.width;
-        const secondBottom = second.bottom ?? second.top + second.height;
-
-        return first.left < secondRight && firstRight > second.left &&
-            first.top < secondBottom && firstBottom > second.top;
-    };
-
-    const hasPotentialBackdropOverlap = (rect) => {
-        for (const backdropElement of backdropBlurElements) {
-            try {
-                if (rectanglesOverlap(rect, backdropElement.getBoundingClientRect())) {
-                    return true;
-                }
-            } catch {
-                continue;
-            }
-        }
-
-        return false;
-    };
 
     const getSourceStackIndex = (stackedElements, element) => stackedElements.findIndex(
         (stackedElement) => stackedElement === element ||
@@ -246,27 +226,15 @@ export async function scanImages(ignoreHiddenImages = false) {
         }
 
         try {
-            let rect = element.getBoundingClientRect();
+            const rect = element.getBoundingClientRect();
             if (rect.width <= 0 || rect.height <= 0) return false;
 
             const getStackedElementsAtCenter = () => document.elementsFromPoint(
                 rect.left + rect.width / 2,
                 rect.top + rect.height / 2
             );
-            let stackedElements = getStackedElementsAtCenter();
-            let sourceIndex = getSourceStackIndex(stackedElements, element);
-
-            if (sourceIndex === -1 && hasPotentialBackdropOverlap(rect)) {
-                window.scrollBy(
-                    rect.left + rect.width / 2 - window.innerWidth / 2,
-                    rect.top + rect.height / 2 - window.innerHeight / 2
-                );
-                scrollPositionChanged = true;
-
-                rect = element.getBoundingClientRect();
-                stackedElements = getStackedElementsAtCenter();
-                sourceIndex = getSourceStackIndex(stackedElements, element);
-            }
+            const stackedElements = getStackedElementsAtCenter();
+            const sourceIndex = getSourceStackIndex(stackedElements, element);
 
             return sourceIndex > 0 && stackedElements
                 .slice(0, sourceIndex)
@@ -322,6 +290,28 @@ export async function scanImages(ignoreHiddenImages = false) {
         const hasLazySource = Boolean(dataSrc || dataSrcset);
         const currentSrcLooksLikePlaceholder = hasLazySource && (!currentSrc || currentSrc === src);
 
+        if (includeAllImageSources) {
+            const imageSources = [
+                currentSrc,
+                src,
+                getPreferredSrcsetURL(img.getAttribute('srcset')),
+                dataSrc,
+                getPreferredSrcsetURL(dataSrcset)
+            ];
+
+            for (const url of new Set(imageSources.filter(Boolean))) {
+                const dimensionsKnown = url === currentSrc;
+                addCandidate(
+                    url,
+                    dimensionsKnown ? img.naturalWidth : 0,
+                    dimensionsKnown ? img.naturalHeight : 0,
+                    'imageelements',
+                    img
+                );
+            }
+            continue;
+        }
+
         let url = currentSrc;
         if (currentSrcLooksLikePlaceholder) {
             url = getPreferredSrcsetURL(dataSrcset) || dataSrc;
@@ -337,32 +327,30 @@ export async function scanImages(ignoreHiddenImages = false) {
         );
     }
 
-    for (const element of elements) {
-        try {
-            const style = getComputedStyle(element);
-            if (isHidden(element, style)) continue;
+    if (includeSupplementarySources) {
+        for (const element of elements) {
+            try {
+                const style = getComputedStyle(element);
+                if (isHidden(element, style)) continue;
 
-            const backgroundImage = style.backgroundImage;
-            for (const url of getBackgroundURLs(backgroundImage)) {
-                addCandidate(url, 0, 0, 'backgroundimages', element);
+                const backgroundImage = style.backgroundImage;
+                for (const url of getBackgroundURLs(backgroundImage)) {
+                    addCandidate(url, 0, 0, 'backgroundimages', element);
+                }
+            } catch {
+                continue;
             }
-        } catch {
-            continue;
         }
-    }
 
-    for (const link of document.querySelectorAll('a[href]')) {
-        if (isHidden(link)) continue;
+        for (const link of document.querySelectorAll('a[href]')) {
+            if (isHidden(link)) continue;
 
-        const url = getURL(link.href);
+            const url = getURL(link.href);
 
-        if (!isLinkedImageURL(url)) continue;
+            if (!isLinkedImageURL(url)) continue;
 
-        addCandidate(url, 0, 0, 'linkedimages', link);
-    }
-
-    if (scrollPositionChanged) {
-        window.scrollTo(initialScrollPosition.x, initialScrollPosition.y);
+            addCandidate(url, 0, 0, 'linkedimages', link);
+        }
     }
 
     await Promise.all(images.map(async (image) => {
@@ -382,4 +370,8 @@ export async function scanImages(ignoreHiddenImages = false) {
     }));
 
     return images;
+}
+
+export function getPageURL() {
+    return window.location.href;
 }
