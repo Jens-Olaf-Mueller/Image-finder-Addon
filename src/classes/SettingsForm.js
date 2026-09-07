@@ -171,12 +171,17 @@ export class SettingsForm {
     }
 
     getFormData() {
-        const data = {};
+        const data = Object.fromEntries(
+            Object.entries(this.settings.data ?? {}).map(([sectionName, section]) => [
+                sectionName,
+                {...section}
+            ])
+        );
         const fieldsets = this.form.querySelectorAll('fieldset[name]');
 
         fieldsets.forEach((fieldset) => {
             const sectionName = fieldset.name;
-            data[sectionName] = {};
+            data[sectionName] ??= {};
 
             fieldset.querySelectorAll('input[name], select[name], textarea[name]').forEach(
                 (control) => {
