@@ -38,25 +38,25 @@
                     token: job.token,
                     url: job.url,
                     ignoreHiddenImages: job.ignoreHiddenImages === true,
-                    totalLimitMs: DEEP_SCAN_TOTAL_LIMIT_MS
+                    totalLimitMs: job.totalLimitMs
                 }, job.frameOrigin);
             } catch {
                 // The handshake timeout reports a frame that cannot be reached.
             }
         };
-        const cleanup = (job) => {
+        const clearJobTimers = (job) => {
             clearTimeout(job.handshakeTimeout);
             clearTimeout(job.totalTimeout);
             clearInterval(job.handshakeInterval);
+        };
+        const cleanup = (job) => {
+            clearJobTimers(job);
             window.removeEventListener('message', job.onMessage);
             job.frame.removeEventListener('load', job.onFrameLoad);
             job.frame.remove();
             if (activeJob === job) activeJob = null;
         };
-        const finish = (job, {status = 'completed', reason = null} = {}) => {
-            if (!job || job.finished) return;
-            job.finished = true;
-            cleanup(job);
+        const emitCompletion = (job, status, reason = null) => {
             emitEvent({
                 action: 'complete',
                 scanId: job.scanId,
@@ -64,6 +64,12 @@
                 status,
                 ...(typeof reason === 'string' && reason ? {reason} : {})
             });
+        };
+        const finish = (job, {status = 'completed', reason = null} = {}) => {
+            if (!job || job.finished) return;
+            job.finished = true;
+            cleanup(job);
+            emitCompletion(job, status, reason);
         };
         const cancel = async (scanId = null) => {
             const job = activeJob;
@@ -95,12 +101,16 @@
 
             const container = await getFrameContainer();
             const frame = document.createElement('iframe');
+            const totalLimitMs = Number.isFinite(jobInput.totalLimitMs)
+                ? Math.max(0, Math.min(DEEP_SCAN_TOTAL_LIMIT_MS, jobInput.totalLimitMs))
+                : DEEP_SCAN_TOTAL_LIMIT_MS;
             const job = {
                 scanId: jobInput.scanId,
                 token: jobInput.token,
                 url: jobInput.url,
                 frameOrigin,
                 ignoreHiddenImages: jobInput.ignoreHiddenImages === true,
+                totalLimitMs,
                 frame,
                 finished: false,
                 handshakeTimeout: null,
@@ -137,6 +147,15 @@
                     job.handshakeInterval = null;
                     return;
                 }
+                if (data.action === 'trace' && typeof data.message === 'string') {
+                    emitEvent({
+                        action: 'trace',
+                        scanId: job.scanId,
+                        url: job.url,
+                        message: data.message
+                    });
+                    return;
+                }
                 if (data.action === 'batch' && Array.isArray(data.candidates) && !job.finished) {
                     emitEvent({
                         action: 'batch',
@@ -147,7 +166,10 @@
                     return;
                 }
                 if (data.action === 'complete') {
-                    finish(job, {status: data.status, reason: data.reason});
+                    finish(job, {
+                        status: data.status,
+                        reason: data.reason
+                    });
                 }
             };
             job.onFrameLoad = () => sendToFrame(job, 'start');
@@ -161,11 +183,11 @@
             job.handshakeInterval = setInterval(() => sendToFrame(job, 'start'), 200);
             job.handshakeTimeout = setTimeout(() => {
                 finish(job, {status: 'unavailable', reason: 'EMBED_BLOCKED_OR_LOAD_FAILED'});
-            }, FRAME_HANDSHAKE_TIMEOUT_MS);
+            }, Math.min(FRAME_HANDSHAKE_TIMEOUT_MS, totalLimitMs));
             job.totalTimeout = setTimeout(() => {
                 sendToFrame(job, 'cancel');
                 finish(job, {status: 'timedOut'});
-            }, DEEP_SCAN_TOTAL_LIMIT_MS);
+            }, totalLimitMs);
             sendToFrame(job, 'start');
 
             return {scanId: job.scanId};

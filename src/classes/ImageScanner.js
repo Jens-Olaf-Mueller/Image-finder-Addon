@@ -1,4 +1,4 @@
-import { scanImages } from '../content.js';
+import { scanImages, scanPhotoSwipeImages } from '../content.js';
 import { getImageType } from '../image-types.js';
 
 const DEFAULT_BYTES_PER_PIXEL = 0.1;
@@ -184,6 +184,11 @@ export default class ImageScanner {
         }
 
         const filters = this.settings.get('filters') ?? {};
+        const allowProtectedDeepScan = this.settings.get(
+            'common',
+            'allowProtectedDeepScan',
+            false
+        ) === true;
         const candidatesByURL = new Map();
         await this.cancelDeepScan();
 
@@ -257,19 +262,32 @@ export default class ImageScanner {
         window.chrome.runtime.onMessage.addListener(onMessage);
 
         try {
-            const response = await window.chrome.runtime.sendMessage({
-                target: ISOLATED_DEEP_SCAN_TARGET,
-                action: 'start',
-                scanId,
-                url: scanContext.url,
-                tabId: scanContext.tabId,
-                ignoreHiddenImages: filters.ignoreHiddenImages === true
-            });
-            if (response?.success !== true) {
-                session.finish({status: 'failed'});
+            try {
+                const result = await window.chrome.scripting.executeScript({
+                    target: {tabId: scanContext.tabId},
+                    func: scanPhotoSwipeImages
+                });
+                await processCandidates(result[0]?.result ?? []);
+            } catch {
+                // One visible PhotoSwipe target must never prevent the isolated DeepScan.
             }
 
-            await completion;
+            if (!session.cancelled) {
+                const response = await window.chrome.runtime.sendMessage({
+                    target: ISOLATED_DEEP_SCAN_TARGET,
+                    action: 'start',
+                    scanId,
+                    url: scanContext.url,
+                    tabId: scanContext.tabId,
+                    ignoreHiddenImages: filters.ignoreHiddenImages === true,
+                    allowProtectedDeepScan
+                });
+                if (response?.success !== true) {
+                    session.finish({status: 'failed'});
+                }
+
+                await completion;
+            }
         } catch {
             session.finish({status: 'failed'});
         } finally {

@@ -464,6 +464,7 @@ export const DEFAULT_SETTINGS = {
     common: {
         scanOnStart: true,
         allowBackgroundScan: false,
+        allowProtectedDeepScan: false,
         scanOnSettingsChanged: true,
         saveSettingsForURL: false,
         keepSettingsForDays: 30

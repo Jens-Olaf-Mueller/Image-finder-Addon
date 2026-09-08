@@ -15,7 +15,8 @@
         "activeTab",
         "scripting",
         "downloads",
-        "offscreen"
+        "offscreen",
+        "declarativeNetRequestWithHostAccess"
     ],
     "background": {
         "scripts": [

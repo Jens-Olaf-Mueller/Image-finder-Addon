@@ -12,6 +12,14 @@
     const sendReady = (scan) => {
         sendToHost({action: 'ready', scanId: scan.scanId, token: scan.token});
     };
+    const sendTrace = (scan, message) => {
+        sendToHost({
+            action: 'trace',
+            scanId: scan.scanId,
+            token: scan.token,
+            message
+        });
+    };
     const isTrustedHostMessage = (event) => event.source === window.parent &&
         event.origin === extensionOrigin &&
         event.data?.target === FRAME_MESSAGE_TARGET &&
@@ -45,6 +53,7 @@
         };
         activeScan = scan;
         sendReady(scan);
+        sendTrace(scan, 'frame scan started');
 
         try {
             const {runIsolatedDeepScan} = await import(chrome.runtime.getURL('src/content.js'));

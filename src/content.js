@@ -656,6 +656,184 @@ export async function scanImages(
     return images;
 }
 
+export async function scanPhotoSwipeImages() {
+    const findOpenPhotoSwipe = () => document.querySelector('.pswp.pswp--open');
+    const getActiveSlide = (photoSwipe) => photoSwipe?.querySelector(
+        '.pswp__item[aria-hidden="false"]'
+    ) ?? photoSwipe?.querySelector('.pswp__item:not([aria-hidden="true"])') ?? null;
+    const getSlideImages = (photoSwipe) => {
+        const slide = getActiveSlide(photoSwipe);
+        if (!slide) return [];
+
+        return Array.from(slide.querySelectorAll('.pswp__img, img')).flatMap((element) => {
+            if (element instanceof HTMLImageElement) return [element];
+            return Array.from(element.querySelectorAll('img'));
+        }).filter((image, index, images) => images.indexOf(image) === index);
+    };
+    const getReadyActiveSlideImage = (photoSwipe) => {
+        if (!photoSwipe?.matches('.pswp.pswp--open')) return null;
+
+        const slide = getActiveSlide(photoSwipe);
+        if (!slide) return null;
+
+        const image = getSlideImages(photoSwipe).find((candidate) =>
+            candidate.complete === true && candidate.naturalWidth > 0 && candidate.naturalHeight > 0
+        );
+        return image ? {photoSwipe, slide, image} : null;
+    };
+    const waitFor = (predicate, timeoutMs = 2000) => new Promise((resolve) => {
+        let observer = null;
+        let interval = null;
+        let timeout = null;
+        let settled = false;
+        const finish = (value) => {
+            if (settled) return;
+
+            settled = true;
+            observer?.disconnect();
+            clearInterval(interval);
+            clearTimeout(timeout);
+            resolve(value);
+        };
+        const check = () => {
+            try {
+                const result = predicate();
+                if (result) finish(result);
+            } catch {
+                // A failed inspection is treated like a state that has not appeared yet.
+            }
+        };
+
+        check();
+        if (settled) return;
+        if (typeof MutationObserver === 'function' && document.documentElement) {
+            observer = new MutationObserver(check);
+            observer.observe(document.documentElement, {
+                subtree: true,
+                childList: true,
+                attributes: true,
+                attributeFilter: ['class', 'src', 'srcset', 'role', 'aria-hidden']
+            });
+        }
+        interval = setInterval(check, 50);
+        timeout = setTimeout(() => finish(null), timeoutMs);
+    });
+    const closePhotoSwipe = async () => {
+        const photoSwipe = findOpenPhotoSwipe();
+        if (!photoSwipe) return true;
+
+        const closeButton = await waitFor(
+            () => photoSwipe.querySelector('.pswp__button--close'),
+            500
+        );
+        if (!closeButton) return false;
+
+        try {
+            closeButton.click();
+        } catch {
+            return false;
+        }
+
+        const closed = await waitFor(() => {
+            if (!photoSwipe.isConnected) return true;
+            return !photoSwipe.classList.contains('pswp--open');
+        }, 1500);
+        return Boolean(closed);
+    };
+
+    const getURL = (value) => {
+        if (typeof value !== 'string' || !value.trim()) return null;
+
+        try {
+            return new URL(value.trim(), document.baseURI).href;
+        } catch {
+            return null;
+        }
+    };
+    const getSrcsetURLs = (srcset) => typeof srcset === 'string'
+        ? srcset.split(',').map((entry) => getURL(entry.trim().split(/\s+/, 1)[0])).filter(Boolean)
+        : [];
+    const collectSlideCandidates = (photoSwipe) => getSlideImages(photoSwipe).flatMap((image) => {
+        const currentSrc = getURL(image.currentSrc);
+        const sourceURLs = [
+            currentSrc,
+            getURL(image.getAttribute('src')),
+            ...getSrcsetURLs(image.getAttribute('srcset'))
+        ].filter(Boolean);
+
+        return sourceURLs.map((url) => ({
+            url,
+            width: url === currentSrc ? image.naturalWidth : 0,
+            height: url === currentSrc ? image.naturalHeight : 0,
+            source: 'imageelements',
+            visuallyBlurred: false
+        }));
+    });
+    const isVisibleMediaTarget = (target) => {
+        if (!target?.querySelector('img')) return false;
+
+        try {
+            const style = getComputedStyle(target);
+            const rect = target.getBoundingClientRect();
+            return style.display !== 'none' && style.visibility !== 'hidden' &&
+                style.visibility !== 'collapse' && rect.width > 0 && rect.height > 0;
+        } catch {
+            return false;
+        }
+    };
+    const createTemporaryStyle = () => {
+        const style = document.createElement('style');
+        style.textContent = [
+            '.pswp {',
+            'opacity: 0 !important;',
+            'visibility: hidden !important;',
+            'transition: none !important;',
+            'animation: none !important;',
+            '}'
+        ].join('');
+        (document.head ?? document.documentElement).append(style);
+        return style;
+    };
+
+    const candidates = [];
+    const processedTargets = new WeakSet();
+    const targets = Array.from(document.querySelectorAll('[at-attr="media_locator"]'));
+    for (const target of targets) {
+        if (processedTargets.has(target) || !isVisibleMediaTarget(target) || findOpenPhotoSwipe()) {
+            continue;
+        }
+        processedTargets.add(target);
+
+        let temporaryStyle = null;
+        try {
+            temporaryStyle = createTemporaryStyle();
+            target.click();
+
+            const photoSwipe = await waitFor(findOpenPhotoSwipe, 2000);
+            if (!photoSwipe) continue;
+
+            const readySlide = await waitFor(
+                () => getReadyActiveSlideImage(findOpenPhotoSwipe()),
+                3000
+            );
+            if (!readySlide) continue;
+
+            candidates.push(...collectSlideCandidates(readySlide.photoSwipe));
+        } catch {
+            // One page-owned PhotoSwipe target must not stop the remaining DeepScan.
+        } finally {
+            try {
+                const closed = await closePhotoSwipe();
+                if (!closed && findOpenPhotoSwipe()) await closePhotoSwipe();
+            } finally {
+                temporaryStyle?.remove();
+            }
+        }
+    }
+
+    return candidates;
+}
+
 const DEEP_SCAN_READINESS_POLL_INTERVAL_MS = 100;
 const DEEP_SCAN_READINESS_STABLE_MS = 300;
 const DEEP_SCAN_READINESS_MAX_WAIT_MS = 2000;
@@ -971,12 +1149,74 @@ export async function runIsolatedDeepScan({
         if (isLink && href && !href.startsWith('#') && !hasLightboxIndicator(target)) return false;
         return !isLink || !href || href.startsWith('#') || hasLightboxIndicator(target);
     };
-    const activateLightboxTargets = async () => {
-        for (const image of document.images) {
-            if (!isActive() || lightboxActivations >= maxLightboxActivations) return;
+    const getDialogCount = () => document.querySelectorAll(
+        'dialog,[role="dialog"],[aria-modal="true"]'
+    ).length;
+    const getOverlayCount = () => document.querySelectorAll([
+        'dialog',
+        '[role="dialog"]',
+        '[aria-modal="true"]',
+        '[class*="modal" i]',
+        '[class*="overlay" i]',
+        '[class*="lightbox" i]',
+        '[class*="viewer" i]'
+    ].join(',')).length;
+    const getTemporaryUnsafeClickReason = (target) => {
+        const label = [
+            target.textContent,
+            target.getAttribute?.('aria-label'),
+            target.getAttribute?.('title'),
+            target.getAttribute?.('value')
+        ].filter(Boolean).join(' ').trim();
+        if (/\b(?:subscribe|subscription|purchase|tip|unlock|pay|buy|message|follow|like|share|abonnieren|kaufen|zahlung|bezahlen|nachricht|folgen|teilen)\b/i.test(label)) {
+            return 'restricted-action';
+        }
 
+        if (target.tagName?.toLowerCase() === 'a') {
+            const href = target.getAttribute('href')?.trim();
+            if (href && !href.startsWith('#')) return 'non-fragment-link';
+        }
+
+        return null;
+    };
+    const closeOpenedLightbox = async (dialogsBefore, overlaysBefore) => {
+        const dialogsAfter = getDialogCount();
+        const overlaysAfter = getOverlayCount();
+        if (dialogsAfter <= dialogsBefore && overlaysAfter <= overlaysBefore) return;
+
+        const containers = Array.from(document.querySelectorAll(
+            'dialog,[role="dialog"],[aria-modal="true"]'
+        ));
+        const closeControl = containers.flatMap((container) =>
+            Array.from(container.querySelectorAll('button,[role="button"]'))
+        ).find((control) => /\b(?:close|dismiss|schließen|schliessen)\b/i.test([
+            control.getAttribute('aria-label'),
+            control.getAttribute('title'),
+            control.textContent
+        ].filter(Boolean).join(' ')));
+        if (!closeControl) return;
+
+        try {
+            closeControl.click();
+        } catch {
+            return;
+        }
+
+        await wait(lightboxSettleMs);
+    };
+    const activateLightboxTargets = async () => {
+        const candidates = Array.from(document.images, (image) => {
             const target = getClickableTarget(image);
+            return target ? {image, target} : null;
+        }).filter(Boolean);
+
+        for (const {image, target} of candidates) {
+            if (!isActive() || lightboxActivations >= maxLightboxActivations) return;
             if (!canActivate(image, target)) continue;
+            if (getTemporaryUnsafeClickReason(target)) continue;
+
+            const dialogsBefore = getDialogCount();
+            const overlaysBefore = getOverlayCount();
 
             clickedTargets.add(target);
             try {
@@ -986,8 +1226,10 @@ export async function runIsolatedDeepScan({
                 continue;
             }
 
-            if (!(await wait(lightboxSettleMs)) || !isActive()) return;
+            if (!(await wait(lightboxSettleMs))) return;
             await queueCollection();
+            await closeOpenedLightbox(dialogsBefore, overlaysBefore);
+            if (!isActive()) return;
         }
     };
     try {
