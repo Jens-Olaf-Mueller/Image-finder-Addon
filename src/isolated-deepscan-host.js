@@ -21,6 +21,23 @@
         return document.body;
     }
 
+    function prepareFrameHost(container) {
+        const width = `${DEEP_SCAN_FRAME_VIEWPORT_WIDTH_PX}px`;
+        const height = `${DEEP_SCAN_FRAME_VIEWPORT_HEIGHT_PX}px`;
+        const root = document.documentElement;
+
+        [root, container].forEach((element) => {
+            element.style.margin = '0';
+            element.style.padding = '0';
+            element.style.width = width;
+            element.style.height = height;
+            element.style.minWidth = width;
+            element.style.minHeight = height;
+            element.style.overflow = 'hidden';
+        });
+        container.style.position = 'relative';
+    }
+
     function createIsolatedDeepScanHost({emit = null} = {}) {
         let activeJob = null;
 
@@ -100,6 +117,7 @@
             }
 
             const container = await getFrameContainer();
+            prepareFrameHost(container);
             const frame = document.createElement('iframe');
             const totalLimitMs = Number.isFinite(jobInput.totalLimitMs)
                 ? Math.max(0, Math.min(DEEP_SCAN_TOTAL_LIMIT_MS, jobInput.totalLimitMs))
@@ -122,15 +140,18 @@
 
             frame.setAttribute('aria-hidden', 'true');
             frame.tabIndex = -1;
+            frame.width = String(DEEP_SCAN_FRAME_VIEWPORT_WIDTH_PX);
+            frame.height = String(DEEP_SCAN_FRAME_VIEWPORT_HEIGHT_PX);
             frame.style.cssText = [
-                'position:fixed',
+                'position:absolute',
+                'display:block',
                 `width:${DEEP_SCAN_FRAME_VIEWPORT_WIDTH_PX}px`,
                 `height:${DEEP_SCAN_FRAME_VIEWPORT_HEIGHT_PX}px`,
                 'opacity:0',
                 'pointer-events:none',
                 'border:0',
-                'left:-10000px',
-                'top:-10000px'
+                'left:0',
+                'top:0'
             ].join(';');
             job.onMessage = (event) => {
                 if (event.source !== frame.contentWindow || event.origin !== job.frameOrigin) return;
@@ -145,15 +166,6 @@
                     clearTimeout(job.handshakeTimeout);
                     clearInterval(job.handshakeInterval);
                     job.handshakeInterval = null;
-                    return;
-                }
-                if (data.action === 'trace' && typeof data.message === 'string') {
-                    emitEvent({
-                        action: 'trace',
-                        scanId: job.scanId,
-                        url: job.url,
-                        message: data.message
-                    });
                     return;
                 }
                 if (data.action === 'batch' && Array.isArray(data.candidates) && !job.finished) {

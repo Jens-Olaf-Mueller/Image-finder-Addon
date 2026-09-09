@@ -8,15 +8,15 @@
             <input type="checkbox" id="chkAllowBackgroundScan" name="allowBackgroundScan">
              Allow background scan
         </label>
-        <label class="control" title="Allows the isolated DeepScan to retry protected pages without affecting the visible tab">
-            <input type="checkbox" id="chkAllowProtectedDeepScan" name="allowProtectedDeepScan">
+        <label class="control" title="Allows the isolated deep scan to retry protected pages without affecting the visible tab">
+            <input type="checkbox" id="chkAllowProtectedDeepScan" name="allowProtectedDeepScan"
+            style="margin-left: 1rem;">
              Allow DeepScan on protected websites
         </label>
         <label class="control" title="Scans the current page automatically again when settings panel is closed">
             <input type="checkbox" id="chkScanOnSettingsChanged" name="scanOnSettingsChanged" checked>
-             Re-scan page after settings are closed
+             Scan page after closing settings panel
         </label>
-
         <label class="control">
             <input type="checkbox" id="chkSaveSettingsForURL" name="saveSettingsForURL">
              Remember settings for this URL
@@ -32,14 +32,12 @@
                 disabled>
             <span> days</span>
         </div>
-
         <div class="control">
             <button type="button" id="btnDeleteProfile" class="folder-button" disabled>
                 <img src="../assets/icons/bin.png" alt="delete">
             </button>
             <span> Delete settings for this profile</span>
         </div>
-
     </fieldset>
 
     <fieldset name="downloads"><legend>Downloads</legend>

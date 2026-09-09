@@ -118,15 +118,24 @@ export class ImageFinder {
     setEventListeners() {
         this.DOM.divToolbar.addEventListener('click', e => this.onButtonClick(e));
         this.DOM.divToolbarTopLeft.addEventListener('click', e => this.onSortButtonClick(e));
+        this.DOM.btnStopDeepScan?.addEventListener('click', () => {
+            void this.stopDeepScanByUser();
+        });
         this.DOM.lstImages.addEventListener('click', e => this.onListItemClick(e));
         this.DOM.lstImages.addEventListener('keydown', e => this.onKeyPress(e));
     }
 
     onSortButtonClick(e) {
         const button = e.target.closest('button');
-        if (!button || !this.DOM.divToolbarTopLeft.contains(button)) return;
+        if (!button || !button.dataset.sort || !this.DOM.divToolbarTopLeft.contains(button)) return;
 
         this.sort(button.dataset.sort);
+    }
+
+    async stopDeepScanByUser() {
+        if (this.#activityCounts.deepScan === 0) return false;
+
+        return this.scanner.cancelDeepScan({endReason: 'user-abort'});
     }
 
     sort(criterion, initialDirection = null) {
@@ -1072,11 +1081,21 @@ export class ImageFinder {
 
         this.DOM.divLED.classList.toggle('active', activity !== 'none');
         this.DOM.divLED.dataset.activity = activity;
+        this.#updateDeepScanStopButton();
 
         if (activity === 'scanner') {
             this.info = 'Scanning...';
         } else if (activity === 'blurScanner' || activity === 'matcher') {
             this.info = 'Filtering list...';
         }
+    }
+
+    #updateDeepScanStopButton() {
+        const button = this.DOM.btnStopDeepScan;
+        if (!button) return;
+
+        const deepScanIsRunning = this.#activityCounts.deepScan > 0;
+        button.hidden = !deepScanIsRunning;
+        button.disabled = !deepScanIsRunning;
     }
 }

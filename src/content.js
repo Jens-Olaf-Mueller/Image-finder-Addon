@@ -953,6 +953,20 @@ export async function runIsolatedDeepScan({
             anchor.remove();
         }
     };
+    const scrollToElement = (element) => {
+        if (!element?.scrollIntoView) return false;
+
+        try {
+            try {
+                element.scrollIntoView({behavior: 'instant', block: 'start'});
+            } catch {
+                element.scrollIntoView({behavior: 'auto', block: 'start'});
+            }
+            return true;
+        } catch {
+            return false;
+        }
+    };
     const getReadinessState = () => {
         const documentElement = document.documentElement;
         const body = document.body;
@@ -964,7 +978,6 @@ export async function runIsolatedDeepScan({
         const relevantElementCount = body?.childElementCount ?? 0;
 
         return {
-            readyState: document.readyState,
             viewportReady: window.innerWidth > 0 && window.innerHeight > 0,
             images,
             scrollHeight,
@@ -1013,6 +1026,18 @@ export async function runIsolatedDeepScan({
         }
 
         return getReadinessState();
+    };
+    const scrolledElementTargets = new WeakSet();
+    const getElementScrollTarget = (viewportHeight) => {
+        const minimumTargetTop = Math.ceil(viewportHeight * scrollStepFactor);
+        const targets = Array.from(document.querySelectorAll('img,video')).map((element) => {
+            const rect = element.getBoundingClientRect();
+            return {element, rect};
+        }).filter(({element, rect}) => !scrolledElementTargets.has(element) &&
+            rect.width > 0 && rect.height > 0 && rect.top > 0
+        ).sort((first, second) => first.rect.top - second.rect.top);
+
+        return targets.find(({rect}) => rect.top >= minimumTargetTop) ?? null;
     };
     const serializeCandidate = (candidate) => ({
         url: candidate.url,
@@ -1256,27 +1281,46 @@ export async function runIsolatedDeepScan({
             const scrollElement = document.scrollingElement ?? document.documentElement;
             const before = window.scrollY;
             const scrollHeightBefore = scrollElement.scrollHeight;
+            const useElementTargets = scrollHeightBefore <= viewportHeight;
+            const elementTarget = useElementTargets ? getElementScrollTarget(viewportHeight) : null;
             const maximumScrollY = Math.max(0, scrollHeightBefore - viewportHeight);
             const target = Math.min(
                 maximumScrollY,
                 before + Math.ceil(viewportHeight * scrollStepFactor)
             );
 
-            if (target <= before) break;
-            if (!scrollToDocumentPosition(target)) break;
+            if (!elementTarget && target <= before) break;
+            const scrolledByElement = Boolean(elementTarget);
+            if (scrolledByElement) scrolledElementTargets.add(elementTarget.element);
+            const elementBeforeTop = scrolledByElement
+                ? elementTarget.element.getBoundingClientRect().top
+                : null;
+            const scrollSucceeded = scrolledByElement
+                ? scrollToElement(elementTarget.element)
+                : scrollToDocumentPosition(target);
+            if (!scrollSucceeded) {
+                break;
+            }
 
-            if (!(await wait(scrollSettleMs)) || !isActive()) break;
+            if (!(await wait(scrollSettleMs)) || !isActive()) {
+                break;
+            }
             const after = window.scrollY;
             let scrollHeight = scrollElement.scrollHeight;
-            if (after <= before) break;
+            const elementGeometryMoved = scrolledByElement &&
+                elementTarget.element.getBoundingClientRect().top < elementBeforeTop;
+            const scrollMoved = after > before || elementGeometryMoved;
+            if (!scrollMoved) break;
 
             await queueCollection();
             await activateLightboxTargets();
             scrollHeight = scrollElement.scrollHeight;
-            const reachedBottom = after + viewportHeight >= scrollHeight - 2;
-            if (reachedBottom && scrollHeight <= previousScrollHeight) break;
+            if (!scrolledByElement) {
+                const reachedBottom = after + viewportHeight >= scrollHeight - 2;
+                if (reachedBottom && scrollHeight <= previousScrollHeight) break;
 
-            previousScrollHeight = scrollHeight;
+                previousScrollHeight = scrollHeight;
+            }
         }
 
         if (isActive() && await wait(finalSettleMs)) {
@@ -1295,6 +1339,548 @@ export async function runIsolatedDeepScan({
                 ? 'timedOut'
                 : 'completed',
         lightboxActivations
+    };
+}
+
+export async function runHiddenFrameDeepScan({
+    ignoreHiddenImages = false,
+    onBatch = null,
+    signal = null,
+    totalLimitMs = 90000,
+    maxScrollSteps = 1000,
+    stableCycleLimit = 3,
+    scrollStepFactor = 0.8,
+    minimumSettleMs = 150,
+    quietSettleMs = 350,
+    maximumSettleMs = 1500
+} = {}) {
+    const startedAt = Date.now();
+    const deadline = startedAt + Math.max(0, totalLimitMs);
+    const seenURLs = new Set();
+    const knownTargets = new Set();
+    const attemptedUpwardTargets = new WeakSet();
+    const attemptedDownwardTargets = new WeakSet();
+    let observer = null;
+    let lastRelevantMutationAt = startedAt;
+    let relevantMutationCount = 0;
+    const isActive = () => signal?.aborted !== true && Date.now() < deadline;
+    const wait = (milliseconds) => new Promise((resolve) => {
+        if (signal?.aborted) {
+            resolve(false);
+            return;
+        }
+
+        let timeout = null;
+        const finish = (completed) => {
+            clearTimeout(timeout);
+            signal?.removeEventListener?.('abort', onAbort);
+            resolve(completed);
+        };
+        const onAbort = () => finish(false);
+
+        timeout = setTimeout(() => finish(true), Math.max(0, milliseconds));
+        signal?.addEventListener?.('abort', onAbort, {once: true});
+    });
+    const getScrollElement = () => document.scrollingElement ?? document.documentElement;
+    const getTargetElements = () => Array.from(document.querySelectorAll([
+        'img',
+        'video',
+        '[loading="lazy"]',
+        '[data-src]',
+        '[data-srcset]',
+        '[data-image]',
+        '[data-image-src]',
+        '[data-full]',
+        '[data-full-src]',
+        '[data-fullsize]',
+        '[data-large]',
+        '[data-original]',
+        '[data-lightbox-src]'
+    ].join(',')));
+    const registerTargets = () => {
+        let added = 0;
+
+        getTargetElements().forEach((element) => {
+            if (knownTargets.has(element)) return;
+
+            knownTargets.add(element);
+            added += 1;
+        });
+        return added;
+    };
+    const getMetrics = () => {
+        const scrollElement = getScrollElement();
+
+        return {
+            scrollY: Math.round(window.scrollY ?? 0),
+            scrollHeight: Math.max(
+                scrollElement?.scrollHeight ?? 0,
+                document.documentElement?.scrollHeight ?? 0,
+                document.body?.scrollHeight ?? 0
+            ),
+            clientHeight: Math.max(
+                scrollElement?.clientHeight ?? 0,
+                window.innerHeight ?? 0
+            ),
+            images: document.images?.length ?? 0,
+            targets: knownTargets.size
+        };
+    };
+    const getNextScrollTarget = (direction) => {
+        const viewportHeight = Math.max(window.innerHeight, 1);
+        const minimumTargetTop = Math.ceil(viewportHeight * scrollStepFactor);
+        const attemptedTargets = direction === 'up'
+            ? attemptedUpwardTargets
+            : attemptedDownwardTargets;
+        const targets = getTargetElements().flatMap((element) => {
+            if (attemptedTargets.has(element)) return [];
+
+            try {
+                const rect = element.getBoundingClientRect();
+                if (rect.width <= 0 || rect.height <= 0 || rect.bottom <= 0) return [];
+
+                return [{element, rect}];
+            } catch {
+                return [];
+            }
+        }).sort((first, second) => first.rect.top - second.rect.top);
+
+        if (direction === 'up') {
+            const upperTargetTop = Math.max(0, viewportHeight - minimumTargetTop);
+            return targets.filter(({rect}) => rect.top < upperTargetTop)
+                .sort((first, second) => second.rect.top - first.rect.top)[0] ?? null;
+        }
+
+        return targets.find(({rect}) => rect.top >= minimumTargetTop) ??
+            targets.find(({rect}) => rect.bottom > viewportHeight) ?? null;
+    };
+    const getBottomDwellTarget = () => {
+        let target = null;
+
+        Array.from(document.body?.querySelectorAll('*') ?? []).forEach((element) => {
+            if (element.hasAttribute('data-image-finder-scroll-anchor')) return;
+
+            try {
+                if (getComputedStyle(element).position === 'fixed') return;
+                const rect = element.getBoundingClientRect();
+                if (rect.width <= 0 || rect.height <= 0) return;
+
+                const bottom = window.scrollY + rect.bottom;
+                if (!target || bottom >= target.bottom) {
+                    target = {element, bottom};
+                }
+            } catch {
+                // One page-owned element must not prevent the bottom dwell.
+            }
+        });
+
+        return target?.element ?? null;
+    };
+    const scrollElementIntoView = (element, block = 'start') => {
+        if (!element?.scrollIntoView) return {scrolled: false, targetMovement: 0};
+
+        let beforeTop = 0;
+        try {
+            beforeTop = element.getBoundingClientRect().top;
+            try {
+                element.scrollIntoView({behavior: 'instant', block});
+            } catch {
+                element.scrollIntoView({behavior: 'auto', block});
+            }
+            const afterTop = element.getBoundingClientRect().top;
+            return {scrolled: true, targetMovement: afterTop - beforeTop};
+        } catch {
+            return {scrolled: false, targetMovement: 0};
+        }
+    };
+    const scrollFurtherWithAnchor = (before, direction) => {
+        const parent = document.body ?? document.documentElement;
+        const viewportHeight = Math.max(window.innerHeight, 1);
+        const maximumPosition = Math.max(0, before.scrollHeight - viewportHeight);
+        const offset = Math.ceil(viewportHeight * scrollStepFactor);
+        const nextPosition = direction === 'up'
+            ? Math.max(0, before.scrollY - offset)
+            : Math.min(maximumPosition, before.scrollY + offset);
+        if (!parent || nextPosition === before.scrollY) {
+            return {scrolled: false, targetMovement: 0};
+        }
+
+        const anchor = document.createElement('div');
+        anchor.setAttribute('aria-hidden', 'true');
+        anchor.setAttribute('data-image-finder-scroll-anchor', '');
+        anchor.style.cssText = [
+            'position:absolute!important',
+            'display:block!important',
+            'left:0!important',
+            `top:${nextPosition}px!important`,
+            'width:1px!important',
+            'height:1px!important',
+            'margin:0!important',
+            'padding:0!important',
+            'border:0!important',
+            'pointer-events:none!important',
+            'opacity:0!important'
+        ].join(';');
+        try {
+            parent.append(anchor);
+            return scrollElementIntoView(anchor);
+        } finally {
+            anchor.remove();
+        }
+    };
+    const waitForSettle = async ({minimumMs = minimumSettleMs} = {}) => {
+        const settleStartedAt = Date.now();
+        const effectiveMinimumMs = Math.max(0, Math.min(minimumMs, maximumSettleMs));
+        const settleDeadline = Math.min(deadline, settleStartedAt + Math.max(
+            effectiveMinimumMs,
+            maximumSettleMs
+        ));
+
+        if (!(await wait(Math.min(effectiveMinimumMs, Math.max(0, settleDeadline - Date.now()))))) {
+            return false;
+        }
+        while (isActive() && Date.now() < settleDeadline) {
+            const quietForMs = Date.now() - lastRelevantMutationAt;
+            if (quietForMs >= quietSettleMs) return true;
+
+            const remainingQuietMs = quietSettleMs - quietForMs;
+            const remainingTotalMs = settleDeadline - Date.now();
+            if (!(await wait(Math.min(50, remainingQuietMs, remainingTotalMs)))) return false;
+        }
+        return isActive();
+    };
+    const collectSources = async () => {
+        if (!isActive()) return 0;
+
+        const foundCandidates = await scanImages(
+            ignoreHiddenImages,
+            true,
+            true,
+            null,
+            true
+        );
+        const newCandidates = [];
+
+        for (const candidate of foundCandidates) {
+            if (typeof candidate?.url !== 'string' || seenURLs.has(candidate.url)) continue;
+
+            seenURLs.add(candidate.url);
+            newCandidates.push({
+                url: candidate.url,
+                width: Number.isFinite(candidate.width) ? Math.max(0, candidate.width) : 0,
+                height: Number.isFinite(candidate.height) ? Math.max(0, candidate.height) : 0,
+                source: candidate.source,
+                visuallyBlurred: candidate.visuallyBlurred === true,
+                ...(typeof candidate.mimeType === 'string' ? {mimeType: candidate.mimeType} : {}),
+                ...(Number.isFinite(candidate.fileSize) ? {fileSize: candidate.fileSize} : {})
+            });
+        }
+        if (newCandidates.length > 0 && typeof onBatch === 'function' && isActive()) {
+            await onBatch(newCandidates);
+        }
+        return newCandidates.length;
+    };
+    const isGeneratedScrollAnchor = (node) => node?.nodeType === Node.ELEMENT_NODE &&
+        node.hasAttribute?.('data-image-finder-scroll-anchor');
+    const containsRealElement = (node) => {
+        if (!node || isGeneratedScrollAnchor(node)) return false;
+        if (node.nodeType === Node.ELEMENT_NODE) return true;
+        if (node.nodeType !== Node.DOCUMENT_FRAGMENT_NODE) return false;
+
+        return Array.from(node.children).some((element) => !isGeneratedScrollAnchor(element));
+    };
+    const isRelevantMutation = (record) => {
+        if (record.type === 'attributes') return !isGeneratedScrollAnchor(record.target);
+
+        return Array.from(record.addedNodes ?? []).some(containsRealElement) ||
+            Array.from(record.removedNodes ?? []).some(containsRealElement);
+    };
+    const isRelevantScrollableContainer = (element) => {
+        if (!element || element === document.documentElement || element === document.body) return false;
+
+        try {
+            const style = getComputedStyle(element);
+            return element.scrollHeight > element.clientHeight && element.clientHeight > 0 &&
+                /(?:auto|scroll|overlay)/i.test(style.overflowY);
+        } catch {
+            return false;
+        }
+    };
+    const getRelevantScrollContainers = () => {
+        const containers = new Set();
+
+        getTargetElements().forEach((element) => {
+            let parent = element.parentElement;
+            while (parent && parent !== document.body && parent !== document.documentElement) {
+                if (isRelevantScrollableContainer(parent)) containers.add(parent);
+                parent = parent.parentElement;
+            }
+        });
+
+        return Array.from(containers).sort((first, second) => {
+            if (first.contains(second)) return 1;
+            if (second.contains(first)) return -1;
+            return 0;
+        });
+    };
+    const getContainerMetrics = (container) => {
+        const targets = getTargetElements().filter((element) => container.contains(element));
+
+        return {
+            scrollTop: Math.max(0, Math.round(container.scrollTop ?? 0)),
+            scrollHeight: Math.max(0, container.scrollHeight ?? 0),
+            clientHeight: Math.max(0, container.clientHeight ?? 0),
+            images: container.querySelectorAll('img').length,
+            targets: targets.length
+        };
+    };
+    const isAtContainerTop = (metrics) => metrics.scrollTop <= 4;
+    const isAtContainerBottom = (metrics) => metrics.scrollTop + metrics.clientHeight >=
+        metrics.scrollHeight - 4;
+    const getEndReason = (reason) => {
+        if (signal?.aborted) return 'aborted';
+        if (Date.now() >= deadline) return 'timeout';
+        return reason;
+    };
+    const isAtCurrentDocumentBottom = (metrics) => metrics.scrollY + metrics.clientHeight >=
+        metrics.scrollHeight - 4;
+    const isAtCurrentDocumentTop = (metrics) => metrics.scrollY <= 4;
+
+    let steps = 0;
+    let stableCycles = 0;
+    let topStableCycles = 0;
+    let endReason = 'stable';
+    const scanScrollableContainer = async (container, direction) => {
+        let edgeStableCycles = 0;
+
+        while (steps < maxScrollSteps && isActive() && container.isConnected &&
+            isRelevantScrollableContainer(container)) {
+            const before = getContainerMetrics(container);
+            const atEdge = direction === 'up'
+                ? isAtContainerTop(before)
+                : isAtContainerBottom(before);
+            const mutationsBefore = relevantMutationCount;
+
+            if (!atEdge) {
+                const offset = Math.ceil(before.clientHeight * scrollStepFactor);
+                const maximumScrollTop = Math.max(0, before.scrollHeight - before.clientHeight);
+                const nextScrollTop = direction === 'up'
+                    ? Math.max(0, before.scrollTop - offset)
+                    : Math.min(maximumScrollTop, before.scrollTop + offset);
+                container.scrollTop = nextScrollTop;
+            }
+            steps += 1;
+
+            if (!(await waitForSettle({minimumMs: atEdge ? 400 : minimumSettleMs}))) {
+                endReason = getEndReason('aborted');
+                return;
+            }
+
+            const newCandidates = await collectSources();
+            registerTargets();
+            const after = getContainerMetrics(container);
+            const newImages = Math.max(0, after.images - before.images);
+            const newTargets = Math.max(0, after.targets - before.targets);
+            const mutations = Math.max(0, relevantMutationCount - mutationsBefore);
+            const scrollMoved = direction === 'up'
+                ? after.scrollTop < before.scrollTop
+                : after.scrollTop > before.scrollTop;
+            const progress = scrollMoved || after.scrollHeight > before.scrollHeight || newImages > 0 ||
+                newTargets > 0 || newCandidates > 0 || mutations > 0;
+
+            if (atEdge) {
+                edgeStableCycles = progress ? 0 : edgeStableCycles + 1;
+                if (edgeStableCycles >= stableCycleLimit) {
+                    return;
+                }
+            }
+        }
+    };
+    const scanRelevantScrollContainers = async (direction) => {
+        const scannedContainers = new Set();
+
+        while (steps < maxScrollSteps && isActive()) {
+            const discoveredContainers = getRelevantScrollContainers();
+            const containers = discoveredContainers.filter((container) =>
+                !scannedContainers.has(container)
+            );
+            if (containers.length === 0) return;
+
+            for (const container of containers) {
+                scannedContainers.add(container);
+                await scanScrollableContainer(container, direction);
+                if (!isActive() || steps >= maxScrollSteps) return;
+            }
+        }
+    };
+
+    try {
+        if (typeof MutationObserver === 'function' && document.documentElement) {
+            observer = new MutationObserver((records) => {
+                const relevantMutations = records.filter(isRelevantMutation);
+                if (relevantMutations.length === 0) return;
+
+                lastRelevantMutationAt = Date.now();
+                relevantMutationCount += relevantMutations.length;
+            });
+            observer.observe(document.documentElement, {
+                subtree: true,
+                childList: true,
+                attributes: true,
+                attributeFilter: [
+                    'src',
+                    'srcset',
+                    'data-src',
+                    'data-srcset',
+                    'data-image',
+                    'data-image-src',
+                    'data-full',
+                    'data-full-src',
+                    'data-fullsize',
+                    'data-large',
+                    'data-original',
+                    'data-lightbox-src',
+                    'style',
+                    'class'
+                ]
+            });
+        }
+
+        const readinessDeadline = Math.min(deadline, Date.now() + DEEP_SCAN_READINESS_MAX_WAIT_MS);
+        while (isActive() && (window.innerWidth <= 0 || window.innerHeight <= 0 ||
+            document.readyState === 'loading') && Date.now() < readinessDeadline) {
+            if (!(await wait(DEEP_SCAN_READINESS_POLL_INTERVAL_MS))) break;
+        }
+
+        registerTargets();
+        await collectSources();
+        await scanRelevantScrollContainers('up');
+
+        while (steps < maxScrollSteps && isActive()) {
+            const beforeNewTargets = registerTargets();
+            const before = getMetrics();
+            if (isAtCurrentDocumentTop(before)) {
+                const mutationsBefore = relevantMutationCount;
+                steps += 1;
+
+                if (!(await waitForSettle({minimumMs: 400}))) {
+                    endReason = getEndReason('aborted');
+                    break;
+                }
+
+                const newCandidates = await collectSources();
+                const afterNewTargets = registerTargets();
+                const after = getMetrics();
+                const newImages = Math.max(0, after.images - before.images);
+                const newTargets = beforeNewTargets + afterNewTargets;
+                const mutations = Math.max(0, relevantMutationCount - mutationsBefore);
+                const progress = after.scrollHeight > before.scrollHeight || newImages > 0 ||
+                    newTargets > 0 || newCandidates > 0 || mutations > 0;
+
+                topStableCycles = progress ? 0 : topStableCycles + 1;
+                if (topStableCycles >= stableCycleLimit) break;
+                continue;
+            }
+
+            const target = getNextScrollTarget('up');
+
+            if (target) {
+                attemptedUpwardTargets.add(target.element);
+                scrollElementIntoView(target.element);
+            } else {
+                scrollFurtherWithAnchor(before, 'up');
+            }
+            steps += 1;
+
+            if (!(await waitForSettle())) {
+                endReason = getEndReason('aborted');
+                break;
+            }
+
+            await collectSources();
+            registerTargets();
+        }
+
+        stableCycles = 0;
+        await scanRelevantScrollContainers('down');
+        while (steps < maxScrollSteps && isActive()) {
+            const beforeNewTargets = registerTargets();
+            const before = getMetrics();
+            if (isAtCurrentDocumentBottom(before)) {
+                const mutationsBefore = relevantMutationCount;
+                const bottomTarget = getBottomDwellTarget();
+                if (bottomTarget) scrollElementIntoView(bottomTarget, 'end');
+                steps += 1;
+
+                if (!(await waitForSettle({minimumMs: 400}))) {
+                    endReason = getEndReason('aborted');
+                    break;
+                }
+
+                const newCandidates = await collectSources();
+                const afterNewTargets = registerTargets();
+                const after = getMetrics();
+                const newImages = Math.max(0, after.images - before.images);
+                const newTargets = beforeNewTargets + afterNewTargets;
+                const mutations = Math.max(0, relevantMutationCount - mutationsBefore);
+                const progress = after.scrollHeight > before.scrollHeight || newImages > 0 ||
+                    newTargets > 0 || newCandidates > 0 || mutations > 0;
+
+                stableCycles = progress ? 0 : stableCycles + 1;
+
+                if (stableCycles >= stableCycleLimit) {
+                    endReason = 'stable';
+                    break;
+                }
+                continue;
+            }
+
+            const target = getNextScrollTarget('down');
+            let scrollResult;
+
+            if (target) {
+                attemptedDownwardTargets.add(target.element);
+                scrollResult = scrollElementIntoView(target.element);
+            } else {
+                scrollResult = scrollFurtherWithAnchor(before, 'down');
+            }
+            steps += 1;
+
+            if (!(await waitForSettle())) {
+                endReason = getEndReason('aborted');
+                break;
+            }
+
+            const newCandidates = await collectSources();
+            const afterNewTargets = registerTargets();
+            const after = getMetrics();
+            const scrollMoved = after.scrollY > before.scrollY || scrollResult.targetMovement < -1;
+            const scrollHeightGrew = after.scrollHeight > before.scrollHeight;
+            const newImages = Math.max(0, after.images - before.images);
+            const newTargets = beforeNewTargets + afterNewTargets;
+            const progress = scrollMoved || scrollHeightGrew || newImages > 0 || newTargets > 0 ||
+                newCandidates > 0;
+
+            if (progress) stableCycles = 0;
+
+        }
+        if (steps >= maxScrollSteps && isActive() && stableCycles < stableCycleLimit) {
+            endReason = 'safety-limit';
+        } else {
+            endReason = getEndReason(endReason);
+        }
+    } finally {
+        observer?.disconnect();
+    }
+
+    const finalEndReason = getEndReason(endReason);
+    return {
+        status: finalEndReason === 'aborted'
+            ? 'cancelled'
+            : finalEndReason === 'timeout'
+                ? 'timedOut'
+                : 'completed',
+        endReason: finalEndReason
     };
 }
 

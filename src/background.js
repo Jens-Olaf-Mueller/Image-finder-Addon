@@ -1,10 +1,14 @@
 const OFFSCREEN_DOCUMENT_PATH = 'offscreen.html';
 const OFFSCREEN_TARGET = 'image-finder-offscreen';
 const ISOLATED_DEEP_SCAN_TARGET = 'image-finder-isolated-deepscan';
+const HIDDEN_DEEP_SCAN_TARGET = 'image-finder-hidden-deepscan';
 const TERMINAL_DOWNLOAD_STATES = new Set(['complete', 'interrupted']);
 const PROTECTED_DEEP_SCAN_FRAME_RULE_ID = 10001;
+const HIDDEN_DEEP_SCAN_FRAME_RULE_ID = 10002;
+const HIDDEN_DEEP_SCAN_HOST_FRAME_ID = 0;
 const EMBED_BLOCKED_OR_LOAD_FAILED = 'EMBED_BLOCKED_OR_LOAD_FAILED';
-const ISOLATED_DEEP_SCAN_TOTAL_LIMIT_MS = 30000;
+const ISOLATED_DEEP_SCAN_TOTAL_LIMIT_MS = 90000;
+const HIDDEN_DEEP_SCAN_TOTAL_LIMIT_MS = ISOLATED_DEEP_SCAN_TOTAL_LIMIT_MS;
 
 if (typeof importScripts === 'function') {
     importScripts('isolated-deepscan-host.js');
@@ -15,8 +19,10 @@ const backgroundObjectUrlsByDownloadId = new Map();
 const offscreenTokensByDownloadId = new Map();
 let creatingOffscreenDocument = null;
 let activeIsolatedDeepScan = null;
+let activeHiddenDeepScan = null;
 let backgroundDeepScanHost = null;
 let protectedDeepScanFrameRuleOwner = null;
+let hiddenDeepScanFrameRuleOwner = null;
 let protectedDeepScanFrameRuleUpdate = Promise.resolve();
 
 function getErrorMessage(error) {
@@ -37,6 +43,15 @@ function canUseOffscreenDocument() {
 
 function canUseProtectedDeepScanFrameRule() {
     return typeof chrome.declarativeNetRequest?.updateSessionRules === 'function';
+}
+
+function isHiddenDeepScanFrameUnavailableReason(reason) {
+    return reason === EMBED_BLOCKED_OR_LOAD_FAILED ||
+        (typeof reason === 'string' && /^HIDDEN_FRAME_(?:LOAD|READY)_TIMEOUT:/.test(reason));
+}
+
+function isMissingMessageReceiverError(error) {
+    return /Receiving end does not exist/i.test(getErrorMessage(error));
 }
 
 function queueProtectedDeepScanFrameRuleUpdate(update) {
@@ -74,7 +89,7 @@ function createProtectedDeepScanFrameRule(url) {
 
 async function installProtectedDeepScanFrameRule(job) {
     if (!canUseProtectedDeepScanFrameRule()) {
-        console.warn('[DeepScan TRACE] temporary frame rule failed', {
+        console.warn('[DeepScan] temporary frame rule failed', {
             scanId: job.scanId,
             ruleId: PROTECTED_DEEP_SCAN_FRAME_RULE_ID
         });
@@ -93,12 +108,8 @@ async function installProtectedDeepScanFrameRule(job) {
             scanId: job.scanId,
             ruleId: PROTECTED_DEEP_SCAN_FRAME_RULE_ID
         };
-        console.info('[DeepScan TRACE] temporary frame rule installed', {
-            scanId: job.scanId,
-            ruleId: PROTECTED_DEEP_SCAN_FRAME_RULE_ID
-        });
     } catch (error) {
-        console.warn('[DeepScan TRACE] temporary frame rule failed', {
+        console.warn('[DeepScan] temporary frame rule failed', {
             scanId: job.scanId,
             ruleId: PROTECTED_DEEP_SCAN_FRAME_RULE_ID
         });
@@ -120,15 +131,9 @@ async function removeProtectedDeepScanFrameRule(scanId = null) {
         if (!scanId || protectedDeepScanFrameRuleOwner?.scanId === scanId) {
             protectedDeepScanFrameRuleOwner = null;
         }
-        if (owner?.scanId === scanId) {
-            console.info('[DeepScan TRACE] temporary frame rule removed', {
-                scanId,
-                ruleId: PROTECTED_DEEP_SCAN_FRAME_RULE_ID
-            });
-        }
         return true;
     } catch {
-        console.warn('[DeepScan TRACE] temporary frame rule failed', {
+        console.warn('[DeepScan] temporary frame rule failed', {
             scanId: scanId ?? owner?.scanId ?? '',
             ruleId: PROTECTED_DEEP_SCAN_FRAME_RULE_ID
         });
@@ -136,8 +141,71 @@ async function removeProtectedDeepScanFrameRule(scanId = null) {
     }
 }
 
+function createHiddenDeepScanFrameRule(url, tabId) {
+    const targetURL = new URL(url);
+    targetURL.hash = '';
+
+    return {
+        id: HIDDEN_DEEP_SCAN_FRAME_RULE_ID,
+        priority: 1,
+        action: {
+            type: 'modifyHeaders',
+            responseHeaders: [
+                {header: 'X-Frame-Options', operation: 'remove'},
+                {header: 'Content-Security-Policy', operation: 'remove'}
+            ]
+        },
+        condition: {
+            urlFilter: `|${targetURL.href}|`,
+            isUrlFilterCaseSensitive: true,
+            requestMethods: ['get'],
+            resourceTypes: ['sub_frame'],
+            tabIds: [tabId]
+        }
+    };
+}
+
+async function installHiddenDeepScanFrameRule(job) {
+    if (!canUseProtectedDeepScanFrameRule()) {
+        throw new Error('Temporary frame rules are unavailable');
+    }
+
+    const rule = createHiddenDeepScanFrameRule(job.url, job.tabId);
+    await queueProtectedDeepScanFrameRuleUpdate(() =>
+        chrome.declarativeNetRequest.updateSessionRules({
+            removeRuleIds: [HIDDEN_DEEP_SCAN_FRAME_RULE_ID],
+            addRules: [rule]
+        })
+    );
+    hiddenDeepScanFrameRuleOwner = {
+        scanId: job.scanId,
+        ruleId: HIDDEN_DEEP_SCAN_FRAME_RULE_ID
+    };
+}
+
+async function removeHiddenDeepScanFrameRule(scanId = null) {
+    const owner = hiddenDeepScanFrameRuleOwner;
+    if (scanId && owner && owner.scanId !== scanId) return false;
+    if (!canUseProtectedDeepScanFrameRule()) return false;
+
+    try {
+        await queueProtectedDeepScanFrameRuleUpdate(() =>
+            chrome.declarativeNetRequest.updateSessionRules({
+                removeRuleIds: [HIDDEN_DEEP_SCAN_FRAME_RULE_ID]
+            })
+        );
+        if (!scanId || hiddenDeepScanFrameRuleOwner?.scanId === scanId) {
+            hiddenDeepScanFrameRuleOwner = null;
+        }
+        return true;
+    } catch {
+        return false;
+    }
+}
+
 // Session rules outlive a suspended service worker, so discard an unowned stale rule on startup.
 void removeProtectedDeepScanFrameRule();
+void removeHiddenDeepScanFrameRule();
 
 async function dataUrlToBlob(dataUrl) {
     if (!/^data:image\//i.test(dataUrl)) {
@@ -292,12 +360,189 @@ async function sendDeepScanClientMessage(message) {
     }
 }
 
+function queueDeepScanClientMessage(job, message) {
+    if (!job) return Promise.resolve();
+
+    job.clientEventQueue = (job.clientEventQueue ?? Promise.resolve())
+        .then(() => sendDeepScanClientMessage(message))
+        .catch(() => undefined);
+    return job.clientEventQueue;
+}
+
+function createHiddenDeepScanHostMessage(job, action) {
+    return {
+        target: HIDDEN_DEEP_SCAN_TARGET,
+        source: 'background',
+        action,
+        scanId: job.scanId,
+        token: job.token,
+        ...(action === 'start' ? {
+            url: job.url,
+            ignoreHiddenImages: job.ignoreHiddenImages === true,
+            totalLimitMs: job.totalLimitMs
+        } : {})
+    };
+}
+
+async function probeHiddenDeepScanHost(job) {
+    const response = await chrome.tabs.sendMessage(
+        job.tabId,
+        createHiddenDeepScanHostMessage(job, 'probe'),
+        {frameId: job.hostFrameId}
+    );
+    if (response?.success !== true) {
+        throw new Error('HIDDEN_HOST_LISTENER_NOT_READY');
+    }
+}
+
+async function injectHiddenDeepScanHost(job) {
+    await chrome.scripting.executeScript({
+        target: {tabId: job.tabId, frameIds: [job.hostFrameId]},
+        files: ['src/deepscan-frame.js'],
+        injectImmediately: true
+    });
+}
+
+async function ensureHiddenDeepScanHost(job) {
+    try {
+        await probeHiddenDeepScanHost(job);
+        return;
+    } catch (error) {
+        if (!isMissingMessageReceiverError(error)) throw error;
+    }
+
+    try {
+        await injectHiddenDeepScanHost(job);
+        await probeHiddenDeepScanHost(job);
+    } catch (error) {
+        throw error;
+    }
+}
+
+async function sendHiddenDeepScanHostMessage(job, action) {
+    if (action === 'start') {
+        await ensureHiddenDeepScanHost(job);
+    }
+
+    const response = await chrome.tabs.sendMessage(
+        job.tabId,
+        createHiddenDeepScanHostMessage(job, action),
+        {frameId: job.hostFrameId}
+    );
+    if (response?.success !== true) {
+        throw new Error('The hidden DeepScan host is unavailable');
+    }
+}
+
+async function finishHiddenDeepScan(job) {
+    if (!job || activeHiddenDeepScan !== job) return;
+
+    activeHiddenDeepScan = null;
+    clearTimeout(job.timeout);
+    try {
+        await sendHiddenDeepScanHostMessage(job, 'cancel');
+    } catch {
+        // The content-script host may have already removed the hidden iframe.
+    } finally {
+        await removeHiddenDeepScanFrameRule(job.scanId);
+    }
+}
+
+async function completeHiddenDeepScanJob(job, status, reason = null) {
+    await finishHiddenDeepScan(job);
+
+    const isolatedJob = activeIsolatedDeepScan;
+    if (isolatedJob?.scanId === job.scanId) {
+        await finishIsolatedDeepScan(isolatedJob, status, reason);
+    }
+}
+
+async function startHiddenDeepScanHost(job) {
+    await sendHiddenDeepScanHostMessage(job, 'start');
+}
+
+async function retryHiddenDeepScanWithProtectedFrameRule(job) {
+    try {
+        await installHiddenDeepScanFrameRule(job);
+        if (activeHiddenDeepScan !== job) {
+            await removeHiddenDeepScanFrameRule(job.scanId);
+            return;
+        }
+        await startHiddenDeepScanHost(job);
+    } catch (error) {
+        await completeHiddenDeepScanJob(job, 'unavailable', getErrorMessage(error));
+    }
+}
+
+async function startHiddenDeepScan(request) {
+    await finishHiddenDeepScan(activeHiddenDeepScan);
+    await removeHiddenDeepScanFrameRule();
+
+    const job = {
+        scanId: request.scanId,
+        token: crypto.randomUUID(),
+        tabId: request.tabId,
+        hostFrameId: HIDDEN_DEEP_SCAN_HOST_FRAME_ID,
+        url: request.url,
+        ignoreHiddenImages: request.ignoreHiddenImages === true,
+        totalLimitMs: Number.isFinite(request.totalLimitMs)
+            ? Math.max(0, Math.min(HIDDEN_DEEP_SCAN_TOTAL_LIMIT_MS, request.totalLimitMs))
+            : HIDDEN_DEEP_SCAN_TOTAL_LIMIT_MS,
+        allowProtectedDeepScan: request.allowProtectedDeepScan === true,
+        protectedFrameRuleAttempted: false,
+        timeout: null
+    };
+    activeHiddenDeepScan = job;
+    job.timeout = setTimeout(() => {
+        void completeHiddenDeepScanJob(job, 'timedOut');
+    }, job.totalLimitMs);
+
+    try {
+        await startHiddenDeepScanHost(job);
+    } catch (error) {
+        await finishHiddenDeepScan(job);
+        throw error;
+    }
+}
+
+function handleHiddenDeepScanEvent(event) {
+    const job = activeHiddenDeepScan;
+    if (!job || event?.scanId !== job.scanId) return;
+
+    const isolatedJob = activeIsolatedDeepScan;
+    if (!isolatedJob || isolatedJob.scanId !== job.scanId) return;
+    if (event.action === 'batch' && Array.isArray(event.candidates)) {
+        void queueDeepScanClientMessage(isolatedJob, {
+            action: 'batch',
+            scanId: isolatedJob.scanId,
+            url: isolatedJob.url,
+            candidates: event.candidates
+        });
+        return;
+    }
+    if (event.action !== 'complete') return;
+
+    if (event.status === 'unavailable' && isHiddenDeepScanFrameUnavailableReason(event.reason) &&
+        job.allowProtectedDeepScan && !job.protectedFrameRuleAttempted) {
+        job.protectedFrameRuleAttempted = true;
+        void retryHiddenDeepScanWithProtectedFrameRule(job);
+        return;
+    }
+    const status = ['completed', 'cancelled', 'timedOut', 'unavailable', 'failed'].includes(event.status)
+        ? event.status
+        : 'failed';
+    void completeHiddenDeepScanJob(job, status, event.reason);
+}
+
 function logIsolatedDeepScanFailure(job, status, reason = null) {
     if (!job || job.errorLogged) return;
     job.errorLogged = true;
 
     if (status === 'unavailable') {
-        console.error('[DeepScan] Isolated context unavailable:', job.url);
+        console.error('[DeepScan] Isolated context unavailable:', {
+            url: job.url,
+            reason: reason || 'UNKNOWN'
+        });
         return;
     }
     if (status === 'timedOut') {
@@ -310,11 +555,15 @@ function logIsolatedDeepScanFailure(job, status, reason = null) {
 async function finishIsolatedDeepScan(job, status, reason = null) {
     if (!job || activeIsolatedDeepScan !== job) return;
 
+    if (activeHiddenDeepScan?.scanId === job.scanId) {
+        await finishHiddenDeepScan(activeHiddenDeepScan);
+    }
     activeIsolatedDeepScan = null;
     await removeProtectedDeepScanFrameRule(job.scanId);
     if (!['completed', 'cancelled'].includes(status)) {
         logIsolatedDeepScanFailure(job, status, reason);
     }
+    await job.clientEventQueue?.catch(() => undefined);
     await sendDeepScanClientMessage({
         action: 'complete',
         scanId: job.scanId,
@@ -359,11 +608,6 @@ function handleIsolatedDeepScanHostEvent(event) {
     const job = activeIsolatedDeepScan;
     const isActiveJobEvent = Boolean(job && event?.scanId === job.scanId && event.url === job.url);
 
-    if (event.action === 'trace' && typeof event.message === 'string') {
-        if (!isActiveJobEvent) return;
-        console.log(`[DeepScan TRACE] ${event.message}`);
-        return;
-    }
     if (!isActiveJobEvent) return;
     if (event.action === 'batch' && Array.isArray(event.candidates)) {
         void sendDeepScanClientMessage({
@@ -401,10 +645,20 @@ function getBackgroundDeepScanHost() {
     return backgroundDeepScanHost;
 }
 
-async function cancelIsolatedDeepScan(scanId = null) {
+async function cancelIsolatedDeepScan(scanId = null, endReason = 'cancelled') {
     const job = activeIsolatedDeepScan;
-    if (!job || (scanId && job.scanId !== scanId)) return false;
+    const normalizedEndReason = endReason === 'user-abort' ? 'user-abort' : 'cancelled';
+    const hiddenDeepScanJob = activeHiddenDeepScan;
+    if (hiddenDeepScanJob && (!scanId || hiddenDeepScanJob.scanId === scanId)) {
+        await finishHiddenDeepScan(hiddenDeepScanJob);
+    }
+    if (!job || (scanId && job.scanId !== scanId)) {
+        return Boolean(hiddenDeepScanJob);
+    }
 
+    if (normalizedEndReason === 'user-abort') {
+        console.info('[DeepScan] stopped by user', {scanId: job.scanId});
+    }
     activeIsolatedDeepScan = null;
     try {
         if (canUseOffscreenDocument()) {
@@ -424,7 +678,8 @@ async function cancelIsolatedDeepScan(scanId = null) {
         action: 'complete',
         scanId: job.scanId,
         url: job.url,
-        status: 'cancelled'
+        status: 'cancelled',
+        endReason: normalizedEndReason
     });
     return true;
 }
@@ -446,12 +701,10 @@ async function startIsolatedDeepScan(request) {
         allowProtectedDeepScan: request.allowProtectedDeepScan === true,
         protectedFrameRuleAttempted: false,
         deadline: Date.now() + ISOLATED_DEEP_SCAN_TOTAL_LIMIT_MS,
-        errorLogged: false
+        errorLogged: false,
+        clientEventQueue: Promise.resolve()
     };
     activeIsolatedDeepScan = job;
-    if (job.allowProtectedDeepScan) {
-        console.info('[DeepScan TRACE] protected-site mode enabled', {scanId: job.scanId});
-    }
 
     try {
         const tab = await chrome.tabs.get(job.tabId);
@@ -460,7 +713,14 @@ async function startIsolatedDeepScan(request) {
             return {scanId: job.scanId};
         }
 
-        await startIsolatedDeepScanHost(job);
+        await startHiddenDeepScan({
+            scanId: job.scanId,
+            tabId: job.tabId,
+            url: job.url,
+            ignoreHiddenImages: job.ignoreHiddenImages,
+            totalLimitMs: Math.max(0, job.deadline - Date.now()),
+            allowProtectedDeepScan: job.allowProtectedDeepScan
+        });
     } catch (error) {
         await finishIsolatedDeepScan(job, 'unavailable', getErrorMessage(error));
     }
@@ -729,6 +989,11 @@ chrome.downloads.onChanged.addListener((delta) => {
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
     const job = activeIsolatedDeepScan;
+    const hiddenDeepScan = activeHiddenDeepScan;
+    if (hiddenDeepScan && tabId === hiddenDeepScan.tabId && typeof changeInfo.url === 'string' &&
+        changeInfo.url !== hiddenDeepScan.url) {
+        void completeHiddenDeepScanJob(hiddenDeepScan, 'cancelled');
+    }
     if (!job || tabId !== job.tabId || typeof changeInfo.url !== 'string' || changeInfo.url === job.url) {
         return;
     }
@@ -737,6 +1002,9 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
+    if (activeHiddenDeepScan?.tabId === tabId) {
+        void completeHiddenDeepScanJob(activeHiddenDeepScan, 'cancelled');
+    }
     if (activeIsolatedDeepScan?.tabId === tabId) {
         void cancelIsolatedDeepScan(activeIsolatedDeepScan.scanId);
     }
@@ -744,6 +1012,13 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.target === OFFSCREEN_TARGET) {
+        return undefined;
+    }
+
+    if (message?.target === HIDDEN_DEEP_SCAN_TARGET) {
+        if (message.source === 'hidden-deepscan-host') {
+            handleHiddenDeepScanEvent(message);
+        }
         return undefined;
     }
 
@@ -762,7 +1037,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
             return true;
         }
         if (message.action === 'cancel') {
-            Promise.resolve(cancelIsolatedDeepScan(message.scanId)).then(
+            Promise.resolve(cancelIsolatedDeepScan(message.scanId, message.endReason)).then(
                 (cancelled) => sendResponse({success: true, cancelled}),
                 (error) => sendResponse({success: false, error: getErrorMessage(error)})
             );

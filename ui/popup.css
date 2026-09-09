@@ -106,6 +106,10 @@ img.preview:not([src]) {
     justify-content: space-between;
 }
 
+#divToolbarTopLeft.toolbar-section {
+    justify-content: flex-start;
+}
+
 .toolbar-actions {
     display: flex;
     align-items: center;
@@ -179,7 +183,7 @@ img.preview:not([src]) {
     background: #bbbbbb;
 }
 
-.toolbar-button img ,
+.toolbar-button img,
 .theme label img {
     width: 1.25rem;
     height: 1.25rem;
@@ -198,8 +202,23 @@ img.preview:not([src]) {
     height: 0.625rem;
 }
 
-.tbr-btn__small:last-child {
+/* .tbr-btn__small:last-child {
     margin-right: auto;
+} */
+
+#btnStopDeepScan.toolbar-button {
+    margin-left: auto;
+    display: flex;
+    padding: 4px;
+}
+
+#btnStopDeepScan[hidden] {
+    display: none !important;
+}
+
+#btnStopDeepScan.toolbar-button img {
+    width: 1rem;
+    height: 1rem;
 }
 
 .toolbar-button.scanner-led {

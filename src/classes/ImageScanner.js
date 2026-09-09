@@ -159,17 +159,19 @@ export default class ImageScanner {
         return null;
     }
 
-    async cancelDeepScan() {
+    async cancelDeepScan({endReason = 'cancelled'} = {}) {
         const session = this.#activeDeepScan;
         if (!session) return false;
 
+        const normalizedEndReason = endReason === 'user-abort' ? 'user-abort' : 'cancelled';
         session.cancelled = true;
-        session.finish({status: 'cancelled'});
+        session.finish({status: 'cancelled', endReason: normalizedEndReason});
         try {
             await window.chrome.runtime.sendMessage({
                 target: ISOLATED_DEEP_SCAN_TARGET,
                 action: 'cancel',
-                scanId: session.scanId
+                scanId: session.scanId,
+                endReason: normalizedEndReason
             });
         } catch {
             // The background may already have discarded the isolated host.
