@@ -250,6 +250,15 @@ img.preview:not([src]) {
     background-color: #ffe600;
 }
 
+@keyframes flash-led {
+    0%, 100% { background-color: #ffe600; }
+    50% { background-color: #cccccc; }
+}
+
+.toolbar-button.scanner-led.flash-led {
+    animation: flash-led 2.75s ease-in-out infinite;
+}
+
 .theme input {
     display: none;
 }

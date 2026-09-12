@@ -133,9 +133,28 @@ export class ImageFinder {
     }
 
     async stopDeepScanByUser() {
-        if (this.#activityCounts.deepScan === 0) return false;
+        return this.stopDeepScan({endReason: 'user-abort'});
+    }
 
-        return this.scanner.cancelDeepScan({endReason: 'user-abort'});
+    async stopDeepScan({endReason = 'cancelled'} = {}) {
+        if (this.#activityCounts.deepScan === 0 && !this.isDeepScanRunning) return false;
+
+        const cancellation = this.cancelDeepScan({endReason});
+        this.#scanGeneration += 1;
+        this.#resetScanActivities();
+        return cancellation;
+    }
+
+    get isDeepScanRunning() {
+        return this.scanner.isDeepScanRunning;
+    }
+
+    async cancelDeepScan({endReason = 'cancelled'} = {}) {
+        return this.scanner.cancelDeepScan({endReason});
+    }
+
+    setDeepScanClientId(clientId) {
+        this.scanner.setDeepScanClientId(clientId);
     }
 
     sort(criterion, initialDirection = null) {
@@ -500,24 +519,86 @@ export class ImageFinder {
                 deepScanActivityActive = true;
 
                 try {
-                    await this.scanner.scanDeepImages(this.scanContext, async (rawCandidates) => {
-                        if (!this.#isCurrentScan(scanGeneration)) {
+                    await this.scanner.scanDeepImages(this.scanContext, async (
+                        rawCandidates,
+                        signal,
+                        diagnostic = null
+                    ) => {
+                        if (signal?.aborted || !this.#isCurrentScan(scanGeneration)) {
                             return false;
                         }
 
-                        const newCandidates = this.#getNewURLCandidates(rawCandidates);
-                        if (newCandidates.length === 0) return true;
+                        const visibleImagesBefore = this.images.size;
+                        const visibleURLsBefore = new Set(
+                            Array.from(this.images.values(), (image) => image.url)
+                        );
+                        const {
+                            newCandidates,
+                            existingCandidatesUpdated,
+                            existingCandidateUpgradeCount
+                        } =
+                            this.#getNewURLCandidates(rawCandidates);
+                        if (newCandidates.length === 0 && !existingCandidatesUpdated) {
+                            return diagnostic
+                                ? {
+                                    continue: true,
+                                    imageFinderNewURLs: 0,
+                                    acceptedCandidates: 0,
+                                    existingUpgrades: 0,
+                                    visibleImageDelta: 0,
+                                    visibleNewURLs: 0,
+                                    visibleWinnersFromBatch: 0,
+                                    notVisibleAfterFiltering: 0,
+                                    visibleImages: this.images.size
+                                }
+                                : true;
+                        }
 
-                        const candidates = await this.scanner.createCandidates(newCandidates, deepScanTabId);
-                        if (!this.#isCurrentScan(scanGeneration)) return false;
-                        if (candidates.length === 0) return true;
+                        const candidates = newCandidates.length > 0
+                            ? await this.scanner.createCandidates(newCandidates, deepScanTabId, {signal})
+                            : [];
+                        if (signal?.aborted || !this.#isCurrentScan(scanGeneration)) return false;
+                        if (candidates.length === 0 && !existingCandidatesUpdated) {
+                            return diagnostic
+                                ? {
+                                    continue: true,
+                                    imageFinderNewURLs: newCandidates.length,
+                                    acceptedCandidates: 0,
+                                    existingUpgrades: 0,
+                                    visibleImageDelta: 0,
+                                    visibleNewURLs: 0,
+                                    visibleWinnersFromBatch: 0,
+                                    notVisibleAfterFiltering: 0,
+                                    visibleImages: this.images.size
+                                }
+                                : true;
+                        }
 
                         this.#setScanResults(candidates);
                         const visibleImagesUpdated = await this.#refreshVisibleImages(
                             scanGeneration
                         );
 
-                        return visibleImagesUpdated;
+                        if (!diagnostic) return visibleImagesUpdated;
+
+                        const visibleWinnersFromBatch = candidates.filter((candidate) =>
+                            this.images.has(candidate.id)
+                        ).length;
+                        const visibleNewURLs = Array.from(this.images.values()).filter((candidate) =>
+                            !visibleURLsBefore.has(candidate.url)
+                        ).length;
+
+                        return {
+                            continue: visibleImagesUpdated,
+                            imageFinderNewURLs: newCandidates.length,
+                            acceptedCandidates: candidates.length,
+                            existingUpgrades: existingCandidateUpgradeCount,
+                            visibleImageDelta: this.images.size - visibleImagesBefore,
+                            visibleNewURLs,
+                            visibleWinnersFromBatch,
+                            notVisibleAfterFiltering: candidates.length - visibleWinnersFromBatch,
+                            visibleImages: this.images.size
+                        };
                     });
                 } catch (error) {
                     if (this.#isCurrentScan(scanGeneration)) {
@@ -724,7 +805,9 @@ export class ImageFinder {
     }
 
     #getNewURLCandidates(rawCandidates) {
-        if (!Array.isArray(rawCandidates)) return [];
+        if (!Array.isArray(rawCandidates)) {
+            return {newCandidates: [], existingCandidatesUpdated: false};
+        }
 
         const candidatesByURL = new Map();
         this.candidates.forEach((candidate) => {
@@ -736,16 +819,26 @@ export class ImageFinder {
         });
 
         const newCandidatesByURL = new Map();
+        let existingCandidatesUpdated = false;
+        let existingCandidateUpgradeCount = 0;
         rawCandidates.forEach((candidate) => {
             if (typeof candidate?.url !== 'string' || !candidate.url) return;
 
             const matchingCandidates = candidatesByURL.get(candidate.url);
             if (matchingCandidates) {
-                if (candidate.visuallyBlurred === false) {
-                    matchingCandidates.forEach((existingCandidate) => {
+                matchingCandidates.forEach((existingCandidate) => {
+                    if (candidate.visuallyBlurred === false) {
                         existingCandidate.visuallyBlurred = false;
-                    });
-                }
+                    }
+                    if (this.#getPixelCount(candidate) <= this.#getPixelCount(existingCandidate)) {
+                        return;
+                    }
+
+                    existingCandidate.width = candidate.width;
+                    existingCandidate.height = candidate.height;
+                    existingCandidatesUpdated = true;
+                    existingCandidateUpgradeCount += 1;
+                });
                 return;
             }
 
@@ -754,13 +847,25 @@ export class ImageFinder {
                 if (candidate.visuallyBlurred === false) {
                     alreadyAddedCandidate.visuallyBlurred = false;
                 }
+                if (this.#getPixelCount(candidate) > this.#getPixelCount(alreadyAddedCandidate)) {
+                    newCandidatesByURL.set(candidate.url, {
+                        ...candidate,
+                        visuallyBlurred: alreadyAddedCandidate.visuallyBlurred === false
+                            ? false
+                            : candidate.visuallyBlurred === true
+                    });
+                }
                 return;
             }
 
             newCandidatesByURL.set(candidate.url, candidate);
         });
 
-        return Array.from(newCandidatesByURL.values());
+        return {
+            newCandidates: Array.from(newCandidatesByURL.values()),
+            existingCandidatesUpdated,
+            existingCandidateUpgradeCount
+        };
     }
 
     #captureRenderState() {
@@ -1080,7 +1185,15 @@ export class ImageFinder {
                         : 'none';
 
         this.DOM.divLED.classList.toggle('active', activity !== 'none');
+        this.DOM.divLED.classList.toggle('flash-led', activity === 'deepScan');
         this.DOM.divLED.dataset.activity = activity;
+        if (activity === 'deepScan') {
+            this.DOM.divLED.title = 'Deep scan running...';
+        } else if (activity === 'none') {
+            this.DOM.divLED.title = `Images found: ${this.images.size}`;
+        } else {
+            this.DOM.divLED.removeAttribute('title');
+        }
         this.#updateDeepScanStopButton();
 
         if (activity === 'scanner') {

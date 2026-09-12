@@ -3,6 +3,30 @@ import { ImageFinder } from './classes/ImageFinder.js';
 import { loadSettingsForm, SettingsForm } from './classes/SettingsForm.js';
 
 const imageFinder = new ImageFinder();
+const POPUP_DEEP_SCAN_PORT_NAME = 'image-finder-popup-deepscan';
+let popupDeepScanClientId = null;
+let popupDeepScanPort = null;
+
+try {
+    popupDeepScanClientId = crypto.randomUUID();
+    popupDeepScanPort = window.chrome.runtime.connect({
+        name: `${POPUP_DEEP_SCAN_PORT_NAME}:${popupDeepScanClientId}`
+    });
+    imageFinder.setDeepScanClientId(popupDeepScanClientId);
+} catch {
+    // pagehide still attempts the normal cancellation path when a lifecycle port is unavailable.
+}
+
+window.addEventListener('pagehide', () => {
+    if (!imageFinder.isDeepScanRunning) return;
+
+    console.info('[DeepScan LIFECYCLE]', {
+        event: 'popup-disconnected',
+        scanRunning: true,
+        abortRequested: true
+    });
+    void imageFinder.stopDeepScan({endReason: 'popup-closed'});
+}, {once: true});
 
 runPopup();
 

@@ -1,7 +1,6 @@
 (() => {
     const FRAME_MESSAGE_TARGET = 'image-finder-isolated-deepscan-frame';
     const FRAME_HANDSHAKE_TIMEOUT_MS = 10000;
-    const DEEP_SCAN_TOTAL_LIMIT_MS = 30000;
     const DEEP_SCAN_FRAME_VIEWPORT_WIDTH_PX = 1280;
     const DEEP_SCAN_FRAME_VIEWPORT_HEIGHT_PX = 800;
 
@@ -54,8 +53,7 @@
                     scanId: job.scanId,
                     token: job.token,
                     url: job.url,
-                    ignoreHiddenImages: job.ignoreHiddenImages === true,
-                    totalLimitMs: job.totalLimitMs
+                    ignoreHiddenImages: job.ignoreHiddenImages === true
                 }, job.frameOrigin);
             } catch {
                 // The handshake timeout reports a frame that cannot be reached.
@@ -63,7 +61,6 @@
         };
         const clearJobTimers = (job) => {
             clearTimeout(job.handshakeTimeout);
-            clearTimeout(job.totalTimeout);
             clearInterval(job.handshakeInterval);
         };
         const cleanup = (job) => {
@@ -119,21 +116,16 @@
             const container = await getFrameContainer();
             prepareFrameHost(container);
             const frame = document.createElement('iframe');
-            const totalLimitMs = Number.isFinite(jobInput.totalLimitMs)
-                ? Math.max(0, Math.min(DEEP_SCAN_TOTAL_LIMIT_MS, jobInput.totalLimitMs))
-                : DEEP_SCAN_TOTAL_LIMIT_MS;
             const job = {
                 scanId: jobInput.scanId,
                 token: jobInput.token,
                 url: jobInput.url,
                 frameOrigin,
                 ignoreHiddenImages: jobInput.ignoreHiddenImages === true,
-                totalLimitMs,
                 frame,
                 finished: false,
                 handshakeTimeout: null,
                 handshakeInterval: null,
-                totalTimeout: null,
                 onMessage: null,
                 onFrameLoad: null
             };
@@ -195,11 +187,7 @@
             job.handshakeInterval = setInterval(() => sendToFrame(job, 'start'), 200);
             job.handshakeTimeout = setTimeout(() => {
                 finish(job, {status: 'unavailable', reason: 'EMBED_BLOCKED_OR_LOAD_FAILED'});
-            }, Math.min(FRAME_HANDSHAKE_TIMEOUT_MS, totalLimitMs));
-            job.totalTimeout = setTimeout(() => {
-                sendToFrame(job, 'cancel');
-                finish(job, {status: 'timedOut'});
-            }, totalLimitMs);
+            }, FRAME_HANDSHAKE_TIMEOUT_MS);
             sendToFrame(job, 'start');
 
             return {scanId: job.scanId};

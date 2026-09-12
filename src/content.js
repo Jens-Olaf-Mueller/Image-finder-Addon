@@ -656,7 +656,17 @@ export async function scanImages(
     return images;
 }
 
-export async function scanPhotoSwipeImages() {
+export async function scanPhotoSwipeImages({
+    processedTargets = new WeakSet(),
+    processedTargetSources = new Set(),
+    signal = null,
+    onDiagnostic = null,
+    onActivity = null,
+    abortKey = null
+} = {}) {
+    const abortRegistryKey = '__imageFinderPhotoSwipeAbortKeys';
+    const isAborted = () => signal?.aborted === true ||
+        (typeof abortKey === 'string' && globalThis[abortRegistryKey]?.has(abortKey));
     const findOpenPhotoSwipe = () => document.querySelector('.pswp.pswp--open');
     const getActiveSlide = (photoSwipe) => photoSwipe?.querySelector(
         '.pswp__item[aria-hidden="false"]'
@@ -693,9 +703,15 @@ export async function scanPhotoSwipeImages() {
             observer?.disconnect();
             clearInterval(interval);
             clearTimeout(timeout);
+            signal?.removeEventListener?.('abort', onAbort);
             resolve(value);
         };
+        const onAbort = () => finish(null);
         const check = () => {
+            if (isAborted()) {
+                finish(null);
+                return;
+            }
             try {
                 const result = predicate();
                 if (result) finish(result);
@@ -706,6 +722,10 @@ export async function scanPhotoSwipeImages() {
 
         check();
         if (settled) return;
+        if (isAborted()) {
+            finish(null);
+            return;
+        }
         if (typeof MutationObserver === 'function' && document.documentElement) {
             observer = new MutationObserver(check);
             observer.observe(document.documentElement, {
@@ -717,12 +737,13 @@ export async function scanPhotoSwipeImages() {
         }
         interval = setInterval(check, 50);
         timeout = setTimeout(() => finish(null), timeoutMs);
+        signal?.addEventListener?.('abort', onAbort, {once: true});
     });
     const closePhotoSwipe = async () => {
         const photoSwipe = findOpenPhotoSwipe();
         if (!photoSwipe) return true;
 
-        const closeButton = await waitFor(
+        const closeButton = photoSwipe.querySelector('.pswp__button--close') ?? await waitFor(
             () => photoSwipe.querySelector('.pswp__button--close'),
             500
         );
@@ -733,6 +754,7 @@ export async function scanPhotoSwipeImages() {
         } catch {
             return false;
         }
+        if (isAborted()) return true;
 
         const closed = await waitFor(() => {
             if (!photoSwipe.isConnected) return true;
@@ -781,6 +803,41 @@ export async function scanPhotoSwipeImages() {
             return false;
         }
     };
+    const getTargetSourceKey = (target) => {
+        const sourceAttributes = [
+            'src',
+            'srcset',
+            'data-src',
+            'data-srcset',
+            'data-image',
+            'data-image-src',
+            'data-full',
+            'data-full-src',
+            'data-original',
+            'href'
+        ];
+        const sourceElements = [
+            target,
+            ...(target?.querySelectorAll?.('img, source') ?? [])
+        ];
+
+        for (const element of sourceElements) {
+            const currentSrc = element instanceof HTMLImageElement
+                ? getURL(element.currentSrc)
+                : null;
+            if (currentSrc) return currentSrc;
+
+            for (const attributeName of sourceAttributes) {
+                const value = element?.getAttribute?.(attributeName);
+                const source = attributeName.endsWith('srcset')
+                    ? getSrcsetURLs(value)[0]
+                    : getURL(value);
+                if (source) return source;
+            }
+        }
+
+        return null;
+    };
     const createTemporaryStyle = () => {
         const style = document.createElement('style');
         style.textContent = [
@@ -794,15 +851,38 @@ export async function scanPhotoSwipeImages() {
         (document.head ?? document.documentElement).append(style);
         return style;
     };
+    const getImageSnapshot = (image) => ({
+        currentSrc: getURL(image?.currentSrc),
+        src: getURL(image?.getAttribute?.('src')),
+        naturalWidth: Math.max(0, image?.naturalWidth ?? 0),
+        naturalHeight: Math.max(0, image?.naturalHeight ?? 0)
+    });
+    const didZoomStateChange = (before, after, photoSwipe) => Boolean(
+        photoSwipe?.classList.contains('pswp--zoomed-in') ||
+        before.currentSrc !== after.currentSrc ||
+        before.src !== after.src ||
+        before.naturalWidth !== after.naturalWidth ||
+        before.naturalHeight !== after.naturalHeight
+    );
+    const imageDimensions = (snapshot) => `${snapshot.naturalWidth}x${snapshot.naturalHeight}`;
+    const reportZoom = (message) => {
+        if (typeof onDiagnostic === 'function') onDiagnostic(message);
+    };
+    const reportActivity = () => {
+        if (typeof onActivity === 'function') onActivity();
+    };
 
     const candidates = [];
-    const processedTargets = new WeakSet();
     const targets = Array.from(document.querySelectorAll('[at-attr="media_locator"]'));
     for (const target of targets) {
-        if (processedTargets.has(target) || !isVisibleMediaTarget(target) || findOpenPhotoSwipe()) {
+        const targetSource = getTargetSourceKey(target);
+        if (isAborted() || processedTargets.has(target) ||
+            (targetSource && processedTargetSources.has(targetSource)) || !isVisibleMediaTarget(target) ||
+            findOpenPhotoSwipe()) {
             continue;
         }
         processedTargets.add(target);
+        if (targetSource) processedTargetSources.add(targetSource);
 
         let temporaryStyle = null;
         try {
@@ -810,15 +890,50 @@ export async function scanPhotoSwipeImages() {
             target.click();
 
             const photoSwipe = await waitFor(findOpenPhotoSwipe, 2000);
+            if (isAborted()) break;
             if (!photoSwipe) continue;
+
+            reportActivity();
 
             const readySlide = await waitFor(
                 () => getReadyActiveSlideImage(findOpenPhotoSwipe()),
                 3000
             );
+            if (isAborted()) break;
             if (!readySlide) continue;
 
             candidates.push(...collectSlideCandidates(readySlide.photoSwipe));
+            const beforeZoom = getImageSnapshot(readySlide.image);
+            try {
+                readySlide.image.click();
+                reportActivity();
+            } catch {
+                if (!isAborted()) reportZoom(`${imageDimensions(beforeZoom)} no-upgrade`);
+                continue;
+            }
+
+            const zoomedSlide = await waitFor(() => {
+                const activeSlide = getReadyActiveSlideImage(findOpenPhotoSwipe());
+                if (!activeSlide) return null;
+
+                const afterZoom = getImageSnapshot(activeSlide.image);
+                return didZoomStateChange(beforeZoom, afterZoom, activeSlide.photoSwipe)
+                    ? {activeSlide, afterZoom}
+                    : null;
+            }, 3000);
+            if (isAborted()) break;
+            if (!zoomedSlide) {
+                reportZoom(`${imageDimensions(beforeZoom)} no-upgrade`);
+                continue;
+            }
+
+            candidates.push(...collectSlideCandidates(zoomedSlide.activeSlide.photoSwipe));
+            const afterZoom = zoomedSlide.afterZoom;
+            const resolutionImproved = afterZoom.naturalWidth > beforeZoom.naturalWidth ||
+                afterZoom.naturalHeight > beforeZoom.naturalHeight;
+            reportZoom(resolutionImproved
+                ? `${imageDimensions(beforeZoom)} -> ${imageDimensions(afterZoom)} replaced`
+                : `${imageDimensions(beforeZoom)} no-upgrade`);
         } catch {
             // One page-owned PhotoSwipe target must not stop the remaining DeepScan.
         } finally {
@@ -831,7 +946,19 @@ export async function scanPhotoSwipeImages() {
         }
     }
 
+    if (typeof abortKey === 'string') {
+        globalThis[abortRegistryKey]?.delete(abortKey);
+    }
     return candidates;
+}
+
+export function abortPhotoSwipeImages(abortKey) {
+    if (typeof abortKey !== 'string' || !abortKey) return;
+
+    const registryKey = '__imageFinderPhotoSwipeAbortKeys';
+    const abortKeys = globalThis[registryKey] ?? new Set();
+    abortKeys.add(abortKey);
+    globalThis[registryKey] = abortKeys;
 }
 
 const DEEP_SCAN_READINESS_POLL_INTERVAL_MS = 100;
@@ -842,16 +969,11 @@ export async function runIsolatedDeepScan({
     ignoreHiddenImages = false,
     onBatch = null,
     signal = null,
-    totalLimitMs = 30000,
     scrollStepFactor = 0.8,
     scrollSettleMs = 150,
-    maxScrollSteps = 40,
     lightboxSettleMs = 250,
-    maxLightboxActivations = 40,
     finalSettleMs = 1000
 } = {}) {
-    const startedAt = Date.now();
-    const deadline = startedAt + Math.max(0, totalLimitMs);
     const seenURLs = new Set();
     const pendingCollections = [];
     const imageSourceAttributes = [
@@ -884,7 +1006,7 @@ export async function runIsolatedDeepScan({
     let observer = null;
     let mutationTimer = null;
     let lightboxActivations = 0;
-    const isActive = () => signal?.aborted !== true && Date.now() < deadline;
+    const isActive = () => signal?.aborted !== true;
     const getURL = (value) => {
         if (typeof value !== 'string' || !value.trim()) return null;
 
@@ -991,10 +1113,7 @@ export async function runIsolatedDeepScan({
     };
     const waitForScanReadiness = async () => {
         const readinessStartedAt = Date.now();
-        const readinessDeadline = Math.min(
-            deadline,
-            readinessStartedAt + DEEP_SCAN_READINESS_MAX_WAIT_MS
-        );
+        const readinessDeadline = readinessStartedAt + DEEP_SCAN_READINESS_MAX_WAIT_MS;
         let layoutSignature = null;
         let stableSince = null;
 
@@ -1236,7 +1355,7 @@ export async function runIsolatedDeepScan({
         }).filter(Boolean);
 
         for (const {image, target} of candidates) {
-            if (!isActive() || lightboxActivations >= maxLightboxActivations) return;
+            if (!isActive()) return;
             if (!canActivate(image, target)) continue;
             if (getTemporaryUnsafeClickReason(target)) continue;
 
@@ -1277,7 +1396,7 @@ export async function runIsolatedDeepScan({
         let previousScrollHeight = document.scrollingElement?.scrollHeight ?? document.documentElement.scrollHeight;
         const hasLazyViewport = window.innerHeight > 0;
         const viewportHeight = Math.max(window.innerHeight || 0, 1);
-        for (let step = 0; step < maxScrollSteps && isActive() && hasLazyViewport; step += 1) {
+        while (isActive() && hasLazyViewport) {
             const scrollElement = document.scrollingElement ?? document.documentElement;
             const before = window.scrollY;
             const scrollHeightBefore = scrollElement.scrollHeight;
@@ -1333,11 +1452,7 @@ export async function runIsolatedDeepScan({
     }
 
     return {
-        status: signal?.aborted === true
-            ? 'cancelled'
-            : Date.now() >= deadline
-                ? 'timedOut'
-                : 'completed',
+        status: signal?.aborted === true ? 'cancelled' : 'completed',
         lightboxActivations
     };
 }
@@ -1345,9 +1460,8 @@ export async function runIsolatedDeepScan({
 export async function runHiddenFrameDeepScan({
     ignoreHiddenImages = false,
     onBatch = null,
+    onActiveScrollContainer = null,
     signal = null,
-    totalLimitMs = 90000,
-    maxScrollSteps = 1000,
     stableCycleLimit = 3,
     scrollStepFactor = 0.8,
     minimumSettleMs = 150,
@@ -1355,15 +1469,28 @@ export async function runHiddenFrameDeepScan({
     maximumSettleMs = 1500
 } = {}) {
     const startedAt = Date.now();
-    const deadline = startedAt + Math.max(0, totalLimitMs);
-    const seenURLs = new Set();
+    const seenCandidatesByURL = new Map();
+    const seenCandidateURLsByBase = new Map();
     const knownTargets = new Set();
     const attemptedUpwardTargets = new WeakSet();
     const attemptedDownwardTargets = new WeakSet();
+    const processedPhotoSwipeTargets = new WeakSet();
+    const processedPhotoSwipeTargetSources = new Set();
+    const knownScrollContainerIndices = new Map();
+    const completedScrollContainerStates = new Map();
     let observer = null;
     let lastRelevantMutationAt = startedAt;
     let relevantMutationCount = 0;
-    const isActive = () => signal?.aborted !== true && Date.now() < deadline;
+    let relevantChildListMutationCount = 0;
+    let relevantAttributeMutationCount = 0;
+    let relevantAddedElementCount = 0;
+    let relevantRemovedElementCount = 0;
+    let photoSwipeActivityCount = 0;
+    let progressDiagnosticBatchSequence = 0;
+    let completedNaturally = false;
+    const edgeLoadWaitMs = Math.max(5000, maximumSettleMs);
+    const edgeLoadPollMs = 100;
+    const isActive = () => signal?.aborted !== true;
     const wait = (milliseconds) => new Promise((resolve) => {
         if (signal?.aborted) {
             resolve(false);
@@ -1410,9 +1537,11 @@ export async function runHiddenFrameDeepScan({
     };
     const getMetrics = () => {
         const scrollElement = getScrollElement();
+        const effectiveScrollTop = Number(scrollElement?.scrollTop ?? window.scrollY ?? 0);
 
         return {
-            scrollY: Math.round(window.scrollY ?? 0),
+            scrollY: Math.round(effectiveScrollTop),
+            effectiveScrollTop,
             scrollHeight: Math.max(
                 scrollElement?.scrollHeight ?? 0,
                 document.documentElement?.scrollHeight ?? 0,
@@ -1425,6 +1554,47 @@ export async function runHiddenFrameDeepScan({
             images: document.images?.length ?? 0,
             targets: knownTargets.size
         };
+    };
+    const getMutationSnapshot = () => ({
+        total: relevantMutationCount,
+        childList: relevantChildListMutationCount,
+        attributes: relevantAttributeMutationCount,
+        addedElements: relevantAddedElementCount,
+        removedElements: relevantRemovedElementCount
+    });
+    const getMutationDelta = (before) => ({
+        total: Math.max(0, relevantMutationCount - before.total),
+        childList: Math.max(0, relevantChildListMutationCount - before.childList),
+        attributes: Math.max(0, relevantAttributeMutationCount - before.attributes),
+        addedElements: Math.max(0, relevantAddedElementCount - before.addedElements),
+        removedElements: Math.max(0, relevantRemovedElementCount - before.removedElements)
+    });
+    const getCandidateURLClass = (candidateURL) => {
+        try {
+            const url = new URL(candidateURL);
+            const isDataURL = url.protocol === 'data:';
+            const isBlobURL = url.protocol === 'blob:';
+            const base = isDataURL || isBlobURL
+                ? candidateURL
+                : `${url.origin}${url.pathname}`;
+            const knownVariants = seenCandidateURLsByBase.get(base);
+
+            return {
+                base,
+                baseKnown: (knownVariants?.size ?? 0) > 0,
+                queryVariant: Boolean(knownVariants?.size && url.search),
+                dataURL: isDataURL,
+                blobURL: isBlobURL
+            };
+        } catch {
+            return {
+                base: candidateURL,
+                baseKnown: false,
+                queryVariant: false,
+                dataURL: false,
+                blobURL: false
+            };
+        }
     };
     const getNextScrollTarget = (direction) => {
         const viewportHeight = Math.max(window.innerHeight, 1);
@@ -1531,12 +1701,9 @@ export async function runHiddenFrameDeepScan({
     const waitForSettle = async ({minimumMs = minimumSettleMs} = {}) => {
         const settleStartedAt = Date.now();
         const effectiveMinimumMs = Math.max(0, Math.min(minimumMs, maximumSettleMs));
-        const settleDeadline = Math.min(deadline, settleStartedAt + Math.max(
-            effectiveMinimumMs,
-            maximumSettleMs
-        ));
+        const settleDeadline = settleStartedAt + Math.max(effectiveMinimumMs, maximumSettleMs);
 
-        if (!(await wait(Math.min(effectiveMinimumMs, Math.max(0, settleDeadline - Date.now()))))) {
+        if (!(await wait(effectiveMinimumMs))) {
             return false;
         }
         while (isActive() && Date.now() < settleDeadline) {
@@ -1549,7 +1716,37 @@ export async function runHiddenFrameDeepScan({
         }
         return isActive();
     };
-    const collectSources = async () => {
+    const waitForEdgeRangeGrowth = async (getRange, isUsable = () => true) => {
+        let rangeBefore;
+        try {
+            rangeBefore = getRange();
+        } catch {
+            return false;
+        }
+
+        const deadline = Date.now() + edgeLoadWaitMs;
+        while (isActive() && isUsable() && Date.now() < deadline) {
+            if (!(await wait(Math.min(edgeLoadPollMs, deadline - Date.now())))) return false;
+
+            try {
+                if (getRange() > rangeBefore) return true;
+            } catch {
+                return false;
+            }
+        }
+
+        return false;
+    };
+    const reportActiveScrollContainer = (container = null) => {
+        if (typeof onActiveScrollContainer !== 'function') return;
+
+        try {
+            onActiveScrollContainer(container);
+        } catch {
+            // The temporary visible-tab marker must never affect the hidden traversal.
+        }
+    };
+    const collectSources = async ({diagnosticPhase = null} = {}) => {
         if (!isActive()) return 0;
 
         const foundCandidates = await scanImages(
@@ -1559,13 +1756,32 @@ export async function runHiddenFrameDeepScan({
             null,
             true
         );
+        const photoSwipeCandidates = await scanPhotoSwipeImages({
+            processedTargets: processedPhotoSwipeTargets,
+            processedTargetSources: processedPhotoSwipeTargetSources,
+            signal,
+            onDiagnostic: (message) => console.info('[DeepScan ZOOM]', message),
+            onActivity: () => {
+                photoSwipeActivityCount += 1;
+            }
+        });
         const newCandidates = [];
+        const photoSwipeURLs = new Set(photoSwipeCandidates.map((candidate) => candidate?.url));
+        const candidateClasses = {
+            newBases: 0,
+            queryVariants: 0,
+            resolutionUpgrades: 0,
+            dataURLs: 0,
+            blobURLs: 0,
+            zeroDimensions: 0,
+            smallDimensions: 0,
+            photoSwipe: 0
+        };
 
-        for (const candidate of foundCandidates) {
-            if (typeof candidate?.url !== 'string' || seenURLs.has(candidate.url)) continue;
+        for (const candidate of [...foundCandidates, ...photoSwipeCandidates]) {
+            if (typeof candidate?.url !== 'string') continue;
 
-            seenURLs.add(candidate.url);
-            newCandidates.push({
+            const serializedCandidate = {
                 url: candidate.url,
                 width: Number.isFinite(candidate.width) ? Math.max(0, candidate.width) : 0,
                 height: Number.isFinite(candidate.height) ? Math.max(0, candidate.height) : 0,
@@ -1573,10 +1789,62 @@ export async function runHiddenFrameDeepScan({
                 visuallyBlurred: candidate.visuallyBlurred === true,
                 ...(typeof candidate.mimeType === 'string' ? {mimeType: candidate.mimeType} : {}),
                 ...(Number.isFinite(candidate.fileSize) ? {fileSize: candidate.fileSize} : {})
-            });
+            };
+            const previousCandidate = seenCandidatesByURL.get(serializedCandidate.url);
+            const previousPixels = (previousCandidate?.width ?? 0) * (previousCandidate?.height ?? 0);
+            const currentPixels = serializedCandidate.width * serializedCandidate.height;
+            const isHigherResolution = currentPixels > previousPixels;
+
+            if (previousCandidate && !isHigherResolution) continue;
+
+            const candidateClass = getCandidateURLClass(serializedCandidate.url);
+            if (previousCandidate) {
+                candidateClasses.resolutionUpgrades += 1;
+            } else if (candidateClass.baseKnown && candidateClass.queryVariant) {
+                candidateClasses.queryVariants += 1;
+            } else if (!candidateClass.baseKnown) {
+                candidateClasses.newBases += 1;
+            }
+            if (candidateClass.dataURL) candidateClasses.dataURLs += 1;
+            if (candidateClass.blobURL) candidateClasses.blobURLs += 1;
+            if (serializedCandidate.width <= 0 || serializedCandidate.height <= 0) {
+                candidateClasses.zeroDimensions += 1;
+            } else if (serializedCandidate.width <= 144 && serializedCandidate.height <= 144) {
+                candidateClasses.smallDimensions += 1;
+            }
+            if (photoSwipeURLs.has(serializedCandidate.url)) candidateClasses.photoSwipe += 1;
+
+            const variants = seenCandidateURLsByBase.get(candidateClass.base) ?? new Set();
+            variants.add(serializedCandidate.url);
+            seenCandidateURLsByBase.set(candidateClass.base, variants);
+            seenCandidatesByURL.set(serializedCandidate.url, serializedCandidate);
+            newCandidates.push(serializedCandidate);
         }
         if (newCandidates.length > 0 && typeof onBatch === 'function' && isActive()) {
-            await onBatch(newCandidates);
+            const diagnostic = diagnosticPhase
+                ? {
+                    id: `${startedAt}-${++progressDiagnosticBatchSequence}`,
+                    phase: diagnosticPhase,
+                    rawCandidates: newCandidates.length,
+                    ...candidateClasses
+                }
+                : null;
+            if (diagnostic) {
+                console.info(
+                    '[DeepScan CANDIDATE CLASS]',
+                    `phase=${diagnostic.phase}`,
+                    `rawCandidates=${diagnostic.rawCandidates}`,
+                    `newBases=${diagnostic.newBases}`,
+                    `queryVariants=${diagnostic.queryVariants}`,
+                    `resolutionUpgrades=${diagnostic.resolutionUpgrades}`,
+                    `dataURLs=${diagnostic.dataURLs}`,
+                    `blobURLs=${diagnostic.blobURLs}`,
+                    `zeroDimensions=${diagnostic.zeroDimensions}`,
+                    `smallDimensions=${diagnostic.smallDimensions}`,
+                    `photoSwipe=${diagnostic.photoSwipe}`
+                );
+            }
+            await onBatch(newCandidates, diagnostic);
         }
         return newCandidates.length;
     };
@@ -1590,7 +1858,10 @@ export async function runHiddenFrameDeepScan({
         return Array.from(node.children).some((element) => !isGeneratedScrollAnchor(element));
     };
     const isRelevantMutation = (record) => {
-        if (record.type === 'attributes') return !isGeneratedScrollAnchor(record.target);
+        if (record.type === 'attributes') {
+            return !isGeneratedScrollAnchor(record.target) && record.attributeName !== 'class' &&
+                record.attributeName !== 'style';
+        }
 
         return Array.from(record.addedNodes ?? []).some(containsRealElement) ||
             Array.from(record.removedNodes ?? []).some(containsRealElement);
@@ -1634,32 +1905,120 @@ export async function runHiddenFrameDeepScan({
             targets: targets.length
         };
     };
+    const getContainerTraversalState = (container) => {
+        const metrics = getContainerMetrics(container);
+        return [metrics.scrollHeight, metrics.clientHeight].join(':');
+    };
+    const getPendingRelevantScrollContainers = () => {
+        completedScrollContainerStates.forEach((_state, container) => {
+            if (!container.isConnected) completedScrollContainerStates.delete(container);
+        });
+
+        return getRelevantScrollContainers().filter((container) =>
+            completedScrollContainerStates.get(container) !== getContainerTraversalState(container)
+        );
+    };
+    const synchronizeCompletedScrollContainerStates = () => {
+        getRelevantScrollContainers().forEach((container) => {
+            if (!completedScrollContainerStates.has(container)) return;
+
+            completedScrollContainerStates.set(container, getContainerTraversalState(container));
+        });
+    };
+    const getContainerDiagnosticState = (container) => {
+        let style = null;
+        try {
+            style = getComputedStyle(container);
+        } catch {
+            // Diagnostics must not affect traversal when a page removes a container.
+        }
+
+        return {
+            scrollTop: container?.scrollTop,
+            scrollHeight: container?.scrollHeight,
+            clientHeight: container?.clientHeight,
+            overflowY: style?.overflowY ?? '(unavailable)',
+            flexDirection: style?.flexDirection ?? '(unavailable)'
+        };
+    };
+    const getScrollContainerIndex = (container) => {
+        if (!knownScrollContainerIndices.has(container)) {
+            knownScrollContainerIndices.set(container, knownScrollContainerIndices.size);
+        }
+
+        return knownScrollContainerIndices.get(container);
+    };
+    const getLogTimestamp = () => {
+        const now = new Date();
+        const pad = (value, length = 2) => String(value).padStart(length, '0');
+
+        return [now.getHours(), now.getMinutes(), now.getSeconds()]
+            .map((value) => pad(value))
+            .join(':') + `.${pad(now.getMilliseconds(), 3)}`;
+    };
+    const getContainerLogLabel = (container, index) => {
+        const id = typeof container?.id === 'string' ? container.id.trim() : '';
+        return id ? `container#${id}` : `container#?=${index}`;
+    };
+    const logContainerDirection = (label, container, index, {
+        reason = null,
+        durationMs = null
+    } = {}) => {
+        const state = getContainerDiagnosticState(container);
+        console.info(
+            `[DeepScan ${label}]`,
+            `time=${getLogTimestamp()}`,
+            ...(Number.isFinite(durationMs) ? [`durationMs=${Math.round(durationMs)}`] : []),
+            getContainerLogLabel(container, index),
+            ...(reason ? [`reason=${reason}`] : []),
+            `scrollTop=${state.scrollTop}`,
+            `scrollHeight=${state.scrollHeight}`,
+            `clientHeight=${state.clientHeight}`,
+            `overflowY=${state.overflowY}`,
+            `flexDirection=${state.flexDirection}`
+        );
+    };
+    const logDocumentDirection = (label, {reason = null, durationMs = null} = {}) => {
+        const metrics = getMetrics();
+        console.info(
+            `[DeepScan ${label}]`,
+            `time=${getLogTimestamp()}`,
+            ...(Number.isFinite(durationMs) ? [`durationMs=${Math.round(durationMs)}`] : []),
+            'document',
+            ...(reason ? [`reason=${reason}`] : []),
+            `scrollY=${metrics.scrollY}`,
+            `scrollHeight=${metrics.scrollHeight}`,
+            `clientHeight=${metrics.clientHeight}`
+        );
+    };
     const isAtContainerTop = (metrics) => metrics.scrollTop <= 4;
     const isAtContainerBottom = (metrics) => metrics.scrollTop + metrics.clientHeight >=
         metrics.scrollHeight - 4;
-    const getEndReason = (reason) => {
-        if (signal?.aborted) return 'aborted';
-        if (Date.now() >= deadline) return 'timeout';
-        return reason;
-    };
+    const getScrollRange = (metrics) => Math.max(0, metrics.scrollHeight - metrics.clientHeight);
     const isAtCurrentDocumentBottom = (metrics) => metrics.scrollY + metrics.clientHeight >=
         metrics.scrollHeight - 4;
     const isAtCurrentDocumentTop = (metrics) => metrics.scrollY <= 4;
 
-    let steps = 0;
-    let stableCycles = 0;
-    let topStableCycles = 0;
-    let endReason = 'stable';
-    const scanScrollableContainer = async (container, direction) => {
+    const getDocumentTraversalState = () => {
+        const metrics = getMetrics();
+        return [metrics.scrollHeight, metrics.clientHeight].join(':');
+    };
+    const scanScrollableContainer = async (container, direction, index) => {
         let edgeStableCycles = 0;
+        let edgeLoadWaited = false;
+        let progressDiagnosticLogged = false;
+        const label = direction === 'up' ? 'UP' : 'DOWN';
+        const directionStartedAt = performance.now();
 
-        while (steps < maxScrollSteps && isActive() && container.isConnected &&
-            isRelevantScrollableContainer(container)) {
+        reportActiveScrollContainer(container);
+        logContainerDirection(label, container, index);
+
+        while (isActive() && container.isConnected && isRelevantScrollableContainer(container)) {
             const before = getContainerMetrics(container);
             const atEdge = direction === 'up'
                 ? isAtContainerTop(before)
                 : isAtContainerBottom(before);
-            const mutationsBefore = relevantMutationCount;
+            const mutationsBefore = getMutationSnapshot();
 
             if (!atEdge) {
                 const offset = Math.ceil(before.clientHeight * scrollStepFactor);
@@ -1669,49 +2028,284 @@ export async function runHiddenFrameDeepScan({
                     : Math.min(maximumScrollTop, before.scrollTop + offset);
                 container.scrollTop = nextScrollTop;
             }
-            steps += 1;
 
             if (!(await waitForSettle({minimumMs: atEdge ? 400 : minimumSettleMs}))) {
-                endReason = getEndReason('aborted');
-                return;
+                return 'aborted';
             }
 
-            const newCandidates = await collectSources();
+            let newCandidates = await collectSources();
             registerTargets();
-            const after = getContainerMetrics(container);
-            const newImages = Math.max(0, after.images - before.images);
-            const newTargets = Math.max(0, after.targets - before.targets);
-            const mutations = Math.max(0, relevantMutationCount - mutationsBefore);
-            const scrollMoved = direction === 'up'
+            let after = getContainerMetrics(container);
+            let newImages = Math.max(0, after.images - before.images);
+            let newTargets = Math.max(0, after.targets - before.targets);
+            const mutations = getMutationDelta(mutationsBefore).total;
+            let scrollMoved = direction === 'up'
                 ? after.scrollTop < before.scrollTop
                 : after.scrollTop > before.scrollTop;
-            const progress = scrollMoved || after.scrollHeight > before.scrollHeight || newImages > 0 ||
-                newTargets > 0 || newCandidates > 0 || mutations > 0;
+            let scrollRangeGrew = getScrollRange(after) > getScrollRange(before);
+            let reachedEdge = direction === 'up'
+                ? isAtContainerTop(after)
+                : isAtContainerBottom(after);
 
-            if (atEdge) {
-                edgeStableCycles = progress ? 0 : edgeStableCycles + 1;
+            // A lazy loader can materialize the next history block only after the browser has
+            // already reached the edge. Wait locally for a newly reachable range, never for
+            // arbitrary mutations, targets, candidates, or PhotoSwipe churn.
+            if ((atEdge || reachedEdge) && !edgeLoadWaited) {
+                edgeLoadWaited = true;
+                const rangeGrewAfterEdgeWait = await waitForEdgeRangeGrowth(
+                    () => getScrollRange(getContainerMetrics(container)),
+                    () => container.isConnected && isRelevantScrollableContainer(container)
+                );
+                if (!isActive()) return 'aborted';
+
+                if (rangeGrewAfterEdgeWait) {
+                    newCandidates += await collectSources();
+                    registerTargets();
+                    after = getContainerMetrics(container);
+                    newImages = Math.max(0, after.images - before.images);
+                    newTargets = Math.max(0, after.targets - before.targets);
+                    scrollRangeGrew = getScrollRange(after) > getScrollRange(before);
+                    scrollMoved = direction === 'up'
+                        ? after.scrollTop < before.scrollTop
+                        : after.scrollTop > before.scrollTop;
+                    reachedEdge = direction === 'up'
+                        ? isAtContainerTop(after)
+                        : isAtContainerBottom(after);
+                    edgeLoadWaited = false;
+                }
+            }
+
+            const traversalProgress = scrollMoved || scrollRangeGrew;
+            const structuralProgress = newImages > 0 || newTargets > 0 || mutations > 0;
+
+            if (!atEdge && !reachedEdge) edgeLoadWaited = false;
+
+            if (!progressDiagnosticLogged && (scrollRangeGrew || structuralProgress ||
+                newCandidates > 0)) {
+                progressDiagnosticLogged = true;
+                console.info(
+                    '[DeepScan CONTAINER PROGRESS]',
+                    `time=${getLogTimestamp()}`,
+                    getContainerLogLabel(container, index),
+                    `direction=${direction}`,
+                    `scrollMoved=${scrollMoved}`,
+                    `scrollRangeChanged=${scrollRangeGrew}`,
+                    `newTargets=${newTargets}`,
+                    `newCandidates=${newCandidates}`,
+                    `structure=${structuralProgress}`,
+                    `scrollHeightBefore=${before.scrollHeight}`,
+                    `scrollHeightAfter=${after.scrollHeight}`
+                );
+            }
+
+            if (atEdge || reachedEdge || !scrollMoved) {
+                edgeStableCycles = traversalProgress ? 0 : edgeStableCycles + 1;
                 if (edgeStableCycles >= stableCycleLimit) {
-                    return;
+                    logContainerDirection(`${label} END`, container, index, {
+                        reason: 'stable',
+                        durationMs: performance.now() - directionStartedAt
+                    });
+                    return 'stable';
+                }
+            }
+        }
+
+        if (isActive()) {
+            logContainerDirection(`${label} END`, container, index, {
+                reason: 'stable',
+                durationMs: performance.now() - directionStartedAt
+            });
+            return 'stable';
+        }
+
+        return 'aborted';
+    };
+    const scanRelevantScrollContainers = async () => {
+        while (isActive()) {
+            const containers = getPendingRelevantScrollContainers();
+            if (containers.length === 0) return;
+
+            for (const container of containers) {
+                const isNewContainer = !knownScrollContainerIndices.has(container);
+                const index = getScrollContainerIndex(container);
+                if (isNewContainer) {
+                    const state = getContainerDiagnosticState(container);
+                    console.info(
+                        '[DeepScan CONTAINER] added',
+                        `time=${getLogTimestamp()}`,
+                        getContainerLogLabel(container, index),
+                        `scrollHeight=${state.scrollHeight}`,
+                        `clientHeight=${state.clientHeight}`,
+                        `overflowY=${state.overflowY}`,
+                        `flexDirection=${state.flexDirection}`
+                    );
+                } else {
+                    console.info(
+                        '[DeepScan CONTAINER] requeue',
+                        `time=${getLogTimestamp()}`,
+                        getContainerLogLabel(container, index),
+                        `previous=${completedScrollContainerStates.get(container)}`,
+                        `current=${getContainerTraversalState(container)}`
+                    );
+                }
+                await scanScrollableContainer(container, 'up', index);
+                if (!isActive()) return;
+
+                await scanScrollableContainer(container, 'down', index);
+                if (!isActive()) return;
+                if (container.isConnected && isRelevantScrollableContainer(container)) {
+                    completedScrollContainerStates.set(
+                        container,
+                        getContainerTraversalState(container)
+                    );
                 }
             }
         }
     };
-    const scanRelevantScrollContainers = async (direction) => {
-        const scannedContainers = new Set();
+    const scanDocumentDirection = async (direction) => {
+        const label = direction === 'up' ? 'UP' : 'DOWN';
+        let edgeStableCycles = 0;
+        let edgeLoadWaited = false;
+        let progressDiagnosticLogged = false;
+        const directionStartedAt = performance.now();
 
-        while (steps < maxScrollSteps && isActive()) {
-            const discoveredContainers = getRelevantScrollContainers();
-            const containers = discoveredContainers.filter((container) =>
-                !scannedContainers.has(container)
-            );
-            if (containers.length === 0) return;
+        reportActiveScrollContainer();
+        logDocumentDirection(label);
+        while (isActive()) {
+            const beforeNewTargets = registerTargets();
+            const before = getMetrics();
+            const atEdge = direction === 'up'
+                ? isAtCurrentDocumentTop(before)
+                : isAtCurrentDocumentBottom(before);
+            const mutationsBefore = getMutationSnapshot();
+            const photoSwipeActivityBefore = photoSwipeActivityCount;
+            let scrollResult = {scrolled: false, targetMovement: 0};
 
-            for (const container of containers) {
-                scannedContainers.add(container);
-                await scanScrollableContainer(container, direction);
-                if (!isActive() || steps >= maxScrollSteps) return;
+            if (atEdge) {
+                if (direction === 'down') {
+                    const bottomTarget = getBottomDwellTarget();
+                    if (bottomTarget) scrollResult = scrollElementIntoView(bottomTarget, 'end');
+                }
+            } else {
+                const target = getNextScrollTarget(direction);
+                if (target) {
+                    if (direction === 'up') attemptedUpwardTargets.add(target.element);
+                    else attemptedDownwardTargets.add(target.element);
+                    scrollResult = scrollElementIntoView(target.element);
+                } else {
+                    scrollResult = scrollFurtherWithAnchor(before, direction);
+                }
+            }
+
+            if (!(await waitForSettle({minimumMs: atEdge ? 400 : minimumSettleMs}))) {
+                return 'aborted';
+            }
+
+            let newCandidates = await collectSources({
+                diagnosticPhase: direction === 'down' && !progressDiagnosticLogged
+                    ? 'document-down'
+                    : null
+            });
+            let afterNewTargets = registerTargets();
+            let after = getMetrics();
+            let newImages = Math.max(0, after.images - before.images);
+            let newTargets = beforeNewTargets + afterNewTargets;
+            const mutationDelta = getMutationDelta(mutationsBefore);
+            const mutations = mutationDelta.total;
+            let scrollRangeGrew = getScrollRange(after) > getScrollRange(before);
+            let documentScrollMoved = direction === 'up'
+                ? after.effectiveScrollTop < before.effectiveScrollTop
+                : after.effectiveScrollTop > before.effectiveScrollTop;
+            const targetGeometryMoved = direction === 'up'
+                ? scrollResult.targetMovement > 1
+                : scrollResult.targetMovement < -1;
+            let scrollMoved = documentScrollMoved;
+            let reachedEdge = direction === 'up'
+                ? isAtCurrentDocumentTop(after)
+                : isAtCurrentDocumentBottom(after);
+
+            if ((atEdge || reachedEdge) && !edgeLoadWaited) {
+                edgeLoadWaited = true;
+                const rangeGrewAfterEdgeWait = await waitForEdgeRangeGrowth(
+                    () => getScrollRange(getMetrics())
+                );
+                if (!isActive()) return 'aborted';
+
+                if (rangeGrewAfterEdgeWait) {
+                    newCandidates += await collectSources({
+                        diagnosticPhase: direction === 'down' && !progressDiagnosticLogged
+                            ? 'document-down'
+                            : null
+                    });
+                    afterNewTargets += registerTargets();
+                    after = getMetrics();
+                    newImages = Math.max(0, after.images - before.images);
+                    newTargets = beforeNewTargets + afterNewTargets;
+                    scrollRangeGrew = getScrollRange(after) > getScrollRange(before);
+                    documentScrollMoved = direction === 'up'
+                        ? after.effectiveScrollTop < before.effectiveScrollTop
+                        : after.effectiveScrollTop > before.effectiveScrollTop;
+                    scrollMoved = documentScrollMoved;
+                    reachedEdge = direction === 'up'
+                        ? isAtCurrentDocumentTop(after)
+                        : isAtCurrentDocumentBottom(after);
+                    edgeLoadWaited = false;
+                }
+            }
+
+            const traversalProgress = scrollMoved || scrollRangeGrew;
+            const discoveryProgress = newImages > 0 || newTargets > 0 || newCandidates > 0 ||
+                mutations > 0;
+
+            if (!atEdge && !reachedEdge) edgeLoadWaited = false;
+
+            if (atEdge || reachedEdge || !scrollMoved) {
+                if (direction === 'down' && (traversalProgress || discoveryProgress) &&
+                    !progressDiagnosticLogged) {
+                    progressDiagnosticLogged = true;
+                    console.info(
+                        '[DeepScan PROGRESS]',
+                        'phase=document-down',
+                        `structure=${newImages > 0 || newTargets > 0 || mutations > 0}`,
+                        `scrollRange=${scrollRangeGrew}`,
+                        `newCandidates=${newCandidates}`,
+                        `newTargets=${newTargets}`,
+                        `newImages=${newImages}`,
+                        `mutations=${mutations}`,
+                        `mutationChildList=${mutationDelta.childList}`,
+                        `mutationAttributes=${mutationDelta.attributes}`,
+                        `mutationAddedElements=${mutationDelta.addedElements}`,
+                        `mutationRemovedElements=${mutationDelta.removedElements}`,
+                        `photoSwipeActivity=${photoSwipeActivityCount - photoSwipeActivityBefore}`,
+                        'acceptedCandidates=pending-pipeline',
+                        'visibleImageDelta=pending-pipeline',
+                        `effectiveScrollBefore=${before.effectiveScrollTop}`,
+                        `effectiveScrollAfter=${after.effectiveScrollTop}`,
+                        `scrollHeightBefore=${before.scrollHeight}`,
+                        `scrollHeightAfter=${after.scrollHeight}`,
+                        `clientHeightBefore=${before.clientHeight}`,
+                        `clientHeightAfter=${after.clientHeight}`,
+                        `scrollRangeBefore=${getScrollRange(before)}`,
+                        `scrollRangeAfter=${getScrollRange(after)}`,
+                        `documentScrollMoved=${documentScrollMoved}`,
+                        `scrollAttempted=${scrollResult.scrolled}`,
+                        `targetGeometryMovement=${scrollResult.targetMovement}`,
+                        `targetGeometryMoved=${targetGeometryMoved}`,
+                        `scrollMoved=${scrollMoved}`
+                    );
+                }
+                edgeStableCycles = traversalProgress ? 0 : edgeStableCycles + 1;
+                if (edgeStableCycles >= stableCycleLimit) {
+                    logDocumentDirection(`${label} END`, {
+                        reason: 'stable',
+                        durationMs: performance.now() - directionStartedAt
+                    });
+                    return 'stable';
+                }
             }
         }
+
+        return 'aborted';
     };
 
     try {
@@ -1722,6 +2316,20 @@ export async function runHiddenFrameDeepScan({
 
                 lastRelevantMutationAt = Date.now();
                 relevantMutationCount += relevantMutations.length;
+                relevantMutations.forEach((record) => {
+                    if (record.type === 'attributes') {
+                        relevantAttributeMutationCount += 1;
+                        return;
+                    }
+
+                    relevantChildListMutationCount += 1;
+                    relevantAddedElementCount += Array.from(record.addedNodes ?? []).filter(
+                        containsRealElement
+                    ).length;
+                    relevantRemovedElementCount += Array.from(record.removedNodes ?? []).filter(
+                        containsRealElement
+                    ).length;
+                });
             });
             observer.observe(document.documentElement, {
                 subtree: true,
@@ -1739,14 +2347,12 @@ export async function runHiddenFrameDeepScan({
                     'data-fullsize',
                     'data-large',
                     'data-original',
-                    'data-lightbox-src',
-                    'style',
-                    'class'
+                    'data-lightbox-src'
                 ]
             });
         }
 
-        const readinessDeadline = Math.min(deadline, Date.now() + DEEP_SCAN_READINESS_MAX_WAIT_MS);
+        const readinessDeadline = Date.now() + DEEP_SCAN_READINESS_MAX_WAIT_MS;
         while (isActive() && (window.innerWidth <= 0 || window.innerHeight <= 0 ||
             document.readyState === 'loading') && Date.now() < readinessDeadline) {
             if (!(await wait(DEEP_SCAN_READINESS_POLL_INTERVAL_MS))) break;
@@ -1754,133 +2360,88 @@ export async function runHiddenFrameDeepScan({
 
         registerTargets();
         await collectSources();
-        await scanRelevantScrollContainers('up');
+        while (isActive()) {
+            const photoSwipeActivityAtPassStart = photoSwipeActivityCount;
+            await scanRelevantScrollContainers();
+            if (!isActive()) break;
 
-        while (steps < maxScrollSteps && isActive()) {
-            const beforeNewTargets = registerTargets();
-            const before = getMetrics();
-            if (isAtCurrentDocumentTop(before)) {
-                const mutationsBefore = relevantMutationCount;
-                steps += 1;
+            await scanDocumentDirection('up');
+            if (!isActive()) break;
 
-                if (!(await waitForSettle({minimumMs: 400}))) {
-                    endReason = getEndReason('aborted');
-                    break;
-                }
+            await scanDocumentDirection('down');
+            if (!isActive()) break;
 
-                const newCandidates = await collectSources();
-                const afterNewTargets = registerTargets();
-                const after = getMetrics();
-                const newImages = Math.max(0, after.images - before.images);
-                const newTargets = beforeNewTargets + afterNewTargets;
-                const mutations = Math.max(0, relevantMutationCount - mutationsBefore);
-                const progress = after.scrollHeight > before.scrollHeight || newImages > 0 ||
-                    newTargets > 0 || newCandidates > 0 || mutations > 0;
+            const documentStateAfterDirections = getDocumentTraversalState();
+            const mutationCountAfterDirections = relevantMutationCount;
+            await scanRelevantScrollContainers();
+            if (!isActive()) break;
 
-                topStableCycles = progress ? 0 : topStableCycles + 1;
-                if (topStableCycles >= stableCycleLimit) break;
-                continue;
-            }
+            if (!(await waitForSettle({minimumMs: 400}))) break;
 
-            const target = getNextScrollTarget('up');
-
-            if (target) {
-                attemptedUpwardTargets.add(target.element);
-                scrollElementIntoView(target.element);
-            } else {
-                scrollFurtherWithAnchor(before, 'up');
-            }
-            steps += 1;
-
-            if (!(await waitForSettle())) {
-                endReason = getEndReason('aborted');
-                break;
-            }
-
-            await collectSources();
-            registerTargets();
-        }
-
-        stableCycles = 0;
-        await scanRelevantScrollContainers('down');
-        while (steps < maxScrollSteps && isActive()) {
-            const beforeNewTargets = registerTargets();
-            const before = getMetrics();
-            if (isAtCurrentDocumentBottom(before)) {
-                const mutationsBefore = relevantMutationCount;
-                const bottomTarget = getBottomDwellTarget();
-                if (bottomTarget) scrollElementIntoView(bottomTarget, 'end');
-                steps += 1;
-
-                if (!(await waitForSettle({minimumMs: 400}))) {
-                    endReason = getEndReason('aborted');
-                    break;
-                }
-
-                const newCandidates = await collectSources();
-                const afterNewTargets = registerTargets();
-                const after = getMetrics();
-                const newImages = Math.max(0, after.images - before.images);
-                const newTargets = beforeNewTargets + afterNewTargets;
-                const mutations = Math.max(0, relevantMutationCount - mutationsBefore);
-                const progress = after.scrollHeight > before.scrollHeight || newImages > 0 ||
-                    newTargets > 0 || newCandidates > 0 || mutations > 0;
-
-                stableCycles = progress ? 0 : stableCycles + 1;
-
-                if (stableCycles >= stableCycleLimit) {
-                    endReason = 'stable';
-                    break;
-                }
-                continue;
-            }
-
-            const target = getNextScrollTarget('down');
-            let scrollResult;
-
-            if (target) {
-                attemptedDownwardTargets.add(target.element);
-                scrollResult = scrollElementIntoView(target.element);
-            } else {
-                scrollResult = scrollFurtherWithAnchor(before, 'down');
-            }
-            steps += 1;
-
-            if (!(await waitForSettle())) {
-                endReason = getEndReason('aborted');
-                break;
-            }
-
+            const photoSwipeActivityBeforeFinalCollection = photoSwipeActivityCount;
             const newCandidates = await collectSources();
-            const afterNewTargets = registerTargets();
-            const after = getMetrics();
-            const scrollMoved = after.scrollY > before.scrollY || scrollResult.targetMovement < -1;
-            const scrollHeightGrew = after.scrollHeight > before.scrollHeight;
-            const newImages = Math.max(0, after.images - before.images);
-            const newTargets = beforeNewTargets + afterNewTargets;
-            const progress = scrollMoved || scrollHeightGrew || newImages > 0 || newTargets > 0 ||
-                newCandidates > 0;
+            const newTargets = registerTargets();
+            const documentStateAfterFinalSettle = getDocumentTraversalState();
+            const mutationCountAfterFinalSettle = relevantMutationCount;
+            const documentChangedAfterDirections = documentStateAfterDirections !==
+                documentStateAfterFinalSettle;
+            const mutationDetected = mutationCountAfterDirections !== mutationCountAfterFinalSettle;
+            const candidatesDetected = newCandidates > 0;
+            const targetsDetected = newTargets > 0;
+            const photoSwipeActivityDetected = photoSwipeActivityCount !==
+                photoSwipeActivityAtPassStart;
+            const photoSwipeActivityDuringFinalCollection = photoSwipeActivityCount !==
+                photoSwipeActivityBeforeFinalCollection;
 
-            if (progress) stableCycles = 0;
+            // Opening and closing PhotoSwipe changes page-owned DOM. Its candidates have already
+            // been collected above, so treat that temporary DOM as the current baseline instead
+            // of scheduling a complete traversal of unchanged containers.
+            if (photoSwipeActivityDuringFinalCollection) {
+                synchronizeCompletedScrollContainerStates();
+            }
 
-        }
-        if (steps >= maxScrollSteps && isActive() && stableCycles < stableCycleLimit) {
-            endReason = 'safety-limit';
-        } else {
-            endReason = getEndReason(endReason);
+            const pendingContainers = getPendingRelevantScrollContainers();
+            const newContainersDetected = pendingContainers.some((container) =>
+                !completedScrollContainerStates.has(container)
+            );
+            const containersDetected = pendingContainers.some((container) =>
+                completedScrollContainerStates.has(container)
+            );
+
+            // Discovery work has already been collected and sent to the client. Repeat traversal
+            // only when the reachable document range changed or a container range is unfinished.
+            const repeatPass = documentChangedAfterDirections || pendingContainers.length > 0;
+
+            if (!repeatPass) {
+                console.info('[DeepScan PASS] complete');
+                completedNaturally = true;
+                break;
+            }
+
+            console.info(
+                '[DeepScan PASS] repeat',
+                `mutation=${mutationDetected}`,
+                `candidates=${candidatesDetected}`,
+                `targets=${targetsDetected}`,
+                `documentRange=${documentChangedAfterDirections}`,
+                `containers=${containersDetected}`,
+                `newContainers=${newContainersDetected}`,
+                `photoSwipeActivity=${photoSwipeActivityDetected}`
+            );
         }
     } finally {
         observer?.disconnect();
+        reportActiveScrollContainer();
     }
 
-    const finalEndReason = getEndReason(endReason);
+    const status = signal?.aborted === true ? 'cancelled' : 'completed';
+    if (status === 'completed' && completedNaturally) {
+        console.info('[DeepScan END] status=completed');
+    }
+
     return {
-        status: finalEndReason === 'aborted'
-            ? 'cancelled'
-            : finalEndReason === 'timeout'
-                ? 'timedOut'
-                : 'completed',
-        endReason: finalEndReason
+        status,
+        endReason: status === 'cancelled' ? 'aborted' : 'stable'
     };
 }
 

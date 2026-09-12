@@ -7,8 +7,7 @@ const PROTECTED_DEEP_SCAN_FRAME_RULE_ID = 10001;
 const HIDDEN_DEEP_SCAN_FRAME_RULE_ID = 10002;
 const HIDDEN_DEEP_SCAN_HOST_FRAME_ID = 0;
 const EMBED_BLOCKED_OR_LOAD_FAILED = 'EMBED_BLOCKED_OR_LOAD_FAILED';
-const ISOLATED_DEEP_SCAN_TOTAL_LIMIT_MS = 90000;
-const HIDDEN_DEEP_SCAN_TOTAL_LIMIT_MS = ISOLATED_DEEP_SCAN_TOTAL_LIMIT_MS;
+const POPUP_DEEP_SCAN_PORT_NAME = 'image-finder-popup-deepscan';
 
 if (typeof importScripts === 'function') {
     importScripts('isolated-deepscan-host.js');
@@ -24,9 +23,24 @@ let backgroundDeepScanHost = null;
 let protectedDeepScanFrameRuleOwner = null;
 let hiddenDeepScanFrameRuleOwner = null;
 let protectedDeepScanFrameRuleUpdate = Promise.resolve();
+const popupDeepScanPorts = new Map();
 
 function getErrorMessage(error) {
     return error instanceof Error ? error.message : String(error);
+}
+
+function getPopupDeepScanClientId(port) {
+    const prefix = `${POPUP_DEEP_SCAN_PORT_NAME}:`;
+    if (typeof port?.name !== 'string' || !port.name.startsWith(prefix)) return null;
+
+    const clientId = port.name.slice(prefix.length);
+    return clientId || null;
+}
+
+function getDeepScanCancelSource(endReason) {
+    if (endReason === 'user-abort') return 'user';
+    if (endReason === 'popup-closed') return 'popup-closed';
+    return null;
 }
 
 function isTerminalDownloadState(state) {
@@ -361,10 +375,10 @@ async function sendDeepScanClientMessage(message) {
 }
 
 function queueDeepScanClientMessage(job, message) {
-    if (!job) return Promise.resolve();
+    if (!job || job.cancelled) return Promise.resolve();
 
     job.clientEventQueue = (job.clientEventQueue ?? Promise.resolve())
-        .then(() => sendDeepScanClientMessage(message))
+        .then(() => job.cancelled ? undefined : sendDeepScanClientMessage(message))
         .catch(() => undefined);
     return job.clientEventQueue;
 }
@@ -378,8 +392,7 @@ function createHiddenDeepScanHostMessage(job, action) {
         token: job.token,
         ...(action === 'start' ? {
             url: job.url,
-            ignoreHiddenImages: job.ignoreHiddenImages === true,
-            totalLimitMs: job.totalLimitMs
+            ignoreHiddenImages: job.ignoreHiddenImages === true
         } : {})
     };
 }
@@ -438,7 +451,6 @@ async function finishHiddenDeepScan(job) {
     if (!job || activeHiddenDeepScan !== job) return;
 
     activeHiddenDeepScan = null;
-    clearTimeout(job.timeout);
     try {
         await sendHiddenDeepScanHostMessage(job, 'cancel');
     } catch {
@@ -464,12 +476,13 @@ async function startHiddenDeepScanHost(job) {
 async function retryHiddenDeepScanWithProtectedFrameRule(job) {
     try {
         await installHiddenDeepScanFrameRule(job);
-        if (activeHiddenDeepScan !== job) {
+        if (job.cancelled || activeHiddenDeepScan !== job) {
             await removeHiddenDeepScanFrameRule(job.scanId);
             return;
         }
         await startHiddenDeepScanHost(job);
     } catch (error) {
+        if (job.cancelled || activeHiddenDeepScan !== job) return;
         await completeHiddenDeepScanJob(job, 'unavailable', getErrorMessage(error));
     }
 }
@@ -485,17 +498,11 @@ async function startHiddenDeepScan(request) {
         hostFrameId: HIDDEN_DEEP_SCAN_HOST_FRAME_ID,
         url: request.url,
         ignoreHiddenImages: request.ignoreHiddenImages === true,
-        totalLimitMs: Number.isFinite(request.totalLimitMs)
-            ? Math.max(0, Math.min(HIDDEN_DEEP_SCAN_TOTAL_LIMIT_MS, request.totalLimitMs))
-            : HIDDEN_DEEP_SCAN_TOTAL_LIMIT_MS,
         allowProtectedDeepScan: request.allowProtectedDeepScan === true,
         protectedFrameRuleAttempted: false,
-        timeout: null
+        cancelled: false
     };
     activeHiddenDeepScan = job;
-    job.timeout = setTimeout(() => {
-        void completeHiddenDeepScanJob(job, 'timedOut');
-    }, job.totalLimitMs);
 
     try {
         await startHiddenDeepScanHost(job);
@@ -507,16 +514,29 @@ async function startHiddenDeepScan(request) {
 
 function handleHiddenDeepScanEvent(event) {
     const job = activeHiddenDeepScan;
-    if (!job || event?.scanId !== job.scanId) return;
+    if (!job || job.cancelled || event?.scanId !== job.scanId) return;
 
     const isolatedJob = activeIsolatedDeepScan;
     if (!isolatedJob || isolatedJob.scanId !== job.scanId) return;
+    if (event.action === 'hidden-state' && typeof event.phase === 'string' && event.state) {
+        console.info('[DeepScan HIDDEN STATE]', {phase: event.phase, ...event.state});
+        return;
+    }
+    if (event.action === 'hidden-error' && typeof event.kind === 'string') {
+        console.error('[DeepScan HIDDEN ERROR]', {
+            kind: event.kind,
+            message: typeof event.message === 'string' ? event.message : 'UNKNOWN_ERROR'
+        });
+        return;
+    }
     if (event.action === 'batch' && Array.isArray(event.candidates)) {
+        if (isolatedJob.cancelled) return;
         void queueDeepScanClientMessage(isolatedJob, {
             action: 'batch',
             scanId: isolatedJob.scanId,
             url: isolatedJob.url,
-            candidates: event.candidates
+            candidates: event.candidates,
+            ...(event.diagnostic ? {diagnostic: event.diagnostic} : {})
         });
         return;
     }
@@ -528,7 +548,7 @@ function handleHiddenDeepScanEvent(event) {
         void retryHiddenDeepScanWithProtectedFrameRule(job);
         return;
     }
-    const status = ['completed', 'cancelled', 'timedOut', 'unavailable', 'failed'].includes(event.status)
+    const status = ['completed', 'cancelled', 'unavailable', 'failed'].includes(event.status)
         ? event.status
         : 'failed';
     void completeHiddenDeepScanJob(job, status, event.reason);
@@ -543,10 +563,6 @@ function logIsolatedDeepScanFailure(job, status, reason = null) {
             url: job.url,
             reason: reason || 'UNKNOWN'
         });
-        return;
-    }
-    if (status === 'timedOut') {
-        console.error('[DeepScan] Time limit reached:', job.url);
         return;
     }
     console.error('[DeepScan] Isolated scan failed:', job.url, reason || 'UNKNOWN_ERROR');
@@ -574,10 +590,6 @@ async function finishIsolatedDeepScan(job, status, reason = null) {
 }
 
 async function startIsolatedDeepScanHost(job) {
-    const remainingLimitMs = Math.max(0, job.deadline - Date.now());
-    if (remainingLimitMs === 0) throw new Error('DEEP_SCAN_TIME_LIMIT_REACHED');
-
-    job.totalLimitMs = remainingLimitMs;
     if (canUseOffscreenDocument()) {
         await ensureOffscreenDocument();
         await sendOffscreenMessage('startDeepScan', {job});
@@ -590,23 +602,22 @@ async function startIsolatedDeepScanHost(job) {
 async function retryProtectedDeepScan(job) {
     try {
         await installProtectedDeepScanFrameRule(job);
-        if (activeIsolatedDeepScan !== job) {
+        if (job.cancelled || activeIsolatedDeepScan !== job) {
             await removeProtectedDeepScanFrameRule(job.scanId);
             return;
         }
 
         await startIsolatedDeepScanHost(job);
     } catch (error) {
-        const status = getErrorMessage(error) === 'DEEP_SCAN_TIME_LIMIT_REACHED'
-            ? 'timedOut'
-            : 'unavailable';
-        await finishIsolatedDeepScan(job, status, getErrorMessage(error));
+        if (job.cancelled || activeIsolatedDeepScan !== job) return;
+        await finishIsolatedDeepScan(job, 'unavailable', getErrorMessage(error));
     }
 }
 
 function handleIsolatedDeepScanHostEvent(event) {
     const job = activeIsolatedDeepScan;
-    const isActiveJobEvent = Boolean(job && event?.scanId === job.scanId && event.url === job.url);
+    const isActiveJobEvent = Boolean(job && !job.cancelled && event?.scanId === job.scanId &&
+        event.url === job.url);
 
     if (!isActiveJobEvent) return;
     if (event.action === 'batch' && Array.isArray(event.candidates)) {
@@ -620,7 +631,7 @@ function handleIsolatedDeepScanHostEvent(event) {
     }
     if (event.action !== 'complete') return;
 
-    const status = ['completed', 'cancelled', 'timedOut', 'unavailable', 'failed'].includes(event.status)
+    const status = ['completed', 'cancelled', 'unavailable', 'failed'].includes(event.status)
         ? event.status
         : 'failed';
     if (job.allowProtectedDeepScan && !job.protectedFrameRuleAttempted &&
@@ -647,15 +658,27 @@ function getBackgroundDeepScanHost() {
 
 async function cancelIsolatedDeepScan(scanId = null, endReason = 'cancelled') {
     const job = activeIsolatedDeepScan;
-    const normalizedEndReason = endReason === 'user-abort' ? 'user-abort' : 'cancelled';
+    const normalizedEndReason = ['user-abort', 'popup-closed'].includes(endReason)
+        ? endReason
+        : 'cancelled';
     const hiddenDeepScanJob = activeHiddenDeepScan;
-    if (hiddenDeepScanJob && (!scanId || hiddenDeepScanJob.scanId === scanId)) {
+    const hasMatchingHiddenJob = Boolean(hiddenDeepScanJob &&
+        (!scanId || hiddenDeepScanJob.scanId === scanId));
+    const hasMatchingJob = Boolean(job && (!scanId || job.scanId === scanId));
+    const cancellationSource = getDeepScanCancelSource(normalizedEndReason);
+    if (!hasMatchingHiddenJob && !hasMatchingJob) return false;
+    if (cancellationSource) console.info(`[DeepScan CANCEL] source=${cancellationSource}`);
+
+    if (hasMatchingHiddenJob) {
+        hiddenDeepScanJob.cancelled = true;
         await finishHiddenDeepScan(hiddenDeepScanJob);
     }
-    if (!job || (scanId && job.scanId !== scanId)) {
-        return Boolean(hiddenDeepScanJob);
+    if (!hasMatchingJob) {
+        if (cancellationSource) console.info('[DeepScan CANCEL COMPLETE]');
+        return true;
     }
 
+    job.cancelled = true;
     if (normalizedEndReason === 'user-abort') {
         console.info('[DeepScan] stopped by user', {scanId: job.scanId});
     }
@@ -674,6 +697,7 @@ async function cancelIsolatedDeepScan(scanId = null, endReason = 'cancelled') {
         await removeProtectedDeepScanFrameRule(job.scanId);
     }
 
+    await job.clientEventQueue?.catch(() => undefined);
     await sendDeepScanClientMessage({
         action: 'complete',
         scanId: job.scanId,
@@ -681,6 +705,7 @@ async function cancelIsolatedDeepScan(scanId = null, endReason = 'cancelled') {
         status: 'cancelled',
         endReason: normalizedEndReason
     });
+    if (cancellationSource) console.info('[DeepScan CANCEL COMPLETE]');
     return true;
 }
 
@@ -688,6 +713,10 @@ async function startIsolatedDeepScan(request) {
     if (typeof request?.scanId !== 'string' || !request.scanId ||
         typeof request?.url !== 'string' || !request.url || !Number.isInteger(request.tabId)) {
         throw new Error('The isolated DeepScan request is invalid');
+    }
+    if (typeof request.popupClientId === 'string' && request.popupClientId &&
+        !popupDeepScanPorts.has(request.popupClientId)) {
+        return {scanId: request.scanId};
     }
 
     await cancelIsolatedDeepScan();
@@ -699,8 +728,11 @@ async function startIsolatedDeepScan(request) {
         tabId: request.tabId,
         ignoreHiddenImages: request.ignoreHiddenImages === true,
         allowProtectedDeepScan: request.allowProtectedDeepScan === true,
+        popupClientId: typeof request.popupClientId === 'string' && request.popupClientId
+            ? request.popupClientId
+            : null,
         protectedFrameRuleAttempted: false,
-        deadline: Date.now() + ISOLATED_DEEP_SCAN_TOTAL_LIMIT_MS,
+        cancelled: false,
         errorLogged: false,
         clientEventQueue: Promise.resolve()
     };
@@ -718,7 +750,6 @@ async function startIsolatedDeepScan(request) {
             tabId: job.tabId,
             url: job.url,
             ignoreHiddenImages: job.ignoreHiddenImages,
-            totalLimitMs: Math.max(0, job.deadline - Date.now()),
             allowProtectedDeepScan: job.allowProtectedDeepScan
         });
     } catch (error) {
@@ -1010,6 +1041,22 @@ chrome.tabs.onRemoved.addListener((tabId) => {
     }
 });
 
+chrome.runtime.onConnect.addListener((port) => {
+    const clientId = getPopupDeepScanClientId(port);
+    if (!clientId) return;
+
+    popupDeepScanPorts.set(clientId, port);
+    port.onDisconnect.addListener(() => {
+        if (popupDeepScanPorts.get(clientId) !== port) return;
+
+        popupDeepScanPorts.delete(clientId);
+        const job = activeIsolatedDeepScan;
+        if (job?.popupClientId !== clientId) return;
+
+        void cancelIsolatedDeepScan(job.scanId, 'popup-closed');
+    });
+});
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.target === OFFSCREEN_TARGET) {
         return undefined;
@@ -1028,6 +1075,35 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
             return undefined;
         }
         if (message.source === 'background') return undefined;
+
+        if (message.action === 'diagnostic-result' && message.diagnostic && message.result) {
+            const diagnostic = message.diagnostic;
+            const result = message.result;
+            console.info(
+                '[DeepScan PIPELINE]',
+                `phase=${diagnostic.phase}`,
+                `batch=${diagnostic.id}`,
+                `rawCandidates=${diagnostic.rawCandidates}`,
+                `scannerNewURLs=${result.scannerNewURLs}`,
+                `imageFinderNewURLs=${result.imageFinderNewURLs}`,
+                `acceptedCandidates=${result.acceptedCandidates}`,
+                `existingUpgrades=${result.existingUpgrades}`,
+                `visibleImageDelta=${result.visibleImageDelta}`,
+                `visibleNewURLs=${result.visibleNewURLs}`,
+                `visibleWinnersFromBatch=${result.visibleWinnersFromBatch}`,
+                `notVisibleAfterFiltering=${result.notVisibleAfterFiltering}`,
+                `visibleImages=${result.visibleImages}`,
+                `newBases=${diagnostic.newBases}`,
+                `queryVariants=${diagnostic.queryVariants}`,
+                `resolutionUpgrades=${diagnostic.resolutionUpgrades}`,
+                `dataURLs=${diagnostic.dataURLs}`,
+                `blobURLs=${diagnostic.blobURLs}`,
+                `zeroDimensions=${diagnostic.zeroDimensions}`,
+                `smallDimensions=${diagnostic.smallDimensions}`,
+                `photoSwipe=${diagnostic.photoSwipe}`
+            );
+            return undefined;
+        }
 
         if (message.action === 'start') {
             Promise.resolve(startIsolatedDeepScan(message)).then(

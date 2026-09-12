@@ -4,6 +4,10 @@
     const HIDDEN_DEEP_SCAN_FRAME_TARGET = 'image-finder-hidden-deepscan-frame';
     const HIDDEN_DEEP_SCAN_HANDSHAKE_TIMEOUT_MS = 10000;
     const HIDDEN_DEEP_SCAN_LOAD_GRACE_MS = 15000;
+    const HIDDEN_DEEP_SCAN_HYDRATION_POLL_INTERVAL_MS = 100;
+    const HIDDEN_DEEP_SCAN_HYDRATION_STABLE_MS = 2500;
+    const HIDDEN_DEEP_SCAN_HYDRATION_MAX_WAIT_MS = 10000;
+    const HIDDEN_DEEP_SCAN_ACTIVE_CONTAINER_COLOR = '#ff634733';
     const extensionOrigin = new URL(chrome.runtime.getURL('/')).origin;
     let activeScan = null;
     let activeHiddenDeepScanHost = null;
@@ -23,6 +27,129 @@
         source: 'hidden-deepscan-host',
         ...message
     }).catch(() => undefined);
+    const getSafeLocation = (location) => {
+        try {
+            return `${location.origin}${location.pathname}`;
+        } catch {
+            return '(unavailable)';
+        }
+    };
+    const getHiddenStateSnapshot = (frameWindow = window) => {
+        try {
+            const documentElement = frameWindow.document.documentElement;
+            const body = frameWindow.document.body;
+            const scrollElement = frameWindow.document.scrollingElement ?? documentElement;
+
+            return {
+                location: getSafeLocation(frameWindow.location),
+                readyState: frameWindow.document.readyState,
+                bodyChildren: body?.children.length ?? 0,
+                domElements: frameWindow.document.getElementsByTagName('*').length,
+                images: frameWindow.document.images?.length ?? 0,
+                scrollHeight: Math.max(
+                    documentElement?.scrollHeight ?? 0,
+                    body?.scrollHeight ?? 0,
+                    scrollElement?.scrollHeight ?? 0
+                ),
+                hasBeforePreloader: Boolean(frameWindow.document.querySelector(
+                    'before_preloader, #before_preloader, .before_preloader'
+                ))
+            };
+        } catch {
+            return {
+                location: '(unavailable)',
+                readyState: '(unavailable)',
+                bodyChildren: 0,
+                domElements: 0,
+                images: 0,
+                scrollHeight: 0,
+                hasBeforePreloader: false
+            };
+        }
+    };
+    const getDiagnosticErrorMessage = (reason) => {
+        const message = reason instanceof Error
+            ? reason.message
+            : typeof reason === 'string'
+                ? reason
+                : '';
+
+        return message ? message.slice(0, 240) : 'UNKNOWN_ERROR';
+    };
+    const logHiddenState = (phase, state) => {
+        console.log(
+            '[DeepScan HIDDEN STATE]',
+            `phase=${phase}`,
+            `location=${state.location}`,
+            `readyState=${state.readyState}`,
+            `bodyChildren=${state.bodyChildren}`,
+            `domElements=${state.domElements}`,
+            `images=${state.images}`,
+            `scrollHeight=${state.scrollHeight}`,
+            `hasBeforePreloader=${state.hasBeforePreloader}`
+        );
+    };
+    const logHiddenError = (kind, message) => {
+        console.error('[DeepScan HIDDEN ERROR]', `kind=${kind}`, `message=${message}`);
+    };
+    const getElementPathFromBody = (element) => {
+        if (!element?.isConnected || !document.body?.contains(element)) return null;
+
+        const path = [];
+        let current = element;
+        while (current && current !== document.body) {
+            const parent = current.parentElement;
+            const index = parent ? Array.prototype.indexOf.call(parent.children, current) : -1;
+            if (!parent || index < 0) return null;
+
+            path.unshift(index);
+            current = parent;
+        }
+
+        return current === document.body
+            ? {path, tagName: element.tagName}
+            : null;
+    };
+    const getElementFromBodyPath = (descriptor) => {
+        if (!Array.isArray(descriptor?.path) || descriptor.path.length === 0 ||
+            descriptor.path.length > 128 || typeof descriptor.tagName !== 'string') {
+            return null;
+        }
+
+        let current = document.body;
+        for (const index of descriptor.path) {
+            if (!Number.isInteger(index) || index < 0) return null;
+            current = current?.children[index] ?? null;
+            if (!current) return null;
+        }
+
+        return current?.tagName === descriptor.tagName ? current : null;
+    };
+    const clearVisibleContainerMarker = (scan) => {
+        const marker = scan?.visibleContainerMarker;
+        if (!marker) return;
+
+        const {element, value, priority} = marker;
+        if (element?.isConnected && element.style.getPropertyValue('background-color') ===
+            HIDDEN_DEEP_SCAN_ACTIVE_CONTAINER_COLOR &&
+            element.style.getPropertyPriority('background-color') === 'important') {
+            if (value) element.style.setProperty('background-color', value, priority);
+            else element.style.removeProperty('background-color');
+        }
+        scan.visibleContainerMarker = null;
+    };
+    const setVisibleContainerMarker = (scan, descriptor) => {
+        clearVisibleContainerMarker(scan);
+        const element = getElementFromBodyPath(descriptor);
+        if (!element) return;
+
+        scan.visibleContainerMarker = {
+            element,
+            value: element.style.getPropertyValue('background-color'),
+            priority: element.style.getPropertyPriority('background-color')
+        };
+        element.style.setProperty('background-color', HIDDEN_DEEP_SCAN_ACTIVE_CONTAINER_COLOR, 'important');
+    };
     const sendHiddenDeepScanFrameMessage = (scan, message) => {
         window.parent.postMessage({
             target: HIDDEN_DEEP_SCAN_FRAME_TARGET,
@@ -35,6 +162,8 @@
         if (!scan || scan.completed) return;
 
         scan.completed = true;
+        scan.cleanupDiagnostics?.();
+        scan.stateTimeouts?.forEach((timeout) => clearTimeout(timeout));
         sendHiddenDeepScanFrameMessage(scan, {
             action: 'complete',
             status,
@@ -43,6 +172,121 @@
         });
         if (activeHiddenDeepScanFrame === scan) activeHiddenDeepScanFrame = null;
     };
+    const sendHiddenDeepScanFrameState = (scan, phase) => {
+        if (!scan || scan.completed) return;
+
+        const state = getHiddenStateSnapshot();
+        logHiddenState(phase, state);
+        sendHiddenDeepScanFrameMessage(scan, {
+            action: 'hidden-state',
+            phase,
+            state
+        });
+    };
+    const sendHiddenDeepScanFrameError = (scan, kind, reason) => {
+        if (!scan || scan.completed) return;
+
+        const message = getDiagnosticErrorMessage(reason);
+        logHiddenError(kind, message);
+        sendHiddenDeepScanFrameMessage(scan, {
+            action: 'hidden-error',
+            kind,
+            message
+        });
+    };
+    const installHiddenDeepScanFrameDiagnostics = (scan) => {
+        const onError = (event) => {
+            if (event.target !== window) return;
+
+            sendHiddenDeepScanFrameError(scan, 'runtime', event.message || event.error);
+        };
+        const onUnhandledRejection = (event) => {
+            sendHiddenDeepScanFrameError(scan, 'unhandledrejection', event.reason);
+        };
+        const onSecurityPolicyViolation = (event) => {
+            sendHiddenDeepScanFrameError(scan, 'csp', event.violatedDirective || 'policy violation');
+        };
+
+        window.addEventListener('error', onError, true);
+        window.addEventListener('unhandledrejection', onUnhandledRejection);
+        document.addEventListener('securitypolicyviolation', onSecurityPolicyViolation);
+
+        return () => {
+            window.removeEventListener('error', onError, true);
+            window.removeEventListener('unhandledrejection', onUnhandledRejection);
+            document.removeEventListener('securitypolicyviolation', onSecurityPolicyViolation);
+        };
+    };
+    const isSameHiddenHydrationState = (first, second) =>
+        first.readyState === second.readyState &&
+        first.bodyChildren === second.bodyChildren &&
+        first.domElements === second.domElements &&
+        first.images === second.images &&
+        first.scrollHeight === second.scrollHeight;
+    const isRelevantHiddenHydrationMutation = (record) => {
+        if (record.type !== 'childList') return false;
+
+        return [...record.addedNodes, ...record.removedNodes].some((node) => {
+            if (node.nodeType === Node.ELEMENT_NODE) return true;
+            if (node.nodeType !== Node.DOCUMENT_FRAGMENT_NODE) return false;
+
+            return node.querySelector?.('*') !== null;
+        });
+    };
+    const waitForHiddenFrameHydration = (scan) => new Promise((resolve) => {
+        const startedAt = Date.now();
+        const deadline = startedAt + HIDDEN_DEEP_SCAN_HYDRATION_MAX_WAIT_MS;
+        let previousState = getHiddenStateSnapshot();
+        let lastRelevantActivityAt = startedAt;
+        let observer = null;
+        let timer = null;
+        let finished = false;
+        const finish = (shouldStart) => {
+            if (finished) return;
+
+            finished = true;
+            clearTimeout(timer);
+            observer?.disconnect();
+            scan.controller.signal.removeEventListener('abort', onAbort);
+            resolve(shouldStart);
+        };
+        const noteRelevantActivity = () => {
+            lastRelevantActivityAt = Date.now();
+        };
+        const check = () => {
+            if (scan.controller.signal.aborted) {
+                finish(false);
+                return;
+            }
+
+            const now = Date.now();
+            const state = getHiddenStateSnapshot();
+            if (!isSameHiddenHydrationState(previousState, state)) {
+                previousState = state;
+                noteRelevantActivity();
+            }
+            if (now >= deadline || (state.readyState !== 'loading' &&
+                now - lastRelevantActivityAt >= HIDDEN_DEEP_SCAN_HYDRATION_STABLE_MS)) {
+                finish(true);
+                return;
+            }
+
+            timer = setTimeout(check, HIDDEN_DEEP_SCAN_HYDRATION_POLL_INTERVAL_MS);
+        };
+        const onAbort = () => finish(false);
+
+        if (typeof MutationObserver === 'function' && document.documentElement) {
+            observer = new MutationObserver((records) => {
+                if (records.some(isRelevantHiddenHydrationMutation)) noteRelevantActivity();
+            });
+            observer.observe(document.documentElement, {
+                subtree: true,
+                childList: true
+            });
+        }
+        scan.controller.signal.addEventListener('abort', onAbort, {once: true});
+        check();
+    });
     const initializeHiddenDeepScanFrame = (message, parentOrigin) => {
         if (activeHiddenDeepScanFrame?.scanId === message.scanId &&
             activeHiddenDeepScanFrame.token === message.token) {
@@ -57,10 +301,21 @@
             parentOrigin,
             controller: new AbortController(),
             started: false,
-            completed: false
+            completed: false,
+            cleanupDiagnostics: null,
+            stateTimeouts: []
         };
+        scan.cleanupDiagnostics = installHiddenDeepScanFrameDiagnostics(scan);
         activeHiddenDeepScanFrame = scan;
+        sendHiddenDeepScanFrameState(scan, 'load');
         sendHiddenDeepScanFrameMessage(scan, {action: 'ready'});
+        sendHiddenDeepScanFrameState(scan, 'ready');
+        scan.stateTimeouts.push(setTimeout(() => {
+            sendHiddenDeepScanFrameState(scan, '1s');
+        }, 1000));
+        scan.stateTimeouts.push(setTimeout(() => {
+            sendHiddenDeepScanFrameState(scan, '3s');
+        }, 3000));
     };
     const startHiddenDeepScanFrame = async (message) => {
         const scan = activeHiddenDeepScanFrame;
@@ -72,18 +327,33 @@
 
         try {
             const {runHiddenFrameDeepScan} = await import(chrome.runtime.getURL('src/content.js'));
+            if (!(await waitForHiddenFrameHydration(scan))) {
+                completeHiddenDeepScanFrame(scan, 'cancelled');
+                return;
+            }
+            sendHiddenDeepScanFrameState(scan, 'before-start');
             const result = await runHiddenFrameDeepScan({
                 ignoreHiddenImages: message.ignoreHiddenImages === true,
                 signal: scan.controller.signal,
-                totalLimitMs: Number.isFinite(message.totalLimitMs) ? message.totalLimitMs : 90000,
-                onBatch: async (candidates) => {
+                onBatch: async (candidates, diagnostic = null) => {
                     if (activeHiddenDeepScanFrame !== scan || scan.controller.signal.aborted) return;
 
-                    sendHiddenDeepScanFrameMessage(scan, {action: 'batch', candidates});
+                    sendHiddenDeepScanFrameMessage(scan, {
+                        action: 'batch',
+                        candidates,
+                        ...(diagnostic ? {diagnostic} : {})
+                    });
+                },
+                onActiveScrollContainer: (container) => {
+                    sendHiddenDeepScanFrameMessage(scan, {
+                        action: 'active-container',
+                        ...(container ? {container: getElementPathFromBody(container)} : {})
+                    });
                 }
             });
             completeHiddenDeepScanFrame(scan, result.status, null, result.endReason);
         } catch (error) {
+            sendHiddenDeepScanFrameError(scan, 'initialization', error);
             completeHiddenDeepScanFrame(
                 scan,
                 'failed',
@@ -94,6 +364,7 @@
     const clearHiddenDeepScanHost = (scan) => {
         if (!scan) return;
 
+        clearVisibleContainerMarker(scan);
         clearTimeout(scan.handshakeTimeout);
         clearInterval(scan.handshakeInterval);
         window.removeEventListener('message', scan.onMessage);
@@ -102,13 +373,18 @@
         if (activeHiddenDeepScanHost === scan) activeHiddenDeepScanHost = null;
     };
     const queueHiddenDeepScanEvent = (scan, message) => {
-        scan.eventQueue = scan.eventQueue.then(() => sendHiddenDeepScanEvent(message)).catch(() => undefined);
+        scan.eventQueue = scan.eventQueue.then(() =>
+            scan.cancelled && message.action !== 'complete'
+                ? undefined
+                : sendHiddenDeepScanEvent(message)
+        ).catch(() => undefined);
         return scan.eventQueue;
     };
     const finishHiddenDeepScanHost = (scan, status, reason = null) => {
         if (!scan || scan.finished) return;
 
         scan.finished = true;
+        scan.cancelled = status === 'cancelled';
         clearHiddenDeepScanHost(scan);
         void queueHiddenDeepScanEvent(scan, {
             action: 'complete',
@@ -133,7 +409,15 @@
             return;
         }
 
-        finishHiddenDeepScanHost(scan, 'unavailable', getHiddenDeepScanHandshakeTimeoutReason(scan));
+        const reason = getHiddenDeepScanHandshakeTimeoutReason(scan);
+        logHiddenError('frame', reason);
+        void queueHiddenDeepScanEvent(scan, {
+            action: 'hidden-error',
+            scanId: scan.scanId,
+            kind: 'frame',
+            message: reason
+        });
+        finishHiddenDeepScanHost(scan, 'unavailable', reason);
     };
     const hasExpectedHiddenFrameOrigin = (scan) => {
         try {
@@ -165,10 +449,16 @@
                 action: 'start',
                 scanId: scan.scanId,
                 token: scan.token,
-                ignoreHiddenImages: scan.ignoreHiddenImages === true,
-                totalLimitMs: scan.totalLimitMs
+                ignoreHiddenImages: scan.ignoreHiddenImages === true
             }, scan.frameOrigin);
         } catch {
+            logHiddenError('initialization', 'HIDDEN_FRAME_START_FAILED');
+            void queueHiddenDeepScanEvent(scan, {
+                action: 'hidden-error',
+                scanId: scan.scanId,
+                kind: 'initialization',
+                message: 'HIDDEN_FRAME_START_FAILED'
+            });
             finishHiddenDeepScanHost(scan, 'failed', 'HIDDEN_FRAME_START_FAILED');
         }
     };
@@ -210,10 +500,10 @@
             token: message.token,
             frameOrigin,
             ignoreHiddenImages: message.ignoreHiddenImages === true,
-            totalLimitMs: Number.isFinite(message.totalLimitMs) ? message.totalLimitMs : 90000,
             wrapper,
             frame,
             finished: false,
+            cancelled: false,
             ready: false,
             started: false,
             frameLoadCount: 0,
@@ -222,7 +512,8 @@
             handshakeInterval: null,
             onMessage: null,
             onFrameLoad: null,
-            eventQueue: Promise.resolve()
+            eventQueue: Promise.resolve(),
+            visibleContainerMarker: null
         };
         wrapper.setAttribute('aria-hidden', 'true');
         wrapper.style.cssText = [
@@ -272,11 +563,35 @@
                 return;
             }
             if (scan.finished) return;
+            if (data.action === 'active-container') {
+                if (data.container) setVisibleContainerMarker(scan, data.container);
+                else clearVisibleContainerMarker(scan);
+                return;
+            }
+            if (data.action === 'hidden-state' && typeof data.phase === 'string' && data.state) {
+                void queueHiddenDeepScanEvent(scan, {
+                    action: 'hidden-state',
+                    scanId: scan.scanId,
+                    phase: data.phase,
+                    state: data.state
+                });
+                return;
+            }
+            if (data.action === 'hidden-error' && typeof data.kind === 'string') {
+                void queueHiddenDeepScanEvent(scan, {
+                    action: 'hidden-error',
+                    scanId: scan.scanId,
+                    kind: data.kind,
+                    message: getDiagnosticErrorMessage(data.message)
+                });
+                return;
+            }
             if (data.action === 'batch' && Array.isArray(data.candidates)) {
                 void queueHiddenDeepScanEvent(scan, {
                     action: 'batch',
                     scanId: scan.scanId,
-                    candidates: data.candidates
+                    candidates: data.candidates,
+                    ...(data.diagnostic ? {diagnostic: data.diagnostic} : {})
                 });
                 return;
             }
@@ -356,7 +671,6 @@
             const result = await runIsolatedDeepScan({
                 ignoreHiddenImages: message.ignoreHiddenImages === true,
                 signal: scan.controller.signal,
-                totalLimitMs: Number.isFinite(message.totalLimitMs) ? message.totalLimitMs : 30000,
                 onBatch: async (candidates) => {
                     if (activeScan !== scan || scan.controller.signal.aborted) return;
 

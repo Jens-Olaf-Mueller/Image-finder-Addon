@@ -1,4 +1,4 @@
-import { scanImages, scanPhotoSwipeImages } from '../content.js';
+import { abortPhotoSwipeImages, scanImages, scanPhotoSwipeImages } from '../content.js';
 import { getImageType } from '../image-types.js';
 
 const DEFAULT_BYTES_PER_PIXEL = 0.1;
@@ -8,6 +8,11 @@ const ISOLATED_DEEP_SCAN_TARGET = 'image-finder-isolated-deepscan';
 export default class ImageScanner {
     #imageDimensionsByURL = new Map();
     #activeDeepScan = null;
+    #deepScanClientId = null;
+
+    get isDeepScanRunning() {
+        return this.#activeDeepScan !== null;
+    }
 
     get filter() {
         const fileSize = this.settings.get('filesizes') ?? {};
@@ -26,6 +31,12 @@ export default class ImageScanner {
     constructor(settings) {
         this.settings = settings;
         this.currentTab = null;
+    }
+
+    setDeepScanClientId(clientId) {
+        this.#deepScanClientId = typeof clientId === 'string' && clientId
+            ? clientId
+            : null;
     }
 
     async scan({onStart = null, onProgress = null} = {}) {
@@ -48,9 +59,14 @@ export default class ImageScanner {
         return this.createCandidates(filesFound, tab.id, {onStart, onProgress});
     }
 
-    async createCandidates(filesFound, tabId, {onStart = null, onProgress = null} = {}) {
+    async createCandidates(
+        filesFound,
+        tabId,
+        {onStart = null, onProgress = null, signal = null} = {}
+    ) {
         if (!Array.isArray(filesFound) || !Number.isInteger(tabId)) return [];
 
+        const isActive = () => signal?.aborted !== true;
         const filter = this.filter;
         const sources = this.settings.get('sources') ?? {};
         const images = [];
@@ -58,6 +74,7 @@ export default class ImageScanner {
         onStart?.(filesFound.length);
 
         for (const image of filesFound) {
+            if (!isActive()) break;
             try {
                 if (sources[image.source] === false) continue;
                 const dataImage = image.source === 'dataimages'
@@ -93,7 +110,8 @@ export default class ImageScanner {
                 if (!imageType || !filter.extensions.has(imageType)) {
                     if (dataImage || blobImage) continue;
 
-                    fileInfo = await this.getFileInfo(image.url);
+                    fileInfo = await this.getFileInfo(image.url, signal);
+                    if (!isActive()) break;
                     if (!fileInfo?.type) continue;
                     imageType = getImageType(fileInfo.type);
                     if (!imageType || !filter.extensions.has(imageType)) continue;
@@ -104,7 +122,8 @@ export default class ImageScanner {
                     dimensionsKnown = width > 0 && height > 0;
 
                 if (!dimensionsKnown) {
-                    const dimensions = await this.getImageDimensions(image.url);
+                    const dimensions = await this.getImageDimensions(image.url, signal);
+                    if (!isActive()) break;
                     if (!dimensions) continue;
 
                     width = dimensions.width;
@@ -115,7 +134,8 @@ export default class ImageScanner {
                 const isValid = (dimensionsKnown && width >= filter.minWidth && height >= filter.minHeight);
                 let estimatedSize = null;
                 if (filter.ignoreSize && !isValid) {
-                    fileInfo ??= await this.getFileInfo(image.url);
+                    fileInfo ??= await this.getFileInfo(image.url, signal);
+                    if (!isActive()) break;
                     if (fileInfo?.size != null) {
                         if (fileInfo.size < filter.minSize) continue;
                     } else if (dimensionsKnown) {
@@ -124,6 +144,7 @@ export default class ImageScanner {
                     }
                 }
 
+                if (!isActive()) break;
                 const imageId = crypto.randomUUID();
                 const fileName = dataImage
                     ? `data-image-${imageId}.${imageType}`
@@ -163,9 +184,19 @@ export default class ImageScanner {
         const session = this.#activeDeepScan;
         if (!session) return false;
 
-        const normalizedEndReason = endReason === 'user-abort' ? 'user-abort' : 'cancelled';
+        const normalizedEndReason = ['user-abort', 'popup-closed'].includes(endReason)
+            ? endReason
+            : 'cancelled';
         session.cancelled = true;
+        session.controller.abort();
         session.finish({status: 'cancelled', endReason: normalizedEndReason});
+        if (session.photoSwipeScanActive) {
+            void window.chrome.scripting.executeScript({
+                target: {tabId: session.tabId},
+                func: abortPhotoSwipeImages,
+                args: [session.scanId]
+            }).catch(() => undefined);
+        }
         try {
             await window.chrome.runtime.sendMessage({
                 target: ISOLATED_DEEP_SCAN_TARGET,
@@ -202,7 +233,10 @@ export default class ImageScanner {
         });
         const session = {
             scanId,
+            tabId: scanContext.tabId,
+            controller: new AbortController(),
             cancelled: false,
+            photoSwipeScanActive: false,
             finished: false,
             finish: (result) => {
                 if (session.finished) return;
@@ -213,8 +247,31 @@ export default class ImageScanner {
                 resolveCompletion(result);
             }
         };
-        const processCandidates = async (foundCandidates) => {
-            if (session.cancelled) return;
+        const sendPipelineDiagnostic = (diagnostic, result) => {
+            if (!diagnostic) return;
+
+            void window.chrome.runtime.sendMessage({
+                target: ISOLATED_DEEP_SCAN_TARGET,
+                action: 'diagnostic-result',
+                scanId,
+                diagnostic,
+                result: {
+                    scannerNewURLs: result.scannerNewURLs ?? 0,
+                    imageFinderNewURLs: result.imageFinderNewURLs ?? 0,
+                    acceptedCandidates: result.acceptedCandidates ?? 0,
+                    existingUpgrades: result.existingUpgrades ?? 0,
+                    visibleImageDelta: result.visibleImageDelta ?? 0,
+                    visibleNewURLs: result.visibleNewURLs ?? 0,
+                    visibleWinnersFromBatch: result.visibleWinnersFromBatch ?? 0,
+                    notVisibleAfterFiltering: result.notVisibleAfterFiltering ?? 0,
+                    visibleImages: Number.isFinite(result.visibleImages)
+                        ? result.visibleImages
+                        : 'unavailable'
+                }
+            }).catch(() => undefined);
+        };
+        const processCandidates = async (foundCandidates, diagnostic = null) => {
+            if (session.cancelled || session.controller.signal.aborted) return;
 
             const newCandidates = [];
             for (const candidate of foundCandidates ?? []) {
@@ -223,10 +280,25 @@ export default class ImageScanner {
                 candidatesByURL.set(candidate.url, candidate);
                 newCandidates.push(candidate);
             }
-            if (newCandidates.length === 0 || typeof onCandidates !== 'function') return;
+            if (newCandidates.length === 0 || typeof onCandidates !== 'function') {
+                sendPipelineDiagnostic(diagnostic, {
+                    scannerNewURLs: 0
+                });
+                return;
+            }
 
-            if ((await onCandidates(newCandidates)) === false) {
+            const result = await onCandidates(newCandidates, session.controller.signal, diagnostic);
+            if (diagnostic && result && typeof result === 'object') {
+                sendPipelineDiagnostic(diagnostic, {
+                    scannerNewURLs: newCandidates.length,
+                    ...result
+                });
+            }
+
+            if ((result === false || result?.continue === false) ||
+                session.cancelled || session.controller.signal.aborted) {
                 session.cancelled = true;
+                session.controller.abort();
                 session.finish({status: 'cancelled'});
                 void window.chrome.runtime.sendMessage({
                     target: ISOLATED_DEEP_SCAN_TARGET,
@@ -244,8 +316,12 @@ export default class ImageScanner {
             }
 
             if (message.action === 'batch' && Array.isArray(message.candidates)) {
-                batchQueue = batchQueue.then(() => processCandidates(message.candidates)).catch(() => {
+                batchQueue = batchQueue.then(() => processCandidates(
+                    message.candidates,
+                    message.diagnostic ?? null
+                )).catch(() => {
                     session.cancelled = true;
+                    session.controller.abort();
                     session.finish({status: 'failed'});
                     void window.chrome.runtime.sendMessage({
                         target: ISOLATED_DEEP_SCAN_TARGET,
@@ -265,11 +341,17 @@ export default class ImageScanner {
 
         try {
             try {
-                const result = await window.chrome.scripting.executeScript({
-                    target: {tabId: scanContext.tabId},
-                    func: scanPhotoSwipeImages
-                });
-                await processCandidates(result[0]?.result ?? []);
+                session.photoSwipeScanActive = true;
+                try {
+                    const result = await window.chrome.scripting.executeScript({
+                        target: {tabId: scanContext.tabId},
+                        func: scanPhotoSwipeImages,
+                        args: [{abortKey: scanId}]
+                    });
+                    await processCandidates(result[0]?.result ?? []);
+                } finally {
+                    session.photoSwipeScanActive = false;
+                }
             } catch {
                 // One visible PhotoSwipe target must never prevent the isolated DeepScan.
             }
@@ -282,7 +364,8 @@ export default class ImageScanner {
                     url: scanContext.url,
                     tabId: scanContext.tabId,
                     ignoreHiddenImages: filters.ignoreHiddenImages === true,
-                    allowProtectedDeepScan
+                    allowProtectedDeepScan,
+                    ...(this.#deepScanClientId ? {popupClientId: this.#deepScanClientId} : {})
                 });
                 if (response?.success !== true) {
                     session.finish({status: 'failed'});
@@ -314,7 +397,7 @@ export default class ImageScanner {
         return excludeList.some(word => name.includes(word));
     }
 
-    async getImageDimensions(url) {
+    async getImageDimensions(url, signal = null) {
         if (this.#imageDimensionsByURL.has(url)) {
             return this.#imageDimensionsByURL.get(url);
         }
@@ -326,10 +409,19 @@ export default class ImageScanner {
                 clearTimeout(timeout);
                 image.onload = null;
                 image.onerror = null;
+                signal?.removeEventListener?.('abort', onAbort);
                 resolve(dimensions);
             };
 
             const timeout = setTimeout(() => finish(null), 10000);
+            const onAbort = () => {
+                try {
+                    image.src = '';
+                } catch {
+                    // Clearing a page-owned image request is best effort.
+                }
+                finish(null);
+            };
 
             image.onload = () => {
                 const width = image.naturalWidth;
@@ -349,15 +441,20 @@ export default class ImageScanner {
             } catch {
                 finish(null);
             }
+            if (signal?.aborted) onAbort();
+            else signal?.addEventListener?.('abort', onAbort, {once: true});
         });
 
         this.#imageDimensionsByURL.set(url, dimensionsPromise);
         return dimensionsPromise;
     }
 
-    async getFileInfo(url) {
+    async getFileInfo(url, signal = null) {
         try {
-            const response = await fetch(url, {headers: { 'Range': 'bytes=0-0' }});
+            const response = await fetch(url, {
+                headers: {'Range': 'bytes=0-0'},
+                ...(signal ? {signal} : {})
+            });
             if (!response.ok) return null;
 
             const type = response.headers.get('content-type') || null;
@@ -379,6 +476,7 @@ export default class ImageScanner {
             };
 
         } catch (error) {
+            if (signal?.aborted || error?.name === 'AbortError') return null;
             console.warn('Cannot read file info:', url, error);
             return null;
         }
