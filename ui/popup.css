@@ -256,7 +256,7 @@ img.preview:not([src]) {
 }
 
 .toolbar-button.scanner-led.flash-led {
-    animation: flash-led 2.75s ease-in-out infinite;
+    animation: flash-led 3s ease-in-out infinite;
 }
 
 .theme input {
