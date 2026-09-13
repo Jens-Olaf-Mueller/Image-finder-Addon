@@ -120,6 +120,11 @@ img.preview:not([src]) {
     display: none;
 }
 
+#divProgressbar[hidden],
+#spnStatusBar[hidden] {
+    display: none !important;
+}
+
 #divToolbarSpacer.toolbar-spacer {
     display: flex;
     align-items: center;
@@ -229,7 +234,7 @@ img.preview:not([src]) {
     border-color: #a0a0a0;
     border-radius: 0;
     background-color: #cccccc;
-    color: #777;
+    color: #444;
     font-size: x-small;
     width: 2.75rem;
 }

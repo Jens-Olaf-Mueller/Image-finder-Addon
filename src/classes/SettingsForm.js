@@ -44,6 +44,12 @@ export class SettingsForm {
 
     async refresh() {
         this.setFormData(this.settings.data);
+        const protectedDeepScanWasCleared = this.updateDeepScanControls();
+
+        if (protectedDeepScanWasCleared) {
+            await this.settings.save(this.getFormData());
+        }
+
         await this.updateUI();
     }
 
@@ -80,6 +86,7 @@ export class SettingsForm {
         if (this.hasEventListeners) return;
 
         this.form.addEventListener('change', () => {
+            this.updateDeepScanControls();
             const data = this.getFormData();
 
             this.enqueue(async () => {
@@ -117,6 +124,7 @@ export class SettingsForm {
     }
 
     async updateUI() {
+        this.updateDeepScanControls();
         this.updateImageSizeControls();
         this.updateDownloadFolderControls();
         this.updateExcludeListControls();
@@ -131,6 +139,20 @@ export class SettingsForm {
         this.DOM.inpMinHeight.disabled = disabled;
         this.DOM.inpMinimumFileSize.disabled = disabled;
         this.DOM.spnMinSize.toggleAttribute('disabled', disabled);
+    }
+
+    updateDeepScanControls() {
+        const backgroundScan = this.DOM.chkAllowBackgroundScan;
+        const protectedDeepScan = this.DOM.chkAllowProtectedDeepScan;
+        if (!backgroundScan || !protectedDeepScan) return false;
+
+        const enabled = backgroundScan.checked === true;
+        const wasChecked = protectedDeepScan.checked === true;
+
+        if (!enabled) protectedDeepScan.checked = false;
+        protectedDeepScan.disabled = !enabled;
+
+        return !enabled && wasChecked;
     }
 
     updateDownloadFolderControls() {

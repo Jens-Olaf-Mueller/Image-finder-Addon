@@ -307,11 +307,14 @@ export default class ImageScanner {
                 }).catch(() => undefined);
             }
         };
-        const onMessage = (message) => {
+        const onMessage = (message, _sender, sendResponse) => {
             if (message?.target !== ISOLATED_DEEP_SCAN_TARGET || message.source !== 'background') {
                 return;
             }
             if (message.scanId !== scanId) {
+                return;
+            }
+            if (message.popupClientId && message.popupClientId !== this.#deepScanClientId) {
                 return;
             }
 
@@ -332,7 +335,29 @@ export default class ImageScanner {
                 return;
             }
             if (message.action === 'complete') {
-                void batchQueue.then(() => session.finish(message));
+                console.info(
+                    '[DeepScan COMPLETE TRACE] scanner-received',
+                    `scanId=${scanId}`,
+                    `status=${message.status}`,
+                    `clientId=${this.#deepScanClientId ?? 'none'}`
+                );
+                sendResponse?.({success: true, scanId, clientId: this.#deepScanClientId ?? null});
+                console.info(
+                    '[DeepScan COMPLETE TRACE] scanner-queue-state',
+                    `scanId=${scanId}`,
+                    'batchQueue=draining',
+                    `sessionFinished=${session.finished}`,
+                    `cancelled=${session.cancelled}`
+                );
+                void batchQueue.then(() => {
+                    console.info(
+                        '[DeepScan COMPLETE TRACE] scanner-drained',
+                        `scanId=${scanId}`,
+                        `sessionFinished=${session.finished}`,
+                        `cancelled=${session.cancelled}`
+                    );
+                    session.finish(message);
+                });
             }
         };
 
@@ -371,7 +396,13 @@ export default class ImageScanner {
                     session.finish({status: 'failed'});
                 }
 
-                await completion;
+                const completionResult = await completion;
+                console.info(
+                    '[DeepScan COMPLETE TRACE] scanDeepImages-resolved',
+                    `scanId=${scanId}`,
+                    `status=${completionResult?.status ?? 'unknown'}`,
+                    `cancelled=${session.cancelled}`
+                );
             }
         } catch {
             session.finish({status: 'failed'});

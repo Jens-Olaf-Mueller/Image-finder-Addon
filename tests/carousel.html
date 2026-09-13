@@ -1,0 +1,895 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Image Finder – DeepScan Carousel Fixture</title>
+
+    <style>
+        :root {
+            color-scheme: dark;
+            font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+            background: #111722;
+            color: #edf3ff;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            min-width: 980px;
+            height: 100vh;
+            margin: 0;
+            overflow: hidden;
+            background: #111722;
+        }
+
+        button {
+            font: inherit;
+        }
+
+        .fixture-header {
+            display: grid;
+            grid-template-columns: minmax(250px, 1fr) 2fr;
+            gap: 1.5rem;
+            min-height: 142px;
+            padding: 1rem 1.25rem;
+            border-bottom: 1px solid #33415c;
+            background: #172033;
+        }
+
+        .fixture-header h1,
+        .fixture-header p {
+            margin: 0;
+        }
+
+        .fixture-header p {
+            margin-top: .6rem;
+            color: #b9c7df;
+            line-height: 1.45;
+        }
+
+        .fixture-overview {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(120px, 1fr));
+            gap: .6rem;
+        }
+
+        .overview-card {
+            padding: .65rem .75rem;
+            border: 1px solid #455674;
+            border-radius: .5rem;
+            background: #202d45;
+            line-height: 1.35;
+        }
+
+        .overview-card strong {
+            display: block;
+            color: #ffe600;
+        }
+
+        .fixture-columns {
+            display: grid;
+            grid-template-columns: 250px 350px minmax(440px, 1fr);
+            gap: 1px;
+            height: calc(100vh - 142px);
+            background: #33415c;
+        }
+
+        #asdMenu,
+        #divMessages,
+        #mainChat {
+            min-width: 0;
+            min-height: 0;
+            overflow-y: auto;
+            overscroll-behavior: contain;
+            background: #161f30;
+        }
+
+        #asdMenu {
+            padding: .75rem;
+        }
+
+        #divMessages {
+            padding: .75rem;
+        }
+
+        #mainChat {
+            padding: 1rem;
+            scroll-behavior: auto;
+        }
+
+        .column-title {
+            position: sticky;
+            top: -.75rem;
+            z-index: 2;
+            margin: -.75rem -.75rem .75rem;
+            padding: .8rem .75rem;
+            border-bottom: 1px solid #33415c;
+            background: #1b2940;
+            color: #d8e7ff;
+            font-size: .85rem;
+            letter-spacing: .04em;
+            text-transform: uppercase;
+        }
+
+        .menu-entry {
+            display: flex;
+            align-items: center;
+            gap: .7rem;
+            min-height: 50px;
+            margin-bottom: .45rem;
+            padding: .6rem;
+            border: 1px solid transparent;
+            border-radius: .45rem;
+            color: #dce8fb;
+            background: #202d45;
+        }
+
+        .menu-entry:nth-child(3n) {
+            background: #1c2a42;
+        }
+
+        .menu-entry img {
+            width: 26px;
+            height: 26px;
+            object-fit: contain;
+        }
+
+        .message-entry {
+            display: grid;
+            grid-template-columns: 144px minmax(0, 1fr);
+            gap: .75rem;
+            min-height: 160px;
+            margin-bottom: .7rem;
+            padding: .7rem;
+            border: 1px solid #344563;
+            border-radius: .6rem;
+            background: #202d45;
+        }
+
+        .message-avatar {
+            width: 144px;
+            height: 144px;
+            border: 2px solid rgb(255 255 255 / 32%);
+            border-radius: 50%;
+            background: #344563;
+        }
+
+        .message-copy {
+            min-width: 0;
+            padding-top: .45rem;
+        }
+
+        .message-copy strong,
+        .message-copy span {
+            display: block;
+        }
+
+        .message-copy span {
+            margin-top: .4rem;
+            color: #aec0dd;
+            line-height: 1.4;
+        }
+
+        .chat-intro,
+        .chat-break {
+            margin: .4rem 0 1.25rem;
+            padding: .9rem 1rem;
+            border-left: 4px solid #ffe600;
+            border-radius: .3rem;
+            background: #202d45;
+            color: #c5d3e8;
+            line-height: 1.45;
+        }
+
+        .normal-media {
+            margin: 1.35rem 0;
+            padding: .8rem;
+            border: 1px solid #344563;
+            border-radius: .65rem;
+            background: #202d45;
+        }
+
+        .normal-media header {
+            margin-bottom: .55rem;
+            color: #b8c8df;
+            font-size: .84rem;
+        }
+
+        .normal-media img {
+            display: block;
+            width: min(100%, 620px);
+            max-height: 500px;
+            margin: 0 auto;
+            border-radius: .4rem;
+            object-fit: contain;
+            background: #0d1320;
+        }
+
+        .carousel {
+            margin: 2.2rem 0;
+            padding: 1rem;
+            border: 1px solid #6d7f9e;
+            border-radius: .75rem;
+            background: #253550;
+        }
+
+        .carousel-heading {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: 1rem;
+            margin-bottom: .7rem;
+        }
+
+        .carousel-heading h2,
+        .carousel-heading p {
+            margin: 0;
+        }
+
+        .carousel-heading p {
+            color: #b8c8df;
+            font-size: .88rem;
+        }
+
+        .carousel-stage {
+            display: grid;
+            grid-template-columns: 52px minmax(0, 1fr) 52px;
+            align-items: center;
+            gap: .6rem;
+        }
+
+        .carousel-control,
+        .pswp__button {
+            min-height: 44px;
+            padding: .55rem .7rem;
+            border: 1px solid #7488aa;
+            border-radius: .45rem;
+            color: #f4f7ff;
+            background: #314361;
+            cursor: pointer;
+        }
+
+        .carousel-control:hover:not(:disabled),
+        .pswp__button:hover:not(:disabled) {
+            background: #40577d;
+        }
+
+        .carousel-control:disabled,
+        .pswp__button:disabled {
+            cursor: not-allowed;
+            opacity: .42;
+        }
+
+        .carousel-active {
+            min-width: 0;
+        }
+
+        .carousel-slide {
+            display: block;
+            width: 100%;
+            padding: 0;
+            border: 0;
+            border-radius: .5rem;
+            overflow: hidden;
+            background: #0d1320;
+            cursor: zoom-in;
+        }
+
+        .carousel-slide img {
+            display: block;
+            width: 100%;
+            max-height: 450px;
+            object-fit: contain;
+            background: #0d1320;
+        }
+
+        .slide-meta {
+            margin-top: .55rem;
+            color: #c0cfe5;
+            font-size: .82rem;
+        }
+
+        .pswp {
+            position: fixed;
+            z-index: 1000;
+            inset: 0;
+            display: grid;
+            grid-template-columns: 68px minmax(0, 1fr) 68px;
+            grid-template-rows: 64px minmax(0, 1fr);
+            gap: .75rem;
+            padding: 1rem;
+            background: rgb(4 8 16 / 94%);
+        }
+
+        .pswp__button--close {
+            grid-column: 1 / -1;
+            justify-self: end;
+            min-width: 88px;
+        }
+
+        .pswp__button--arrow--prev,
+        .pswp__button--arrow--next {
+            align-self: center;
+            min-height: 72px;
+        }
+
+        .pswp__viewport {
+            position: relative;
+            min-width: 0;
+            min-height: 0;
+            overflow: hidden;
+        }
+
+        .pswp__item {
+            position: absolute;
+            inset: 0;
+            display: grid;
+            place-items: center;
+        }
+
+        .pswp__item[aria-hidden="true"] {
+            visibility: hidden;
+            pointer-events: none;
+        }
+
+        .pswp__img {
+            max-width: 100%;
+            max-height: 100%;
+            cursor: zoom-in;
+            object-fit: contain;
+            transition: transform .15s ease;
+        }
+
+        .pswp--zoomed-in .pswp__item[aria-hidden="false"] .pswp__img {
+            cursor: zoom-out;
+            transform: scale(1.45);
+        }
+
+        .pswp__caption {
+            position: absolute;
+            right: 1rem;
+            bottom: 1rem;
+            left: 1rem;
+            padding: .55rem .75rem;
+            border-radius: .4rem;
+            background: rgb(0 0 0 / 62%);
+            color: #fff;
+            text-align: center;
+        }
+    </style>
+</head>
+
+<body>
+    <header class="fixture-header">
+        <div>
+            <h1>Carousel Test Fixture</h1>
+            <p>
+                Three independent scrollcontainers, real local media files and
+                PhotoSwipe-compatible gallery markup for DeepScan diagnostics.
+            </p>
+        </div>
+        <section id="fixtureOverview" class="fixture-overview" aria-label="Carousel overview"></section>
+    </header>
+
+    <div class="fixture-columns">
+        <aside id="asdMenu" aria-label="Fake menu">
+            <h2 class="column-title">Menu</h2>
+            <div id="menuEntries"></div>
+        </aside>
+
+        <div id="divMessages" aria-label="Fake inbox">
+            <h2 class="column-title">Messages</h2>
+            <div id="messageEntries"></div>
+        </div>
+
+        <main id="mainChat" aria-label="Long media chat">
+            <h2 class="column-title">Media chat</h2>
+            <p class="chat-intro">
+                The chat starts intentionally near its lower reachable edge.
+                Carousel 1 and 2 are placed in the upper third; Carousel 3 and
+                4 in the lower third.
+            </p>
+            <div id="chatBefore"></div>
+
+            <section id="carousel1" class="carousel" data-carousel-id="carousel1" data-carousel-type="cyclic">
+                <div class="carousel-heading">
+                    <h2>Carousel 1</h2>
+                    <p>cyclic gallery</p>
+                </div>
+                <div class="carousel-stage">
+                    <button class="carousel-control" data-carousel-prev rel="prev" aria-label="Previous image">←</button>
+                    <div class="carousel-active"></div>
+                    <button class="carousel-control" data-carousel-next rel="next" aria-label="Next image">→</button>
+                </div>
+            </section>
+
+            <div id="chatBetweenOneTwo"></div>
+
+            <section id="carousel2" class="carousel" data-carousel-id="carousel2" data-carousel-type="finite">
+                <div class="carousel-heading">
+                    <h2>Carousel 2</h2>
+                    <p>finite gallery, middle start</p>
+                </div>
+                <div class="carousel-stage">
+                    <button class="carousel-control" data-carousel-prev rel="prev" aria-label="Previous image">←</button>
+                    <div class="carousel-active"></div>
+                    <button class="carousel-control" data-carousel-next rel="next" aria-label="Next image">→</button>
+                </div>
+            </section>
+
+            <div id="chatBetweenTwoThree"></div>
+
+            <section id="carousel3" class="carousel" data-carousel-id="carousel3" data-carousel-type="cyclic">
+                <div class="carousel-heading">
+                    <h2>Carousel 3</h2>
+                    <p>cyclic gallery</p>
+                </div>
+                <div class="carousel-stage">
+                    <button class="carousel-control" data-carousel-prev rel="prev" aria-label="Previous image">←</button>
+                    <div class="carousel-active"></div>
+                    <button class="carousel-control" data-carousel-next rel="next" aria-label="Next image">→</button>
+                </div>
+            </section>
+
+            <div id="chatBetweenThreeFour"></div>
+
+            <section id="carousel4" class="carousel" data-carousel-id="carousel4" data-carousel-type="finite">
+                <div class="carousel-heading">
+                    <h2>Carousel 4</h2>
+                    <p>finite gallery, middle start</p>
+                </div>
+                <div class="carousel-stage">
+                    <button class="carousel-control" data-carousel-prev rel="prev" aria-label="Previous image">←</button>
+                    <div class="carousel-active"></div>
+                    <button class="carousel-control" data-carousel-next rel="next" aria-label="Next image">→</button>
+                </div>
+            </section>
+
+            <div id="chatAfter"></div>
+        </main>
+    </div>
+
+    <script>
+        const carouselData = [
+            {
+                id: 'carousel1',
+                type: 'cyclic',
+                startIndex: 0,
+                slides: [
+                    'carousel/carousel1/c1Pic1.jpg',
+                    'carousel/carousel1/c1Pic2.jpg',
+                    'carousel/carousel1/c1Pic3.jpg',
+                    'carousel/carousel1/c1Pic4.jpg',
+                    'carousel/carousel1/c1Pic5.jpg',
+                    'carousel/carousel1/c1Pic6.jpg'
+                ]
+            },
+            {
+                id: 'carousel2',
+                type: 'finite',
+                startIndex: 3,
+                slides: [
+                    'carousel/carousel2/c2Pic1.jpg',
+                    'carousel/carousel2/c2Pic2.jpg',
+                    'carousel/carousel2/c2Pic3.jpg',
+                    'carousel/carousel2/c2Pic4.jpg',
+                    'carousel/carousel2/c2Pic5.jpg',
+                    'carousel/carousel2/c2Pic6.jpg',
+                    'carousel/carousel2/c2Pic7.jpg',
+                    'carousel/carousel2/c2Pic8.jpg'
+                ]
+            },
+            {
+                id: 'carousel3',
+                type: 'cyclic',
+                startIndex: 0,
+                slides: [
+                    'carousel/carousel3/c3Pic1.jpg',
+                    'carousel/carousel3/c3Pic2.jpg',
+                    'carousel/carousel3/c3Pic3.jpg',
+                    'carousel/carousel3/c3Pic4.jpg',
+                    'carousel/carousel3/c3Pic5.jpg',
+                    'carousel/carousel3/c3Pic6.jpg',
+                    'carousel/carousel3/c3Pic7.jpg',
+                    'carousel/carousel3/c3Pic8.jpg',
+                    'carousel/carousel3/c3Pic9.jpg',
+                    'carousel/carousel3/c3Pic10.jpg',
+                    'carousel/carousel3/c3Pic11.jpg'
+                ]
+            },
+            {
+                id: 'carousel4',
+                type: 'finite',
+                startIndex: 5,
+                slides: [
+                    'carousel/carousel4/c4Pic1.jpg',
+                    'carousel/carousel4/c4Pic2.jpg',
+                    'carousel/carousel4/c4Pic3.jpg',
+                    'carousel/carousel4/c4Pic4.jpg',
+                    'carousel/carousel4/c4Pic5.jpg',
+                    'carousel/carousel4/c4Pic6.jpg',
+                    'carousel/carousel4/c4Pic7.jpg',
+                    'carousel/carousel4/c4Pic8.jpg',
+                    'carousel/carousel4/c4Pic9.jpg',
+                    'carousel/carousel4/c4Pic10.jpg'
+                ]
+            }
+        ];
+
+        const chatImages = [
+            'images/Aegeri.jpeg',
+            'images/Arschkarte.BMP',
+            'images/BK78tVf3hQI.jpg',
+            'images/Benz.JPG',
+            'images/Black sheep.jpg',
+            'images/Chess.png',
+            'images/Coffee.jpg',
+            'images/DieWahrheit.jpg',
+            'images/FOE-Stadt.png',
+            'images/Gartenhaus.jpg',
+            'images/Granit poliert u diagonal - Wädenswil (5).JPG',
+            'images/Habermann (1).JPG',
+            'images/Habermann (2).JPG',
+            'images/Habermann (3).JPG',
+            'images/Kinsky-original1952x1440.JPEG',
+            'images/Kinsky-original1952x1440.JPG',
+            'images/Kinsky-small500.JPG',
+            'images/Latex.jpg',
+            'images/LogIn_darkmode.png',
+            'images/LogIn_lightmode.png',
+            'images/Loo.jpg',
+            'images/Lory1_2316x3088.jpg',
+            'images/Lory1_926x1236.png',
+            'images/Lory2_2316x3088.jpg',
+            'images/Orca.png',
+            'images/Podest Wiek.JPG',
+            'images/Pyramiden.jpeg',
+            'images/Pyramiden.png',
+            'images/Pyramiden.webp',
+            'images/Pyramiden_small.png',
+            'images/Pyramiden_small_flipped.png',
+            'images/Rade (1).jpg',
+            'images/Rockies.avif',
+            'images/Schokofrau_blurred.jpeg',
+            'images/Torte_blurred.jpg',
+            'images/Wasbek-large1500.jpg',
+            'images/Wasbek-small500.jpg',
+            'images/ballspanking.gif',
+            'images/domazonwalk.gif',
+            'images/label.webp',
+            'images/nightsky.webp',
+            'images/nurse.gif',
+            'images/salmon dish.jpg',
+            'images/save.svg',
+            'images/scent bottle.JPG',
+            'images/seed-bag.png',
+            'images/smiley_blurred.png',
+            'images/sunset.avif',
+            'images/test1.jpg',
+            'images/test2.jpg',
+            'images/test3.jpg',
+            'images/test4.jpg',
+            'images/test5.jpg',
+            'images/woods.webp'
+        ];
+
+        const menuItems = [
+            ['Home', '../assets/icons/icon64.png'],
+            ['Messages', '../assets/icons/search.png'],
+            ['Media', '../assets/icons/jpeg.png'],
+            ['Notifications', '../assets/icons/reload-sync-icon.png'],
+            ['Bookmarks', '../assets/icons/folder.png'],
+            ['Downloads', '../assets/icons/download.png'],
+            ['Settings', '../assets/icons/settings.png'],
+            ['Saved', '../assets/icons/saveall.png']
+        ];
+        const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
+        const initials = [
+            ...alphabet,
+            ...alphabet.flatMap((first) => alphabet.map((second) => first + second))
+        ];
+        const carouselState = new Map(
+            carouselData.map((carousel) => [carousel.id, {index: carousel.startIndex}])
+        );
+
+        const imageURL = (path) => encodeURI(path);
+        const getCarousel = (id) => carouselData.find((carousel) => carousel.id === id);
+        const getSlideNumber = (carousel, index) => index + 1;
+        const getAdjacentIndex = (carousel, index, direction) => {
+            const next = index + direction;
+            if (carousel.type === 'cyclic') {
+                return (next + carousel.slides.length) % carousel.slides.length;
+            }
+            return next < 0 || next >= carousel.slides.length ? null : next;
+        };
+
+        const createAvatarWebP = (initial, index) => {
+            const canvas = document.createElement('canvas');
+            canvas.width = 144;
+            canvas.height = 144;
+            const context = canvas.getContext('2d');
+            const hue = (index * 47) % 360;
+
+            context.fillStyle = 'hsl(' + hue + ' 62% 42%)';
+            context.fillRect(0, 0, 144, 144);
+            context.fillStyle = 'rgb(255 255 255 / 18%)';
+            context.beginPath();
+            context.arc(40, 36, 62, 0, Math.PI * 2);
+            context.fill();
+            context.fillStyle = '#ffffff';
+            context.font = 'bold ' + (initial.length > 2 ? '39' : '48') + 'px system-ui';
+            context.textAlign = 'center';
+            context.textBaseline = 'middle';
+            context.fillText(initial, 72, 76);
+            return canvas.toDataURL('image/webp', .9);
+        };
+
+        const renderMenu = () => {
+            const target = document.getElementById('menuEntries');
+            Array.from({length: 5}, () => menuItems).flat().forEach(([label, icon], index) => {
+                const entry = document.createElement('div');
+                entry.className = 'menu-entry';
+                entry.innerHTML = '<img src="' + imageURL(icon) + '" alt="">';
+                const text = document.createElement('span');
+                text.textContent = label + ' ' + (index + 1);
+                entry.append(text);
+                target.append(entry);
+            });
+        };
+
+        const renderMessages = () => {
+            const target = document.getElementById('messageEntries');
+            const fragment = document.createDocumentFragment();
+
+            initials.forEach((initial, index) => {
+                const entry = document.createElement('article');
+                entry.className = 'message-entry';
+
+                const avatar = document.createElement('img');
+                avatar.className = 'message-avatar';
+                avatar.width = 144;
+                avatar.height = 144;
+                avatar.alt = 'Avatar ' + initial;
+                avatar.src = createAvatarWebP(initial, index);
+
+                const copy = document.createElement('div');
+                copy.className = 'message-copy';
+                copy.innerHTML = '<strong>' + initial + ' Contact</strong>' +
+                    '<span>Fixture message ' + (index + 1) +
+                    ': long enough to make the independent inbox scroll.</span>';
+                entry.append(avatar, copy);
+                fragment.append(entry);
+            });
+            target.append(fragment);
+        };
+
+        const appendChatImages = (targetID, files) => {
+            const target = document.getElementById(targetID);
+            const fragment = document.createDocumentFragment();
+
+            files.forEach((file, index) => {
+                const card = document.createElement('article');
+                card.className = 'normal-media';
+
+                const header = document.createElement('header');
+                header.textContent = 'Chat media ' + file;
+
+                const image = document.createElement('img');
+                image.src = imageURL(file);
+                image.alt = 'Chat media: ' + file;
+                if (index % 3 === 1) image.loading = 'lazy';
+
+                card.append(header, image);
+                fragment.append(card);
+            });
+            target.append(fragment);
+        };
+
+        const renderOverview = () => {
+            const overview = document.getElementById('fixtureOverview');
+
+            carouselData.forEach((carousel) => {
+                const card = document.createElement('div');
+                card.className = 'overview-card';
+                card.innerHTML = '<strong>' + carousel.id.replace('carousel', 'Carousel ') +
+                    '</strong>type: ' + carousel.type + '<br>slides: ' +
+                    carousel.slides.length + '<br>start: ' +
+                    getSlideNumber(carousel, carousel.startIndex);
+                overview.append(card);
+            });
+        };
+
+        const updateControl = (control, disabled) => {
+            control.disabled = disabled;
+            control.setAttribute('aria-disabled', String(disabled));
+        };
+
+        const renderCarousel = (carousel) => {
+            const root = document.getElementById(carousel.id);
+            const state = carouselState.get(carousel.id);
+            const previous = getAdjacentIndex(carousel, state.index, -1);
+            const next = getAdjacentIndex(carousel, state.index, 1);
+            const slideNumber = getSlideNumber(carousel, state.index);
+            const active = root.querySelector('.carousel-active');
+            const previousControl = root.querySelector('[data-carousel-prev]');
+            const nextControl = root.querySelector('[data-carousel-next]');
+
+            root.dataset.activeSlide = String(slideNumber);
+            root.dataset.slideCount = String(carousel.slides.length);
+            updateControl(previousControl, previous === null);
+            updateControl(nextControl, next === null);
+
+            const target = document.createElement('button');
+            target.type = 'button';
+            target.className = 'carousel-slide';
+            target.setAttribute('at-attr', 'media_locator');
+            target.dataset.carouselId = carousel.id;
+            target.dataset.slideIndex = String(slideNumber);
+            target.dataset.slideCount = String(carousel.slides.length);
+            target.setAttribute('aria-current', 'true');
+            target.setAttribute('aria-label', carousel.id + ', image ' + slideNumber +
+                ' of ' + carousel.slides.length + '. Open image.');
+            target.addEventListener('click', () => openPhotoSwipe(carousel, state.index));
+
+            const image = document.createElement('img');
+            image.src = imageURL(carousel.slides[state.index]);
+            image.alt = carousel.id + ' slide ' + slideNumber;
+            image.loading = 'lazy';
+            target.append(image);
+
+            const meta = document.createElement('div');
+            meta.className = 'slide-meta';
+            meta.textContent = 'Active slide ' + slideNumber + ' / ' + carousel.slides.length +
+                ' · ' + carousel.type;
+            active.replaceChildren(target, meta);
+        };
+
+        const moveCarousel = (carousel, direction) => {
+            const state = carouselState.get(carousel.id);
+            const next = getAdjacentIndex(carousel, state.index, direction);
+            if (next === null) return;
+
+            state.index = next;
+            renderCarousel(carousel);
+        };
+
+        const getPreloadIndexes = (carousel, activeIndex) => {
+            const indexes = [
+                getAdjacentIndex(carousel, activeIndex, -1),
+                activeIndex,
+                getAdjacentIndex(carousel, activeIndex, 1)
+            ].filter((index) => index !== null);
+            return [...new Set(indexes)];
+        };
+
+        const openPhotoSwipe = (carousel, startIndex) => {
+            const state = {activeIndex: startIndex, zoomed: false};
+            const dialog = document.createElement('div');
+            dialog.className = 'pswp pswp--open';
+            dialog.setAttribute('role', 'dialog');
+            dialog.setAttribute('aria-modal', 'true');
+            dialog.dataset.carouselId = carousel.id;
+            dialog.dataset.slideCount = String(carousel.slides.length);
+
+            const close = () => dialog.remove();
+            const render = () => {
+                const previous = getAdjacentIndex(carousel, state.activeIndex, -1);
+                const next = getAdjacentIndex(carousel, state.activeIndex, 1);
+                const closeButton = document.createElement('button');
+                closeButton.type = 'button';
+                closeButton.className = 'pswp__button pswp__button--close';
+                closeButton.setAttribute('aria-label', 'Close image gallery');
+                closeButton.textContent = 'Close';
+                closeButton.addEventListener('click', close);
+
+                const previousButton = document.createElement('button');
+                previousButton.type = 'button';
+                previousButton.className = 'pswp__button pswp__button--arrow--prev';
+                previousButton.setAttribute('data-pswp-action', 'prev');
+                previousButton.setAttribute('rel', 'prev');
+                previousButton.setAttribute('aria-label', 'Previous image');
+                previousButton.textContent = '←';
+                updateControl(previousButton, previous === null);
+                previousButton.addEventListener('click', () => {
+                    if (previous === null) return;
+                    state.activeIndex = previous;
+                    state.zoomed = false;
+                    render();
+                });
+
+                const nextButton = document.createElement('button');
+                nextButton.type = 'button';
+                nextButton.className = 'pswp__button pswp__button--arrow--next';
+                nextButton.setAttribute('data-pswp-action', 'next');
+                nextButton.setAttribute('rel', 'next');
+                nextButton.setAttribute('aria-label', 'Next image');
+                nextButton.textContent = '→';
+                updateControl(nextButton, next === null);
+                nextButton.addEventListener('click', () => {
+                    if (next === null) return;
+                    state.activeIndex = next;
+                    state.zoomed = false;
+                    render();
+                });
+
+                const viewport = document.createElement('div');
+                viewport.className = 'pswp__viewport';
+                viewport.dataset.carouselId = carousel.id;
+
+                getPreloadIndexes(carousel, state.activeIndex).forEach((index) => {
+                    const item = document.createElement('div');
+                    const isActive = index === state.activeIndex;
+                    item.className = 'pswp__item';
+                    item.dataset.carouselId = carousel.id;
+                    item.dataset.slideIndex = String(getSlideNumber(carousel, index));
+                    item.dataset.slideCount = String(carousel.slides.length);
+                    item.setAttribute('aria-hidden', String(!isActive));
+
+                    const image = document.createElement('img');
+                    image.className = 'pswp__img';
+                    image.src = imageURL(carousel.slides[index]);
+                    image.alt = carousel.id + ' full-size slide ' + getSlideNumber(carousel, index);
+                    image.loading = 'eager';
+                    if (isActive) {
+                        image.addEventListener('click', () => {
+                            state.zoomed = !state.zoomed;
+                            dialog.classList.toggle('pswp--zoomed-in', state.zoomed);
+                        });
+                    }
+                    item.append(image);
+                    viewport.append(item);
+                });
+
+                const caption = document.createElement('div');
+                caption.className = 'pswp__caption';
+                caption.textContent = carousel.id + ' · slide ' +
+                    getSlideNumber(carousel, state.activeIndex) + ' / ' + carousel.slides.length;
+                viewport.append(caption);
+
+                dialog.classList.toggle('pswp--zoomed-in', state.zoomed);
+                dialog.replaceChildren(closeButton, previousButton, viewport, nextButton);
+            };
+
+            render();
+            document.body.append(dialog);
+        };
+
+        const initializeCarousels = () => {
+            carouselData.forEach((carousel) => {
+                const root = document.getElementById(carousel.id);
+                root.querySelector('[data-carousel-prev]').addEventListener('click', () => {
+                    moveCarousel(carousel, -1);
+                });
+                root.querySelector('[data-carousel-next]').addEventListener('click', () => {
+                    moveCarousel(carousel, 1);
+                });
+                renderCarousel(carousel);
+            });
+        };
+
+        const setInitialChatPosition = () => {
+            const chat = document.getElementById('mainChat');
+            const range = Math.max(0, chat.scrollHeight - chat.clientHeight);
+            chat.scrollTop = Math.round(range * .78);
+        };
+
+        renderMenu();
+        renderMessages();
+        appendChatImages('chatBefore', chatImages.slice(0, 6));
+        appendChatImages('chatBetweenOneTwo', chatImages.slice(6, 12));
+        appendChatImages('chatBetweenTwoThree', chatImages.slice(12, 40));
+        appendChatImages('chatBetweenThreeFour', chatImages.slice(40, 46));
+        appendChatImages('chatAfter', chatImages.slice(46));
+        renderOverview();
+        initializeCarousels();
+
+        window.addEventListener('load', () => {
+            requestAnimationFrame(setInitialChatPosition);
+        }, {once: true});
+    </script>
+</body>
+</html>
+

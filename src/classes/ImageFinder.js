@@ -22,6 +22,7 @@ export class ImageFinder {
         deepScan: 0
     };
     #scanGeneration = 0;
+    #downloadStates = new Map();
 
     get selectedItem() {
         return this.DOM.lstImages.querySelector('.selected') || null;
@@ -81,6 +82,9 @@ export class ImageFinder {
         this.settingsForm = null;
         this.isSavingAll = false;
         this.currentBlobPreview = null;
+        window.chrome?.downloads?.onChanged?.addListener((delta) => {
+            this.#handleDownloadChanged(delta);
+        });
         this.#updateLED();
         this.#updateLEDActivity();
 
@@ -123,6 +127,9 @@ export class ImageFinder {
         });
         this.DOM.lstImages.addEventListener('click', e => this.onListItemClick(e));
         this.DOM.lstImages.addEventListener('keydown', e => this.onKeyPress(e));
+        document.addEventListener('keydown', e => {
+            this.#onSettingsKeyDown(e);
+        }, true);
     }
 
     onSortButtonClick(e) {
@@ -255,6 +262,7 @@ export class ImageFinder {
         const item = items[index];
         this.selectedItem?.classList.remove('selected');
         item.classList.add('selected');
+        this.#updateOpenDownloadFolderButton();
 
         item.scrollIntoView({ block: 'nearest' });
         await this.#showImage(item);
@@ -266,6 +274,8 @@ export class ImageFinder {
         const imageId = item?.dataset.imageId;
         const image = imageId ? this.images.get(imageId) ?? null : null;
         if (!image) return;
+
+        this.#updateOpenDownloadFolderButton();
 
         if (image.source === 'blobimages') {
             const cachedPreview = this.currentBlobPreview?.imageId === imageId
@@ -339,6 +349,7 @@ export class ImageFinder {
         this.selectedItem?.classList.remove('selected');
         item.classList.add('selected');
         this.DOM.lstImages.focus();
+        this.#updateOpenDownloadFolderButton();
 
         try {
             await this.#showImage(item);
@@ -378,6 +389,10 @@ export class ImageFinder {
                 await this.saveAllImages();
                 break;
 
+            case 'opendownloadfolder':
+                await this.openSelectedDownloadFolder();
+                break;
+
             case 'delete':
                 this.deleteImage(item);
                 break;
@@ -397,24 +412,53 @@ export class ImageFinder {
     }
 
     async toggleSettingsPanel() {
-        const isOpen = this.DOM.btnSettings.value === 'true';
-        const nextState = String(!isOpen);
-        this.DOM.btnSettings.value = nextState;
-        this.DOM.divSettingsPanel.classList.toggle('open', nextState === 'true');
-
-        this.DOM.divToolbarActions.hidden = !isOpen;
-        this.DOM.btnDefaultSettings.disabled = isOpen;
-
-        if (!isOpen) {
-            await this.settingsForm?.refresh();
+        if (this.#isSettingsPanelOpen()) {
+            await this.#closeSettingsPanel();
             return;
         }
 
+        await this.#openSettingsPanel();
+    }
+
+    async #openSettingsPanel() {
+        this.DOM.btnSettings.value = 'true';
+        this.DOM.divSettingsPanel.classList.add('open');
+        this.DOM.divToolbarActions.hidden = true;
+        this.DOM.divProgressbar.hidden = true;
+        this.DOM.spnStatusBar.hidden = true;
+        this.DOM.btnDefaultSettings.disabled = false;
+
+        await this.settingsForm?.refresh();
+    }
+
+    async #closeSettingsPanel() {
+        if (!this.#isSettingsPanelOpen()) return;
+
+        this.DOM.btnSettings.value = 'false';
+        this.DOM.divSettingsPanel.classList.remove('open');
+        this.DOM.divToolbarActions.hidden = false;
+        this.DOM.divProgressbar.hidden = false;
+        this.DOM.spnStatusBar.hidden = false;
+        this.DOM.btnDefaultSettings.disabled = true;
+
         await this.settingsForm?.waitForPendingSave();
         this.updateDownloadTitles();
+        this.#updateLEDActivity();
         if (this.settings.get('common', 'scanOnSettingsChanged', true)) {
             await this.scan();
         }
+    }
+
+    #isSettingsPanelOpen() {
+        return this.DOM.btnSettings.value === 'true';
+    }
+
+    #onSettingsKeyDown(event) {
+        if (!this.#isSettingsPanelOpen() || event.key !== 'Enter' || event.isComposing) return;
+
+        event.preventDefault();
+        event.stopPropagation();
+        void this.#closeSettingsPanel();
     }
 
     async resetSettingsToDefaults() {
@@ -436,6 +480,7 @@ export class ImageFinder {
         this.candidates.clear();
         this.images.clear();
         this.analysisStore.clear();
+        this.#downloadStates.clear();
         this.currentBlobPreview = null;
         this.DOM.lstImages.innerHTML = '';
         this.DOM.imgPreview.removeAttribute('src');
@@ -445,6 +490,7 @@ export class ImageFinder {
         this.DOM.btnSaveAll.disabled = true;
         this.DOM.btnDelete.disabled = true;
         this.DOM.btnClear.disabled = true;
+        this.#updateOpenDownloadFolderButton();
         this.#updateLED();
         this.#updateLEDActivity();
     }
@@ -605,8 +651,21 @@ export class ImageFinder {
                         console.warn('Cannot deep scan this page:', error);
                     }
                 } finally {
+                    console.info(
+                        '[DeepScan COMPLETE TRACE] stopActivity-before',
+                        `scanGeneration=${scanGeneration}`,
+                        `deepScanActivities=${this.#activityCounts.deepScan}`,
+                        `scannerRunning=${this.isDeepScanRunning}`
+                    );
                     this.stopActivity('deepScan', scanGeneration);
                     deepScanActivityActive = false;
+                    console.info(
+                        '[DeepScan COMPLETE TRACE] stopActivity-after',
+                        `scanGeneration=${scanGeneration}`,
+                        `deepScanActivities=${this.#activityCounts.deepScan}`,
+                        `scannerRunning=${this.isDeepScanRunning}`
+                    );
+                    this.#finalizeDeepScanUI(scanGeneration);
                 }
             }
         } catch (error) {
@@ -620,6 +679,7 @@ export class ImageFinder {
             if (scanCompleted && this.#isCurrentScan(scanGeneration)) {
                 this.info = this.images.size === 0 ? 'No images found!' : 'Image preview';
             }
+            this.#finalizeDeepScanUI(scanGeneration);
         }
     }
 
@@ -627,15 +687,13 @@ export class ImageFinder {
         const image = this.selectedImage;
         if (!item || !image) return;
 
-        // ❌
-        // await window.chrome.downloads.download({
-        //     url: item.dataset.url,
-        //     ...this.getDownloadOptions(item.textContent)
-        // });
-        await this.downloadImage(image);
-
-        item.classList.add('saved');
-        this.DOM.btnDownload.disabled = this.downloadButtonState;
+        try {
+            const downloadId = await this.downloadImage(image);
+            this.#trackDownload(item.dataset.imageId, downloadId);
+        } catch (error) {
+            console.warn('Cannot download image:', image.url, error);
+            this.#updateOpenDownloadFolderButton();
+        }
     }
 
     async saveAllImages() {
@@ -680,18 +738,15 @@ export class ImageFinder {
                 const item = this.listItems.find(
                     li => li.dataset.imageId === result.imageId
                 );
+                this.#trackDownload(result.imageId, result.downloadId);
                 if (!item) continue;
-
-                item.classList.add('saved');
-                if (this.downloadButtonState && this.selectedItem === item) {
-                    this.DOM.btnDownload.disabled = true;
-                }
             }
         } catch (error) {
             console.warn('Cannot download image list:', error);
         } finally {
             this.isSavingAll = false;
             this.DOM.btnSaveAll.disabled = (this.images.size === 0);
+            this.#updateOpenDownloadFolderButton();
         }
     }
 
@@ -766,6 +821,29 @@ export class ImageFinder {
         this.DOM.btnSaveAll.title = folder
             ? `Save all images to: ${folder}`
             : 'Save all images';
+        this.#updateOpenDownloadFolderButton();
+    }
+
+    async openSelectedDownloadFolder() {
+        const imageId = this.selectedItem?.dataset.imageId;
+        const download = imageId ? this.#downloadStates.get(imageId) : null;
+        if (!imageId || !download?.completed || !Number.isInteger(download.downloadId)) {
+            this.#updateOpenDownloadFolderButton();
+            return;
+        }
+
+        try {
+            const downloads = await window.chrome.downloads.search({id: download.downloadId});
+            if (downloads[0]?.state !== 'complete') {
+                this.#setDownloadState(imageId, download.downloadId, downloads[0]?.state ?? 'failed');
+                return;
+            }
+
+            await window.chrome.downloads.show(download.downloadId);
+        } catch (error) {
+            console.warn('Cannot open download folder:', error);
+            this.#setDownloadState(imageId, download.downloadId, 'failed');
+        }
     }
 
     deleteImage(item) {
@@ -777,6 +855,7 @@ export class ImageFinder {
 
         this.images.delete(item.dataset.imageId);
         this.candidates.delete(item.dataset.imageId);
+        this.#downloadStates.delete(item.dataset.imageId);
         item.remove();
 
         this.DOM.imgPreview.removeAttribute('src');
@@ -784,6 +863,7 @@ export class ImageFinder {
         this.DOM.btnDelete.disabled = true;
         this.DOM.btnSaveAll.disabled = (this.images.size === 0);
         this.DOM.btnClear.disabled = (this.images.size === 0);
+        this.#updateOpenDownloadFolderButton();
         this.#updateLED();
     }
 
@@ -915,6 +995,8 @@ export class ImageFinder {
             this.DOM.btnDelete.disabled = true;
         }
 
+        this.#updateOpenDownloadFolderButton();
+
         return selectedItem;
     }
 
@@ -952,6 +1034,7 @@ export class ImageFinder {
     #updateImageListState() {
         this.DOM.btnSaveAll.disabled = this.isSavingAll || this.images.size === 0;
         this.DOM.btnClear.disabled = this.images.size === 0;
+        this.#updateOpenDownloadFolderButton();
         this.#updateLED();
     }
 
@@ -1156,6 +1239,75 @@ export class ImageFinder {
 
     #updateLED() {
         this.DOM.divLED.textContent = this.images.size;
+    }
+
+    #trackDownload(imageId, downloadId) {
+        if (!imageId || !Number.isInteger(downloadId)) return;
+
+        this.#downloadStates.set(imageId, {
+            downloadId,
+            state: 'in_progress',
+            completed: false
+        });
+        this.#updateOpenDownloadFolderButton();
+        void this.#refreshDownloadState(imageId, downloadId);
+    }
+
+    async #refreshDownloadState(imageId, downloadId) {
+        try {
+            const downloads = await window.chrome.downloads.search({id: downloadId});
+            this.#setDownloadState(imageId, downloadId, downloads[0]?.state ?? 'failed');
+        } catch (error) {
+            console.warn('Cannot read download status:', error);
+            this.#setDownloadState(imageId, downloadId, 'failed');
+        }
+    }
+
+    #handleDownloadChanged(delta) {
+        const state = delta?.state?.current;
+        if (!Number.isInteger(delta?.id) || !state) return;
+
+        this.#downloadStates.forEach((download, imageId) => {
+            if (download.downloadId === delta.id) {
+                this.#setDownloadState(imageId, delta.id, state);
+            }
+        });
+    }
+
+    #setDownloadState(imageId, downloadId, state) {
+        const download = this.#downloadStates.get(imageId);
+        if (!download || download.downloadId !== downloadId) return;
+
+        const completed = download.completed === true || state === 'complete';
+        this.#downloadStates.set(imageId, {
+            ...download,
+            state,
+            completed
+        });
+
+        const item = this.listItems.find(li => li.dataset.imageId === imageId);
+        if (completed) item?.classList.add('saved');
+        if (this.selectedItem === item) {
+            this.DOM.btnDownload.disabled = this.downloadButtonState && completed;
+        }
+        this.#updateOpenDownloadFolderButton();
+    }
+
+    #updateOpenDownloadFolderButton() {
+        const button = this.DOM.btnOpenDownloadFolder;
+        if (!button) return;
+
+        const imageId = this.selectedItem?.dataset.imageId;
+        const download = imageId ? this.#downloadStates.get(imageId) : null;
+        button.disabled = !(
+            Number.isInteger(download?.downloadId) && download.completed === true
+        );
+    }
+
+    #finalizeDeepScanUI(scanGeneration) {
+        if (!this.#isCurrentScan(scanGeneration) || this.#activityCounts.deepScan > 0) return;
+
+        this.#updateLEDActivity();
     }
 
     #updateSortButtons() {

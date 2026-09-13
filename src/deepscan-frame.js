@@ -22,11 +22,45 @@
     const sendReady = (scan) => {
         sendToHost({action: 'ready', scanId: scan.scanId, token: scan.token});
     };
-    const sendHiddenDeepScanEvent = (message) => chrome.runtime.sendMessage({
-        target: HIDDEN_DEEP_SCAN_TARGET,
-        source: 'hidden-deepscan-host',
-        ...message
-    }).catch(() => undefined);
+    const sendHiddenDeepScanEvent = async (message) => {
+        const isCompletion = message?.action === 'complete';
+
+        if (isCompletion) {
+            console.info(
+                '[DeepScan COMPLETE TRACE] host-send-start',
+                `scanId=${message.scanId}`,
+                `status=${message.status}`
+            );
+        }
+
+        try {
+            const response = await chrome.runtime.sendMessage({
+                target: HIDDEN_DEEP_SCAN_TARGET,
+                source: 'hidden-deepscan-host',
+                ...message
+            });
+            if (response?.success !== true) {
+                throw new Error('Hidden DeepScan background acknowledgement failed');
+            }
+            if (isCompletion) {
+                console.info(
+                    '[DeepScan COMPLETE TRACE] host-send-success',
+                    `scanId=${message.scanId}`,
+                    `status=${message.status}`
+                );
+            }
+            return true;
+        } catch (error) {
+            if (isCompletion) {
+                console.error(
+                    '[DeepScan COMPLETE TRACE] host-send-error',
+                    `scanId=${message.scanId}`,
+                    `error=${getDiagnosticErrorMessage(error)}`
+                );
+            }
+            return false;
+        }
+    };
     const getSafeLocation = (location) => {
         try {
             return `${location.origin}${location.pathname}`;
@@ -351,6 +385,12 @@
                     });
                 }
             });
+            console.info(
+                '[DeepScan COMPLETE TRACE] hidden-return',
+                `scanId=${scan.scanId}`,
+                `status=${result.status}`,
+                `endReason=${result.endReason}`
+            );
             completeHiddenDeepScanFrame(scan, result.status, null, result.endReason);
         } catch (error) {
             sendHiddenDeepScanFrameError(scan, 'initialization', error);
@@ -377,21 +417,35 @@
             scan.cancelled && message.action !== 'complete'
                 ? undefined
                 : sendHiddenDeepScanEvent(message)
-        ).catch(() => undefined);
+        ).catch(() => false);
         return scan.eventQueue;
     };
-    const finishHiddenDeepScanHost = (scan, status, reason = null) => {
+    const finishHiddenDeepScanHost = async (scan, status, reason = null, endReason = null) => {
         if (!scan || scan.finished) return;
 
         scan.finished = true;
         scan.cancelled = status === 'cancelled';
-        clearHiddenDeepScanHost(scan);
-        void queueHiddenDeepScanEvent(scan, {
-            action: 'complete',
-            scanId: scan.scanId,
-            status,
-            ...(typeof reason === 'string' && reason ? {reason} : {})
-        });
+        console.info(
+            '[DeepScan COMPLETE TRACE] host-queue-enter',
+            `scanId=${scan.scanId}`,
+            `status=${status}`
+        );
+        try {
+            await queueHiddenDeepScanEvent(scan, {
+                action: 'complete',
+                scanId: scan.scanId,
+                status,
+                ...(typeof reason === 'string' && reason ? {reason} : {}),
+                ...(typeof endReason === 'string' && endReason ? {endReason} : {})
+            });
+        } finally {
+            console.info(
+                '[DeepScan COMPLETE TRACE] host-cleanup-start',
+                `scanId=${scan.scanId}`,
+                `status=${status}`
+            );
+            clearHiddenDeepScanHost(scan);
+        }
     };
     const getHiddenDeepScanHandshakeTimeoutReason = (scan) =>
         scan.frameLoadCount > 0
@@ -596,17 +650,18 @@
                 return;
             }
             if (data.action === 'complete') {
-                scan.finished = true;
-                clearHiddenDeepScanHost(scan);
-                void queueHiddenDeepScanEvent(scan, {
-                    action: 'complete',
-                    scanId: scan.scanId,
-                    status: data.status,
-                    ...(typeof data.reason === 'string' && data.reason ? {reason: data.reason} : {}),
-                    ...(typeof data.endReason === 'string' && data.endReason
-                        ? {endReason: data.endReason}
-                        : {})
-                });
+                console.info(
+                    '[DeepScan COMPLETE TRACE] frame-forward',
+                    `scanId=${scan.scanId}`,
+                    `status=${data.status}`,
+                    'hostQueue=scheduled'
+                );
+                void finishHiddenDeepScanHost(
+                    scan,
+                    data.status,
+                    data.reason,
+                    data.endReason
+                );
             }
         };
         scan.onFrameLoad = () => {

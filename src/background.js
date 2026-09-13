@@ -362,24 +362,101 @@ async function sendOffscreenMessage(action, payload = {}) {
     return response;
 }
 
-async function sendDeepScanClientMessage(message) {
+function getDeepScanClientState(job) {
+    const clientId = job?.popupClientId ?? null;
+    const port = clientId ? popupDeepScanPorts.get(clientId) : null;
+
+    return {
+        clientId,
+        clientFound: Boolean(port),
+        // A port is removed from the map synchronously by its disconnect listener.
+        portConnected: Boolean(clientId && popupDeepScanPorts.get(clientId) === port),
+        queueAvailable: Boolean(job?.clientEventQueue && typeof job.clientEventQueue.then === 'function'),
+        queuePending: job?.clientQueuePending ?? 0
+    };
+}
+
+function logDeepScanClientState(job) {
+    const state = getDeepScanClientState(job);
+
+    console.info(
+        '[DeepScan COMPLETE TRACE] background-client-state',
+        `scanId=${job.scanId}`,
+        `clientId=${state.clientId ?? 'none'}`,
+        `clientFound=${state.clientFound}`,
+        `portConnected=${state.portConnected}`,
+        `queueAvailable=${state.queueAvailable}`,
+        `queuePending=${state.queuePending}`
+    );
+
+    return state;
+}
+
+async function sendDeepScanClientMessage(job, message) {
+    const isCompletion = message?.action === 'complete' && message.status === 'completed';
+    const clientId = job?.popupClientId ?? null;
+
+    if (isCompletion) {
+        console.info(
+            '[DeepScan COMPLETE TRACE] background-client-send-start',
+            `scanId=${job.scanId}`,
+            `clientId=${clientId ?? 'none'}`
+        );
+        if (clientId && !popupDeepScanPorts.has(clientId)) {
+            console.warn(
+                '[DeepScan COMPLETE TRACE] background-client-send-error',
+                `scanId=${job.scanId}`,
+                `clientId=${clientId}`,
+                'error=POPUP_CLIENT_MISSING'
+            );
+            return false;
+        }
+    }
+
     try {
-        await chrome.runtime.sendMessage({
+        const response = await chrome.runtime.sendMessage({
             target: ISOLATED_DEEP_SCAN_TARGET,
             source: 'background',
-            ...message
+            ...message,
+            ...(clientId ? {popupClientId: clientId} : {})
         });
-    } catch {
+
+        if (isCompletion && response?.success !== true) {
+            throw new Error('DEEP_SCAN_CLIENT_ACK_MISSING');
+        }
+
+        if (isCompletion) {
+            console.info(
+                '[DeepScan COMPLETE TRACE] background-client-send-success',
+                `scanId=${job.scanId}`,
+                `clientId=${clientId ?? 'none'}`
+            );
+        }
+        return true;
+    } catch (error) {
+        if (isCompletion) {
+            console.warn(
+                '[DeepScan COMPLETE TRACE] background-client-send-error',
+                `scanId=${job.scanId}`,
+                `clientId=${clientId ?? 'none'}`,
+                `error=${getErrorMessage(error)}`
+            );
+        }
         // The popup may already be closed; the isolated job is intentionally not persistent.
+        return false;
     }
 }
 
 function queueDeepScanClientMessage(job, message) {
     if (!job || job.cancelled) return Promise.resolve();
 
+    job.clientQueuePending = (job.clientQueuePending ?? 0) + 1;
     job.clientEventQueue = (job.clientEventQueue ?? Promise.resolve())
-        .then(() => job.cancelled ? undefined : sendDeepScanClientMessage(message))
-        .catch(() => undefined);
+        .then(() => job.cancelled ? undefined : sendDeepScanClientMessage(job, message))
+        .catch(() => undefined)
+        .finally(() => {
+            job.clientQueuePending = Math.max(0, (job.clientQueuePending ?? 1) - 1);
+        });
     return job.clientEventQueue;
 }
 
@@ -542,6 +619,13 @@ function handleHiddenDeepScanEvent(event) {
     }
     if (event.action !== 'complete') return;
 
+    console.info(
+        '[DeepScan COMPLETE TRACE] background-received',
+        `scanId=${job.scanId}`,
+        `status=${event.status}`,
+        `clientId=${isolatedJob.popupClientId ?? 'none'}`
+    );
+
     if (event.status === 'unavailable' && isHiddenDeepScanFrameUnavailableReason(event.reason) &&
         job.allowProtectedDeepScan && !job.protectedFrameRuleAttempted) {
         job.protectedFrameRuleAttempted = true;
@@ -579,14 +663,31 @@ async function finishIsolatedDeepScan(job, status, reason = null) {
     if (!['completed', 'cancelled'].includes(status)) {
         logIsolatedDeepScanFailure(job, status, reason);
     }
+    if (status === 'completed') {
+        logDeepScanClientState(job);
+        console.info(
+            '[DeepScan COMPLETE TRACE] background-queue-start',
+            `scanId=${job.scanId}`,
+            `clientId=${job.popupClientId ?? 'none'}`,
+            `queuePending=${job.clientQueuePending ?? 0}`
+        );
+    }
     await job.clientEventQueue?.catch(() => undefined);
-    await sendDeepScanClientMessage({
+    const delivered = await sendDeepScanClientMessage(job, {
         action: 'complete',
         scanId: job.scanId,
         url: job.url,
         status,
         ...(typeof reason === 'string' ? {reason} : {})
     });
+    console.info(
+        '[DeepScan COMPLETE TRACE] background-forward',
+        `scanId=${job.scanId}`,
+        `status=${status}`,
+        `clientId=${job.popupClientId ?? 'none'}`,
+        'clientQueue=drained',
+        `delivered=${delivered}`
+    );
 }
 
 async function startIsolatedDeepScanHost(job) {
@@ -621,7 +722,7 @@ function handleIsolatedDeepScanHostEvent(event) {
 
     if (!isActiveJobEvent) return;
     if (event.action === 'batch' && Array.isArray(event.candidates)) {
-        void sendDeepScanClientMessage({
+        void sendDeepScanClientMessage(job, {
             action: 'batch',
             scanId: job.scanId,
             url: job.url,
@@ -698,7 +799,7 @@ async function cancelIsolatedDeepScan(scanId = null, endReason = 'cancelled') {
     }
 
     await job.clientEventQueue?.catch(() => undefined);
-    await sendDeepScanClientMessage({
+    await sendDeepScanClientMessage(job, {
         action: 'complete',
         scanId: job.scanId,
         url: job.url,
@@ -734,7 +835,8 @@ async function startIsolatedDeepScan(request) {
         protectedFrameRuleAttempted: false,
         cancelled: false,
         errorLogged: false,
-        clientEventQueue: Promise.resolve()
+        clientEventQueue: Promise.resolve(),
+        clientQueuePending: 0
     };
     activeIsolatedDeepScan = job;
 
@@ -1065,6 +1167,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.target === HIDDEN_DEEP_SCAN_TARGET) {
         if (message.source === 'hidden-deepscan-host') {
             handleHiddenDeepScanEvent(message);
+            sendResponse({success: true});
         }
         return undefined;
     }

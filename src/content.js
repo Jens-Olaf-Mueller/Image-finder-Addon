@@ -661,7 +661,9 @@ export async function scanPhotoSwipeImages({
     processedTargetSources = new Set(),
     signal = null,
     onDiagnostic = null,
+    onCarouselDiagnostic = null,
     onActivity = null,
+    traverseCarousel = false,
     abortKey = null
 } = {}) {
     const abortRegistryKey = '__imageFinderPhotoSwipeAbortKeys';
@@ -671,14 +673,17 @@ export async function scanPhotoSwipeImages({
     const getActiveSlide = (photoSwipe) => photoSwipe?.querySelector(
         '.pswp__item[aria-hidden="false"]'
     ) ?? photoSwipe?.querySelector('.pswp__item:not([aria-hidden="true"])') ?? null;
+    const getPhotoSwipeImages = (photoSwipe) => Array.from(
+        photoSwipe?.querySelectorAll?.('.pswp__item .pswp__img, .pswp__item img') ?? []
+    ).flatMap((element) => {
+        if (element instanceof HTMLImageElement) return [element];
+        return Array.from(element.querySelectorAll('img'));
+    }).filter((image, index, images) => images.indexOf(image) === index);
     const getSlideImages = (photoSwipe) => {
         const slide = getActiveSlide(photoSwipe);
         if (!slide) return [];
 
-        return Array.from(slide.querySelectorAll('.pswp__img, img')).flatMap((element) => {
-            if (element instanceof HTMLImageElement) return [element];
-            return Array.from(element.querySelectorAll('img'));
-        }).filter((image, index, images) => images.indexOf(image) === index);
+        return getPhotoSwipeImages(photoSwipe).filter((image) => slide.contains(image));
     };
     const getReadyActiveSlideImage = (photoSwipe) => {
         if (!photoSwipe?.matches('.pswp.pswp--open')) return null;
@@ -775,7 +780,9 @@ export async function scanPhotoSwipeImages({
     const getSrcsetURLs = (srcset) => typeof srcset === 'string'
         ? srcset.split(',').map((entry) => getURL(entry.trim().split(/\s+/, 1)[0])).filter(Boolean)
         : [];
-    const collectSlideCandidates = (photoSwipe) => getSlideImages(photoSwipe).flatMap((image) => {
+    const collectPhotoSwipeCandidates = (photoSwipe, {includePreloaded = false} = {}) => (
+        includePreloaded ? getPhotoSwipeImages(photoSwipe) : getSlideImages(photoSwipe)
+    ).flatMap((image) => {
         const currentSrc = getURL(image.currentSrc);
         const sourceURLs = [
             currentSrc,
@@ -871,8 +878,333 @@ export async function scanPhotoSwipeImages({
     const reportActivity = () => {
         if (typeof onActivity === 'function') onActivity();
     };
+    const reportCarousel = (event, ...details) => {
+        if (typeof onCarouselDiagnostic === 'function') {
+            onCarouselDiagnostic(event, ...details);
+        }
+    };
 
     const candidates = [];
+    const getSlideStateIdentity = (readySlide) => {
+        const {slide, image} = readySlide ?? {};
+        const getAttributeValue = (element, attributeName) => {
+            const value = element?.getAttribute?.(attributeName)?.trim();
+            return value || null;
+        };
+        const index = [
+            'data-pswp-index',
+            'data-slide-index',
+            'data-index',
+            'aria-posinset'
+        ].map((attributeName) => getAttributeValue(slide, attributeName) ??
+            getAttributeValue(image, attributeName)).find(Boolean);
+        const label = getAttributeValue(slide, 'aria-label') ??
+            getAttributeValue(image, 'aria-label');
+        const snapshot = getImageSnapshot(image);
+        const source = snapshot.currentSrc ?? snapshot.src;
+        const identityParts = [
+            index ? 'index:' + index : null,
+            label ? 'label:' + label : null,
+            source ? 'source:' + source : null
+        ].filter(Boolean);
+
+        return identityParts.length > 0 ? identityParts.join('|') : null;
+    };
+    const getCanonicalCarouselStateKey = (carousel, key) => {
+        const visited = new Set();
+        let canonicalKey = key;
+
+        while (carousel.stateAliases.has(canonicalKey) && !visited.has(canonicalKey)) {
+            visited.add(canonicalKey);
+            canonicalKey = carousel.stateAliases.get(canonicalKey);
+        }
+        return canonicalKey;
+    };
+    const getCarouselState = (photoSwipe, carousel) => {
+        const readySlide = getReadyActiveSlideImage(photoSwipe);
+        const rawKey = getSlideStateIdentity(readySlide);
+        if (!readySlide || !rawKey) return null;
+
+        return {
+            readySlide,
+            rawKey,
+            key: getCanonicalCarouselStateKey(carousel, rawKey)
+        };
+    };
+    const getCarouselStateLabel = (carousel, key) => {
+        if (!carousel.stateLabels.has(key)) {
+            carousel.stateLabels.set(key, 'state#' + carousel.stateLabels.size);
+        }
+        return carousel.stateLabels.get(key);
+    };
+    const isCarouselControlUsable = (control) => {
+        if (!control || !control.isConnected ||
+            control.hasAttribute?.('disabled') ||
+            control.getAttribute?.('aria-disabled') === 'true' ||
+            control.hasAttribute?.('hidden') ||
+            /(?:^|\s)disabled(?:\s|$)/i.test(control.className ?? '')) {
+            return false;
+        }
+
+        try {
+            return getComputedStyle(control).display !== 'none';
+        } catch {
+            return false;
+        }
+    };
+    const getCarouselControl = (photoSwipe, direction) => {
+        const explicitSelector = direction === 'forward'
+            ? [
+                '.pswp__button--arrow--next',
+                '[data-pswp-next]',
+                '[data-pswp-action="next"]',
+                '[data-carousel-next]',
+                '[data-slide-next]',
+                '[rel~="next"]'
+            ]
+            : [
+                '.pswp__button--arrow--prev',
+                '.pswp__button--arrow--previous',
+                '[data-pswp-prev]',
+                '[data-pswp-previous]',
+                '[data-pswp-action="prev"]',
+                '[data-pswp-action="previous"]',
+                '[data-carousel-prev]',
+                '[data-carousel-previous]',
+                '[data-slide-prev]',
+                '[data-slide-previous]',
+                '[rel~="prev"]'
+            ];
+        const semanticPattern = direction === 'forward'
+            ? /\b(?:next|forward)\b/i
+            : /\b(?:previous|prev|back)\b/i;
+        const explicitControl = explicitSelector.map((selector) =>
+            photoSwipe.querySelector(selector)
+        ).find(isCarouselControlUsable);
+        if (explicitControl) return explicitControl;
+
+        return Array.from(photoSwipe.querySelectorAll('button, [role="button"], a')).find(
+            (control) => isCarouselControlUsable(control) && semanticPattern.test([
+                control.getAttribute('aria-label'),
+                control.getAttribute('title'),
+                control.textContent
+            ].filter(Boolean).join(' '))
+        ) ?? null;
+    };
+    const collectCarouselSources = (photoSwipe, carousel, stateLabel) => {
+        const availableCandidates = collectPhotoSwipeCandidates(photoSwipe, {
+            includePreloaded: true
+        });
+        const sourceURLs = new Set(availableCandidates.map((candidate) => candidate.url));
+        let newSources = 0;
+
+        sourceURLs.forEach((url) => {
+            if (!carousel.knownSources.has(url)) {
+                carousel.knownSources.add(url);
+                newSources += 1;
+            }
+            processedTargetSources.add(url);
+        });
+        candidates.push(...availableCandidates);
+        reportCarousel(
+            'CAROUSEL',
+            'state=' + stateLabel,
+            'preloadSources=' + sourceURLs.size,
+            'preloadNew=' + newSources
+        );
+        return newSources;
+    };
+    const processCarouselState = async (photoSwipe, carousel, state, direction) => {
+        const stateLabel = getCarouselStateLabel(carousel, state.key);
+        const alreadyVisited = carousel.visitedStates.has(state.key);
+
+        reportCarousel(
+            'CAROUSEL',
+            'type=' + carousel.type,
+            'state=' + stateLabel,
+            'direction=' + direction,
+            'source=' + (alreadyVisited ? 'known' : 'new')
+        );
+
+        const sourcesBeforeZoom = collectCarouselSources(photoSwipe, carousel, stateLabel);
+        if (alreadyVisited) return {alreadyVisited, newSources: sourcesBeforeZoom};
+
+        carousel.visitedStates.add(state.key);
+        const beforeZoom = getImageSnapshot(state.readySlide.image);
+        try {
+            state.readySlide.image.click();
+            reportActivity();
+        } catch {
+            if (!isAborted()) reportZoom(imageDimensions(beforeZoom) + ' no-upgrade');
+            return {alreadyVisited: false, newSources: sourcesBeforeZoom};
+        }
+
+        const zoomedSlide = await waitFor(() => {
+            const activeSlide = getReadyActiveSlideImage(photoSwipe);
+            if (!activeSlide) return null;
+
+            const afterZoom = getImageSnapshot(activeSlide.image);
+            return didZoomStateChange(beforeZoom, afterZoom, activeSlide.photoSwipe)
+                ? {activeSlide, afterZoom}
+                : null;
+        }, 3000);
+        if (isAborted()) return {alreadyVisited: false, newSources: sourcesBeforeZoom};
+        if (!zoomedSlide) {
+            reportZoom(imageDimensions(beforeZoom) + ' no-upgrade');
+            return {alreadyVisited: false, newSources: sourcesBeforeZoom};
+        }
+
+        const afterState = getCarouselState(photoSwipe, carousel);
+        if (afterState && afterState.rawKey !== state.rawKey) {
+            carousel.stateAliases.set(afterState.rawKey, state.key);
+        }
+        const sourcesAfterZoom = collectCarouselSources(photoSwipe, carousel, stateLabel);
+        const afterZoom = zoomedSlide.afterZoom;
+        const resolutionImproved = afterZoom.naturalWidth > beforeZoom.naturalWidth ||
+            afterZoom.naturalHeight > beforeZoom.naturalHeight;
+        reportZoom(resolutionImproved
+            ? imageDimensions(beforeZoom) + ' -> ' + imageDimensions(afterZoom) + ' replaced'
+            : imageDimensions(beforeZoom) + ' no-upgrade');
+
+        return {
+            alreadyVisited: false,
+            newSources: sourcesBeforeZoom + sourcesAfterZoom
+        };
+    };
+    const traversePhotoSwipeCarousel = async (photoSwipe) => {
+        const carousel = {
+            type: 'unknown',
+            knownSources: new Set(),
+            stateAliases: new Map(),
+            stateLabels: new Map(),
+            visitedStates: new Set(),
+            transitions: {
+                forward: new Set(),
+                backward: new Set()
+            }
+        };
+        const initialState = await waitFor(() => getCarouselState(photoSwipe, carousel), 3000);
+        if (!initialState || isAborted()) return;
+
+        const initialStateLabel = getCarouselStateLabel(carousel, initialState.key);
+        reportCarousel(
+            'CAROUSEL',
+            'discovered',
+            'type=unknown',
+            'state=' + initialStateLabel
+        );
+        await processCarouselState(photoSwipe, carousel, initialState, 'initial');
+        if (isAborted()) return;
+
+        const traverseDirection = async (direction) => {
+            let successfulTransitions = 0;
+
+            while (!isAborted()) {
+                const beforeState = await waitFor(
+                    () => getCarouselState(photoSwipe, carousel),
+                    1000
+                );
+                if (!beforeState) {
+                    reportCarousel(
+                        'CAROUSEL EDGE',
+                        'direction=' + direction,
+                        'reason=active-slide-unavailable'
+                    );
+                    return {kind: 'edge', reason: 'active-slide-unavailable'};
+                }
+
+                const control = getCarouselControl(photoSwipe, direction);
+                if (!control) {
+                    reportCarousel(
+                        'CAROUSEL EDGE',
+                        'direction=' + direction,
+                        'reason=control-unavailable'
+                    );
+                    return {kind: 'edge', reason: 'control-unavailable'};
+                }
+
+                try {
+                    control.click();
+                    reportActivity();
+                } catch {
+                    reportCarousel(
+                        'CAROUSEL EDGE',
+                        'direction=' + direction,
+                        'reason=control-action-failed'
+                    );
+                    return {kind: 'edge', reason: 'control-action-failed'};
+                }
+
+                const nextState = await waitFor(() => {
+                    const state = getCarouselState(photoSwipe, carousel);
+                    return state && state.key !== beforeState.key ? state : null;
+                }, 3000);
+                if (isAborted()) return {kind: 'aborted'};
+                if (!nextState) {
+                    const stableControl = getCarouselControl(photoSwipe, direction);
+                    const reason = stableControl ? 'stable-state' : 'control-unavailable';
+                    reportCarousel(
+                        'CAROUSEL EDGE',
+                        'direction=' + direction,
+                        'reason=' + reason
+                    );
+                    return {kind: 'edge', reason};
+                }
+
+                successfulTransitions += 1;
+                const transitionKey = beforeState.key + '→' + nextState.key;
+                const knownState = carousel.visitedStates.has(nextState.key);
+                const repeatedTransition = carousel.transitions[direction].has(transitionKey);
+                carousel.transitions[direction].add(transitionKey);
+                const stateResult = await processCarouselState(
+                    photoSwipe,
+                    carousel,
+                    nextState,
+                    direction
+                );
+                if (isAborted()) return {kind: 'aborted'};
+
+                if (direction === 'forward' && knownState &&
+                    successfulTransitions > 0 && stateResult.newSources === 0) {
+                    carousel.type = 'cyclic';
+                    reportCarousel(
+                        'CAROUSEL END',
+                        'type=cyclic',
+                        'reason=cycle-complete',
+                        'states=' + carousel.visitedStates.size
+                    );
+                    return {kind: 'cycle', reason: 'cycle-complete'};
+                }
+
+                if (repeatedTransition && knownState && stateResult.newSources === 0) {
+                    reportCarousel(
+                        'CAROUSEL EDGE',
+                        'direction=' + direction,
+                        'reason=known-transition'
+                    );
+                    return {kind: 'edge', reason: 'known-transition'};
+                }
+            }
+
+            return {kind: 'aborted'};
+        };
+
+        const forward = await traverseDirection('forward');
+        if (forward.kind === 'aborted' || forward.kind === 'cycle') return;
+
+        const backward = await traverseDirection('backward');
+        if (backward.kind !== 'edge' || isAborted()) return;
+
+        carousel.type = 'finite';
+        reportCarousel(
+            'CAROUSEL END',
+            'type=finite',
+            'reason=both-edges-exhausted',
+            'forward=' + forward.reason,
+            'backward=' + backward.reason,
+            'states=' + carousel.visitedStates.size
+        );
+    };
     const targets = Array.from(document.querySelectorAll('[at-attr="media_locator"]'));
     for (const target of targets) {
         const targetSource = getTargetSourceKey(target);
@@ -894,6 +1226,10 @@ export async function scanPhotoSwipeImages({
             if (!photoSwipe) continue;
 
             reportActivity();
+            if (traverseCarousel) {
+                await traversePhotoSwipeCarousel(photoSwipe);
+                continue;
+            }
 
             const readySlide = await waitFor(
                 () => getReadyActiveSlideImage(findOpenPhotoSwipe()),
@@ -902,13 +1238,13 @@ export async function scanPhotoSwipeImages({
             if (isAborted()) break;
             if (!readySlide) continue;
 
-            candidates.push(...collectSlideCandidates(readySlide.photoSwipe));
+            candidates.push(...collectPhotoSwipeCandidates(readySlide.photoSwipe));
             const beforeZoom = getImageSnapshot(readySlide.image);
             try {
                 readySlide.image.click();
                 reportActivity();
             } catch {
-                if (!isAborted()) reportZoom(`${imageDimensions(beforeZoom)} no-upgrade`);
+                if (!isAborted()) reportZoom(imageDimensions(beforeZoom) + ' no-upgrade');
                 continue;
             }
 
@@ -923,17 +1259,17 @@ export async function scanPhotoSwipeImages({
             }, 3000);
             if (isAborted()) break;
             if (!zoomedSlide) {
-                reportZoom(`${imageDimensions(beforeZoom)} no-upgrade`);
+                reportZoom(imageDimensions(beforeZoom) + ' no-upgrade');
                 continue;
             }
 
-            candidates.push(...collectSlideCandidates(zoomedSlide.activeSlide.photoSwipe));
+            candidates.push(...collectPhotoSwipeCandidates(zoomedSlide.activeSlide.photoSwipe));
             const afterZoom = zoomedSlide.afterZoom;
             const resolutionImproved = afterZoom.naturalWidth > beforeZoom.naturalWidth ||
                 afterZoom.naturalHeight > beforeZoom.naturalHeight;
             reportZoom(resolutionImproved
-                ? `${imageDimensions(beforeZoom)} -> ${imageDimensions(afterZoom)} replaced`
-                : `${imageDimensions(beforeZoom)} no-upgrade`);
+                ? imageDimensions(beforeZoom) + ' -> ' + imageDimensions(afterZoom) + ' replaced'
+                : imageDimensions(beforeZoom) + ' no-upgrade');
         } catch {
             // One page-owned PhotoSwipe target must not stop the remaining DeepScan.
         } finally {
@@ -1761,9 +2097,14 @@ export async function runHiddenFrameDeepScan({
             processedTargetSources: processedPhotoSwipeTargetSources,
             signal,
             onDiagnostic: (message) => console.info('[DeepScan ZOOM]', message),
+            onCarouselDiagnostic: (event, ...details) => console.info(
+                `[DeepScan ${event}]`,
+                ...details
+            ),
             onActivity: () => {
                 photoSwipeActivityCount += 1;
-            }
+            },
+            traverseCarousel: true
         });
         const newCandidates = [];
         const photoSwipeURLs = new Set(photoSwipeCandidates.map((candidate) => candidate?.url));
