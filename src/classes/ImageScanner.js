@@ -217,6 +217,7 @@ export default class ImageScanner {
         }
 
         const filters = this.settings.get('filters') ?? {};
+        const imageFilter = this.filter;
         const allowProtectedDeepScan = this.settings.get(
             'common',
             'allowProtectedDeepScan',
@@ -264,6 +265,7 @@ export default class ImageScanner {
                     visibleNewURLs: result.visibleNewURLs ?? 0,
                     visibleWinnersFromBatch: result.visibleWinnersFromBatch ?? 0,
                     notVisibleAfterFiltering: result.notVisibleAfterFiltering ?? 0,
+                    candidatePipelineMs: result.candidatePipelineMs ?? 0,
                     visibleImages: Number.isFinite(result.visibleImages)
                         ? result.visibleImages
                         : 'unavailable'
@@ -273,6 +275,7 @@ export default class ImageScanner {
         const processCandidates = async (foundCandidates, diagnostic = null) => {
             if (session.cancelled || session.controller.signal.aborted) return;
 
+            const pipelineStartedAt = performance.now();
             const newCandidates = [];
             for (const candidate of foundCandidates ?? []) {
                 if (typeof candidate?.url !== 'string' || candidatesByURL.has(candidate.url)) continue;
@@ -282,7 +285,8 @@ export default class ImageScanner {
             }
             if (newCandidates.length === 0 || typeof onCandidates !== 'function') {
                 sendPipelineDiagnostic(diagnostic, {
-                    scannerNewURLs: 0
+                    scannerNewURLs: 0,
+                    candidatePipelineMs: Math.round(performance.now() - pipelineStartedAt)
                 });
                 return;
             }
@@ -291,7 +295,8 @@ export default class ImageScanner {
             if (diagnostic && result && typeof result === 'object') {
                 sendPipelineDiagnostic(diagnostic, {
                     scannerNewURLs: newCandidates.length,
-                    ...result
+                    ...result,
+                    candidatePipelineMs: Math.round(performance.now() - pipelineStartedAt)
                 });
             }
 
@@ -389,6 +394,8 @@ export default class ImageScanner {
                     url: scanContext.url,
                     tabId: scanContext.tabId,
                     ignoreHiddenImages: filters.ignoreHiddenImages === true,
+                    minimumImageWidth: imageFilter.minWidth,
+                    minimumImageHeight: imageFilter.minHeight,
                     allowProtectedDeepScan,
                     ...(this.#deepScanClientId ? {popupClientId: this.#deepScanClientId} : {})
                 });

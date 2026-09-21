@@ -467,7 +467,7 @@ export const DEFAULT_SETTINGS = {
         allowProtectedDeepScan: false,
         scanOnSettingsChanged: true,
         saveSettingsForURL: false,
-        keepSettingsForDays: 30
+        keepSettingsForDays: 365
     },
     downloads: {
         downloadFolder: 'prompt',

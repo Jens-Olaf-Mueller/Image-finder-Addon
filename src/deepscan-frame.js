@@ -7,7 +7,11 @@
     const HIDDEN_DEEP_SCAN_HYDRATION_POLL_INTERVAL_MS = 100;
     const HIDDEN_DEEP_SCAN_HYDRATION_STABLE_MS = 2500;
     const HIDDEN_DEEP_SCAN_HYDRATION_MAX_WAIT_MS = 10000;
-    const HIDDEN_DEEP_SCAN_ACTIVE_CONTAINER_COLOR = '#ff634733';
+    const HIDDEN_DEEP_SCAN_ACTIVE_CONTAINER_COLORS = [
+        '#ff634733',
+        '#90ee9040',
+        '#a5cef255'
+    ];
     const extensionOrigin = new URL(chrome.runtime.getURL('/')).origin;
     let activeScan = null;
     let activeHiddenDeepScanHost = null;
@@ -164,25 +168,30 @@
         if (!marker) return;
 
         const {element, value, priority} = marker;
-        if (element?.isConnected && element.style.getPropertyValue('background-color') ===
-            HIDDEN_DEEP_SCAN_ACTIVE_CONTAINER_COLOR &&
-            element.style.getPropertyPriority('background-color') === 'important') {
+        if (element?.isConnected) {
             if (value) element.style.setProperty('background-color', value, priority);
             else element.style.removeProperty('background-color');
         }
         scan.visibleContainerMarker = null;
     };
-    const setVisibleContainerMarker = (scan, descriptor) => {
+    const setVisibleContainerMarker = (scan, descriptor, colorIndex = 0) => {
         clearVisibleContainerMarker(scan);
         const element = getElementFromBodyPath(descriptor);
         if (!element) return;
+        const index = Number.isInteger(colorIndex) ? colorIndex : 0;
+        const color = HIDDEN_DEEP_SCAN_ACTIVE_CONTAINER_COLORS[
+            ((index % HIDDEN_DEEP_SCAN_ACTIVE_CONTAINER_COLORS.length) +
+                HIDDEN_DEEP_SCAN_ACTIVE_CONTAINER_COLORS.length) %
+                HIDDEN_DEEP_SCAN_ACTIVE_CONTAINER_COLORS.length
+        ];
 
         scan.visibleContainerMarker = {
             element,
             value: element.style.getPropertyValue('background-color'),
-            priority: element.style.getPropertyPriority('background-color')
+            priority: element.style.getPropertyPriority('background-color'),
+            color
         };
-        element.style.setProperty('background-color', HIDDEN_DEEP_SCAN_ACTIVE_CONTAINER_COLOR, 'important');
+        element.style.setProperty('background-color', color, 'important');
     };
     const sendHiddenDeepScanFrameMessage = (scan, message) => {
         window.parent.postMessage({
@@ -368,6 +377,8 @@
             sendHiddenDeepScanFrameState(scan, 'before-start');
             const result = await runHiddenFrameDeepScan({
                 ignoreHiddenImages: message.ignoreHiddenImages === true,
+                minimumImageWidth: message.minimumImageWidth,
+                minimumImageHeight: message.minimumImageHeight,
                 signal: scan.controller.signal,
                 onBatch: async (candidates, diagnostic = null) => {
                     if (activeHiddenDeepScanFrame !== scan || scan.controller.signal.aborted) return;
@@ -378,10 +389,13 @@
                         ...(diagnostic ? {diagnostic} : {})
                     });
                 },
-                onActiveScrollContainer: (container) => {
+                onActiveScrollContainer: (container, colorIndex = 0) => {
                     sendHiddenDeepScanFrameMessage(scan, {
                         action: 'active-container',
-                        ...(container ? {container: getElementPathFromBody(container)} : {})
+                        ...(container ? {
+                            container: getElementPathFromBody(container),
+                            colorIndex
+                        } : {})
                     });
                 }
             });
@@ -503,7 +517,9 @@
                 action: 'start',
                 scanId: scan.scanId,
                 token: scan.token,
-                ignoreHiddenImages: scan.ignoreHiddenImages === true
+                ignoreHiddenImages: scan.ignoreHiddenImages === true,
+                minimumImageWidth: scan.minimumImageWidth,
+                minimumImageHeight: scan.minimumImageHeight
             }, scan.frameOrigin);
         } catch {
             logHiddenError('initialization', 'HIDDEN_FRAME_START_FAILED');
@@ -554,6 +570,8 @@
             token: message.token,
             frameOrigin,
             ignoreHiddenImages: message.ignoreHiddenImages === true,
+            minimumImageWidth: message.minimumImageWidth,
+            minimumImageHeight: message.minimumImageHeight,
             wrapper,
             frame,
             finished: false,
@@ -618,7 +636,9 @@
             }
             if (scan.finished) return;
             if (data.action === 'active-container') {
-                if (data.container) setVisibleContainerMarker(scan, data.container);
+                if (data.container) {
+                    setVisibleContainerMarker(scan, data.container, data.colorIndex);
+                }
                 else clearVisibleContainerMarker(scan);
                 return;
             }

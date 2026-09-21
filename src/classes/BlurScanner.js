@@ -1,7 +1,8 @@
 import Heuristik from './Heuristik.js';
 
 const SQUARE_ASPECT_RATIO_TOLERANCE = 0.15;
-export const GLOBAL_LAPLACIAN_BLUR_THRESHOLD = 150;
+// export const GLOBAL_LAPLACIAN_BLUR_THRESHOLD = 150;
+export const GLOBAL_LAPLACIAN_BLUR_THRESHOLD = 75;
 export const BLUR_CLASSIFICATIONS = Object.freeze({
     blurred: 'blurred',
     sharp: 'sharp',

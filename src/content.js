@@ -5,18 +5,18 @@ export async function scanImages(
     mutationObserverOptions = null,
     includeLightboxSources = false
 ) {
-    const getURL = (value) => {
+    const getURL = (value, baseURI = document.baseURI) => {
         if (typeof value !== 'string' || !value.trim()) return null;
 
         try {
-            return new URL(value.trim(), document.baseURI).href;
+            return new URL(value.trim(), baseURI).href;
         } catch {
             return null;
         }
     };
 
-    const getImageURL = (value) => {
-        const url = getURL(value);
+    const getImageURL = (value, baseURI = document.baseURI) => {
+        const url = getURL(value, baseURI);
         if (!url) return null;
         if (/^(?:data:image\/|blob:)/i.test(url)) return url;
 
@@ -28,19 +28,39 @@ export async function scanImages(
         }
     };
 
-    const getPreferredSrcsetURL = (srcset) => {
+    const getSrcsetURLs = (srcset, baseURI = document.baseURI) => {
+        if (typeof srcset !== 'string' || !srcset.trim()) return [];
+
+        const singleDataImage = srcset.trim().match(
+            /^(data:image\/[^,]+,[^\s]+)(?:\s+(?:\d+w|\d*\.?\d+x))?$/i
+        );
+        if (singleDataImage) return [getURL(singleDataImage[1], baseURI)].filter(Boolean);
+
+        return srcset
+            .split(',')
+            .map((candidate) => {
+                const [value, descriptor = ''] = candidate.trim().split(/\s+/, 2);
+                const url = getURL(value, baseURI);
+
+                return url ? {url, descriptor} : null;
+            })
+            .filter((candidate) => candidate)
+            .map((candidate) => candidate.url);
+    };
+
+    const getPreferredSrcsetURL = (srcset, baseURI = document.baseURI) => {
         if (typeof srcset !== 'string' || !srcset.trim()) return null;
 
         const singleDataImage = srcset.trim().match(
             /^(data:image\/[^,]+,[^\s]+)(?:\s+(?:\d+w|\d*\.?\d+x))?$/i
         );
-        if (singleDataImage) return getURL(singleDataImage[1]);
+        if (singleDataImage) return getURL(singleDataImage[1], baseURI);
 
         const candidates = srcset
             .split(',')
             .map((candidate) => {
                 const [value, descriptor = ''] = candidate.trim().split(/\s+/, 2);
-                const url = getURL(value);
+                const url = getURL(value, baseURI);
 
                 return url ? {url, descriptor} : null;
             })
@@ -73,12 +93,35 @@ export async function scanImages(
         const picture = img.closest?.('picture');
         if (!picture) return [];
 
-        return Array.from(picture.querySelectorAll('source[srcset], source[data-srcset]'))
-            .map((source) => getPreferredSrcsetURL(
-                source.getAttribute('data-srcset') || source.getAttribute('srcset')
-            ))
-            .filter(Boolean);
+        return Array.from(picture.querySelectorAll('source')).flatMap((source) => [
+            ...getSrcsetURLs(source.getAttribute('srcset'), source.baseURI),
+            ...getSrcsetURLs(source.getAttribute('data-srcset'), source.baseURI),
+            ...getSrcsetURLs(source.getAttribute('data-lazy-srcset'), source.baseURI),
+            getURL(source.getAttribute('src'), source.baseURI),
+            getURL(source.getAttribute('data-src'), source.baseURI),
+            getURL(source.getAttribute('data-lazy-src'), source.baseURI)
+        ].filter(Boolean));
     };
+
+    const getOpenRoots = () => {
+        const roots = [document];
+        const seenRoots = new Set(roots);
+
+        for (let index = 0; index < roots.length; index += 1) {
+            roots[index].querySelectorAll?.('*').forEach((element) => {
+                if (element.shadowRoot && !seenRoots.has(element.shadowRoot)) {
+                    seenRoots.add(element.shadowRoot);
+                    roots.push(element.shadowRoot);
+                }
+            });
+        }
+
+        return roots;
+    };
+
+    const getDeepElements = (selector) => getOpenRoots().flatMap((root) =>
+        Array.from(root.querySelectorAll?.(selector) ?? [])
+    );
 
     const getBackgroundURLs = (bgImage) => {
         if (typeof bgImage !== 'string' || !bgImage || bgImage === 'none') return [];
@@ -155,7 +198,7 @@ export async function scanImages(
         if (!ignoreHiddenImages) return false;
 
         try {
-            for (let current = element; current; current = current.parentElement) {
+            for (let current = element; current;) {
                 const style = current === element && computedStyle
                     ? computedStyle
                     : getComputedStyle(current);
@@ -165,6 +208,8 @@ export async function scanImages(
                     style.visibility === 'collapse') {
                     return true;
                 }
+
+                current = current.parentElement ?? current.getRootNode?.().host ?? null;
             }
         } catch {
             return false;
@@ -188,12 +233,13 @@ export async function scanImages(
 
     const isBlurred = (element, computedStyle = null) => {
         try {
-            for (let current = element; current; current = current.parentElement) {
+            for (let current = element; current;) {
                 const style = current === element && computedStyle
                     ? computedStyle
                     : getComputedStyle(current);
 
                 if (hasNonZeroBlur(style.filter)) return true;
+                current = current.parentElement ?? current.getRootNode?.().host ?? null;
             }
         } catch {
             return false;
@@ -223,7 +269,7 @@ export async function scanImages(
     };
 
     const elements = includeSupplementarySources
-        ? Array.from(document.querySelectorAll('*'))
+        ? getDeepElements('*')
         : [];
     const backdropBlurElements = new Set();
 
@@ -315,20 +361,28 @@ export async function scanImages(
     ) => {
         if (!includeHiddenImages && isHidden(img)) return;
 
-        const currentSrc = getURL(img.currentSrc);
-        const src = getURL(img.getAttribute('src'));
-        const dataSrc = getURL(img.getAttribute('data-src'));
+        const currentSrc = getURL(img.currentSrc, img.baseURI);
+        const src = getURL(img.getAttribute('src'), img.baseURI);
+        const dataSrc = getURL(img.getAttribute('data-src'), img.baseURI);
         const dataSrcset = img.getAttribute('data-srcset');
-        const hasLazySource = Boolean(dataSrc || dataSrcset);
+        const dataLazySrc = getURL(img.getAttribute('data-lazy-src'), img.baseURI);
+        const dataLazySrcset = img.getAttribute('data-lazy-srcset');
+        const dataOriginal = getURL(img.getAttribute('data-original'), img.baseURI);
+        const dataOriginalSrc = getURL(img.getAttribute('data-original-src'), img.baseURI);
+        const hasLazySource = Boolean(dataSrc || dataSrcset || dataLazySrc || dataLazySrcset);
         const currentSrcLooksLikePlaceholder = hasLazySource && (!currentSrc || currentSrc === src);
 
         if (includeAllSources) {
             const imageSources = [
                 currentSrc,
                 src,
-                getPreferredSrcsetURL(img.getAttribute('srcset')),
+                ...getSrcsetURLs(img.getAttribute('srcset'), img.baseURI),
                 dataSrc,
-                getPreferredSrcsetURL(dataSrcset),
+                ...getSrcsetURLs(dataSrcset, img.baseURI),
+                dataLazySrc,
+                ...getSrcsetURLs(dataLazySrcset, img.baseURI),
+                dataOriginal,
+                dataOriginalSrc,
                 ...getPictureSourceURLs(img)
             ];
 
@@ -348,9 +402,10 @@ export async function scanImages(
 
         let url = currentSrc;
         if (currentSrcLooksLikePlaceholder) {
-            url = getPreferredSrcsetURL(dataSrcset) || dataSrc;
+            url = getPreferredSrcsetURL(dataLazySrcset, img.baseURI) || dataLazySrc ||
+                getPreferredSrcsetURL(dataSrcset, img.baseURI) || dataSrc;
         }
-        if (!url) url = getPreferredSrcsetURL(img.getAttribute('srcset')) || src;
+        if (!url) url = getPreferredSrcsetURL(img.getAttribute('srcset'), img.baseURI) || src;
         const dimensionsKnown = currentSrc && url === currentSrc;
         addCandidate(
             url,
@@ -365,6 +420,8 @@ export async function scanImages(
     const LIGHTBOX_SOURCE_ATTRIBUTE_NAMES = [
         'data-src',
         'data-srcset',
+        'data-lazy-src',
+        'data-lazy-srcset',
         'data-image',
         'data-image-src',
         'data-full',
@@ -372,6 +429,7 @@ export async function scanImages(
         'data-fullsize',
         'data-large',
         'data-original',
+        'data-original-src',
         'data-lightbox-src'
     ];
     const LIGHTBOX_MUTATION_ATTRIBUTE_NAMES = [
@@ -385,8 +443,11 @@ export async function scanImages(
     ];
 
     const addLightboxSource = (value, element, seenURLs, {srcset = false} = {}) => {
-        const url = getImageURL(srcset ? getPreferredSrcsetURL(value) : value);
-        addCandidate(url, 0, 0, 'linkedimages', element, seenURLs);
+        const urls = srcset
+            ? getSrcsetURLs(value, element?.baseURI)
+            : [getImageURL(value, element?.baseURI)];
+
+        urls.forEach((url) => addCandidate(url, 0, 0, 'linkedimages', element, seenURLs));
     };
 
     const collectLightboxDataSources = (element, seenURLs) => {
@@ -438,7 +499,8 @@ export async function scanImages(
             }
         });
 
-        return Array.from(ids, (id) => document.getElementById(id)).filter(Boolean);
+        return Array.from(ids, (id) => getDeepElements('*').find((element) => element.id === id))
+            .filter(Boolean);
     };
 
     const collectLightboxSources = (img, seenURLs = null) => {
@@ -618,11 +680,26 @@ export async function scanImages(
         return images;
     }
 
-    for (const img of document.images) {
+    for (const img of getDeepElements('img')) {
         collectImageElement(img, includeAllImageSources);
         if (includeLightboxSources && !isHidden(img)) {
             collectLightboxSources(img);
         }
+    }
+
+    if (includeAllImageSources) {
+        getDeepElements('source').forEach((source) => {
+            [
+                ...getSrcsetURLs(source.getAttribute('srcset'), source.baseURI),
+                ...getSrcsetURLs(source.getAttribute('data-srcset'), source.baseURI),
+                ...getSrcsetURLs(source.getAttribute('data-lazy-srcset'), source.baseURI),
+                getURL(source.getAttribute('src'), source.baseURI),
+                getURL(source.getAttribute('data-src'), source.baseURI),
+                getURL(source.getAttribute('data-lazy-src'), source.baseURI)
+            ].filter(Boolean).forEach((url) => {
+                addCandidate(url, 0, 0, 'imageelements', source);
+            });
+        });
     }
 
     if (includeSupplementarySources) {
@@ -640,7 +717,7 @@ export async function scanImages(
             }
         }
 
-        for (const link of document.querySelectorAll('a[href]')) {
+        for (const link of getDeepElements('a[href]')) {
             if (isHidden(link)) continue;
 
             const url = getURL(link.href);
@@ -659,6 +736,7 @@ export async function scanImages(
 export async function scanPhotoSwipeImages({
     processedTargets = new WeakSet(),
     processedTargetSources = new Set(),
+    processedCarouselRoots = new WeakSet(),
     signal = null,
     onDiagnostic = null,
     onCarouselDiagnostic = null,
@@ -669,7 +747,27 @@ export async function scanPhotoSwipeImages({
     const abortRegistryKey = '__imageFinderPhotoSwipeAbortKeys';
     const isAborted = () => signal?.aborted === true ||
         (typeof abortKey === 'string' && globalThis[abortRegistryKey]?.has(abortKey));
-    const findOpenPhotoSwipe = () => document.querySelector('.pswp.pswp--open');
+    const getOpenRoots = (initialRoot = document) => {
+        const roots = [initialRoot];
+        const seenRoots = new Set(roots);
+
+        for (let index = 0; index < roots.length; index += 1) {
+            roots[index].querySelectorAll?.('*').forEach((element) => {
+                if (element.shadowRoot && !seenRoots.has(element.shadowRoot)) {
+                    seenRoots.add(element.shadowRoot);
+                    roots.push(element.shadowRoot);
+                }
+            });
+        }
+
+        return roots;
+    };
+    const queryDeep = (root, selector) => getOpenRoots(root).flatMap((queryRoot) =>
+        Array.from(queryRoot.querySelectorAll?.(selector) ?? [])
+    );
+    const findDeep = (selector) => getOpenRoots().map((root) => root.querySelector?.(selector))
+        .find(Boolean) ?? null;
+    const findOpenPhotoSwipe = () => findDeep('.pswp.pswp--open');
     const getActiveSlide = (photoSwipe) => photoSwipe?.querySelector(
         '.pswp__item[aria-hidden="false"]'
     ) ?? photoSwipe?.querySelector('.pswp__item:not([aria-hidden="true"])') ?? null;
@@ -733,11 +831,13 @@ export async function scanPhotoSwipeImages({
         }
         if (typeof MutationObserver === 'function' && document.documentElement) {
             observer = new MutationObserver(check);
-            observer.observe(document.documentElement, {
-                subtree: true,
-                childList: true,
-                attributes: true,
-                attributeFilter: ['class', 'src', 'srcset', 'role', 'aria-hidden']
+            getOpenRoots().forEach((root) => {
+                observer.observe(root, {
+                    subtree: true,
+                    childList: true,
+                    attributes: true,
+                    attributeFilter: ['class', 'src', 'srcset', 'role', 'aria-hidden']
+                });
             });
         }
         interval = setInterval(check, 50);
@@ -768,17 +868,18 @@ export async function scanPhotoSwipeImages({
         return Boolean(closed);
     };
 
-    const getURL = (value) => {
+    const getURL = (value, baseURI = document.baseURI) => {
         if (typeof value !== 'string' || !value.trim()) return null;
 
         try {
-            return new URL(value.trim(), document.baseURI).href;
+            return new URL(value.trim(), baseURI).href;
         } catch {
             return null;
         }
     };
-    const getSrcsetURLs = (srcset) => typeof srcset === 'string'
-        ? srcset.split(',').map((entry) => getURL(entry.trim().split(/\s+/, 1)[0])).filter(Boolean)
+    const getSrcsetURLs = (srcset, baseURI = document.baseURI) => typeof srcset === 'string'
+        ? srcset.split(',').map((entry) => getURL(entry.trim().split(/\s+/, 1)[0], baseURI))
+            .filter(Boolean)
         : [];
     const collectPhotoSwipeCandidates = (photoSwipe, {includePreloaded = false} = {}) => (
         includePreloaded ? getPhotoSwipeImages(photoSwipe) : getSlideImages(photoSwipe)
@@ -1205,7 +1306,494 @@ export async function scanPhotoSwipeImages({
             'states=' + carousel.visitedStates.size
         );
     };
-    const targets = Array.from(document.querySelectorAll('[at-attr="media_locator"]'));
+    const genericSourceAttributes = [
+        'src',
+        'srcset',
+        'data-src',
+        'data-srcset',
+        'data-lazy-src',
+        'data-lazy-srcset',
+        'data-original',
+        'data-original-src'
+    ];
+    const genericGalleryTokens = /(?:carousel|gallery|slider|swiper)/i;
+    const genericSlideTokens = /(?:slide|item|media)/i;
+    const genericGalleryKeys = new WeakMap();
+    let genericGallerySequence = 0;
+    const getGenericGalleryKey = (root) => {
+        if (genericGalleryKeys.has(root)) return genericGalleryKeys.get(root);
+
+        const explicitKey = root.getAttribute?.('data-carousel-id')?.trim() ||
+            root.getAttribute?.('data-gallery-id')?.trim() || root.id?.trim();
+        const key = explicitKey ? 'gallery#' + explicitKey : 'gallery#?' + genericGallerySequence++;
+        genericGalleryKeys.set(root, key);
+        return key;
+    };
+    const getElementClassText = (element) => typeof element?.className === 'string'
+        ? element.className
+        : element?.getAttribute?.('class') ?? '';
+    const getGenericElementSources = (element) => {
+        if (!element?.getAttribute) return [];
+
+        const sources = [];
+        if (element instanceof HTMLImageElement) {
+            sources.push(getURL(element.currentSrc, element.baseURI));
+        }
+        genericSourceAttributes.forEach((attributeName) => {
+            const value = element.getAttribute(attributeName);
+            if (!value) return;
+
+            if (attributeName.endsWith('srcset')) {
+                sources.push(...getSrcsetURLs(value, element.baseURI));
+            } else {
+                sources.push(getURL(value, element.baseURI));
+            }
+        });
+        return sources.filter(Boolean);
+    };
+    const getGenericGalleryMediaElements = (root) => {
+        const selector = [
+            'img',
+            'source',
+            '[src]',
+            '[srcset]',
+            '[data-src]',
+            '[data-srcset]',
+            '[data-lazy-src]',
+            '[data-lazy-srcset]',
+            '[data-original]',
+            '[data-original-src]'
+        ].join(',');
+        const elements = root.matches?.(selector) ? [root] : [];
+        return [...elements, ...queryDeep(root, selector)].filter(
+            (element, index, values) => values.indexOf(element) === index
+        );
+    };
+    const getGenericSlideElements = (root) => {
+        const selector = [
+            '[data-swiper-slide-index]',
+            '[data-slide-index]',
+            '[data-index]',
+            '[aria-posinset]',
+            '[aria-current]',
+            '[aria-selected]',
+            '[data-active]',
+            '[role="group"]',
+            '[class*="slide"]',
+            '[class*="item"]'
+        ].join(',');
+
+        return queryDeep(root, selector).filter((element) => genericSlideTokens.test([
+            getElementClassText(element),
+            element.getAttribute?.('role'),
+            element.getAttribute?.('data-slide-index'),
+            element.getAttribute?.('data-swiper-slide-index')
+        ].filter(Boolean).join(' ')) && getGenericGalleryMediaElements(element).length > 0);
+    };
+    const getGenericControlDirection = (element) => {
+        const rel = element.getAttribute?.('rel')?.toLowerCase().split(/\s+/) ?? [];
+        if (rel.includes('next')) return 'forward';
+        if (rel.includes('prev') || rel.includes('previous')) return 'backward';
+
+        const label = [
+            element.getAttribute?.('aria-label'),
+            element.getAttribute?.('title'),
+            element.getAttribute?.('data-carousel-next') !== null ||
+            element.getAttribute?.('data-slide-next') !== null ? 'next' : null,
+            element.getAttribute?.('data-carousel-prev') !== null ||
+            element.getAttribute?.('data-slide-prev') !== null ? 'previous' : null,
+            element.getAttribute?.('data-slide-previous') !== null ? 'previous' : null,
+            getElementClassText(element)
+        ].filter(Boolean).join(' ');
+        if (/\b(?:next|forward)\b/i.test(label)) return 'forward';
+        if (/\b(?:previous|prev|back)\b/i.test(label)) return 'backward';
+        return null;
+    };
+    const getGenericControlKind = (control) => /(?:swiper|slick|splide|flickity)/i.test(
+        getElementClassText(control)
+    ) ? 'library' : (
+        control.getAttribute?.('rel') || control.getAttribute?.('aria-label') ||
+        control.getAttribute?.('title') ? 'semantic' : 'structural'
+    );
+    const getGenericControlAvailability = (control) => {
+        if (!control || !control.isConnected) return {usable: false, reason: 'control-unavailable'};
+        if (control.hasAttribute('disabled') || control.hasAttribute('hidden') ||
+            control.hasAttribute('inert') || control.getAttribute('aria-disabled') === 'true' ||
+            /(?:^|\s)(?:disabled|swiper-button-disabled)(?:\s|$)/i.test(
+                getElementClassText(control)
+            )) {
+            return {usable: false, reason: 'control-disabled'};
+        }
+        try {
+            const style = getComputedStyle(control);
+            if (style.display === 'none' || style.visibility === 'hidden' ||
+                style.visibility === 'collapse' || style.pointerEvents === 'none') {
+                return {usable: false, reason: 'control-unavailable'};
+            }
+        } catch {
+            return {usable: false, reason: 'control-unavailable'};
+        }
+        return {usable: true, reason: null};
+    };
+    const getGenericCarouselControl = (root, direction) => {
+        const controls = queryDeep(root, '*').filter((element) =>
+            getGenericControlDirection(element) === direction
+        );
+        const control = controls.find((candidate) => getGenericControlAvailability(candidate).usable);
+        if (control) return {
+            control,
+            kind: getGenericControlKind(control),
+            reason: null
+        };
+
+        const disabled = controls.find((candidate) =>
+            getGenericControlAvailability(candidate).reason === 'control-disabled'
+        );
+        return {
+            control: null,
+            kind: disabled ? getGenericControlKind(disabled) : null,
+            reason: disabled ? 'control-disabled' : 'control-unavailable'
+        };
+    };
+    const getGenericTotalHint = (root) => {
+        const attributeNames = ['data-slide-count', 'data-total', 'aria-setsize'];
+        for (const element of [root, ...queryDeep(root, '[data-slide-count], [data-total], [aria-setsize]')]) {
+            const total = attributeNames.map((attributeName) => Number(element.getAttribute?.(attributeName)))
+                .find(Number.isFinite);
+            if (total > 0) return total;
+        }
+
+        const counter = queryDeep(root, '[aria-live], [class*="counter"], [class*="pagination"]')
+            .map((element) => element.textContent?.trim() ?? '')
+            .map((text) => text.match(/\b\d+\s*(?:\/|of)\s*(\d+)\b/i)?.[1])
+            .map(Number)
+            .find((total) => Number.isFinite(total) && total > 0);
+        return counter ?? null;
+    };
+    const getGenericCarouselState = (root, gallery) => {
+        if (!root?.isConnected) return null;
+
+        const slides = getGenericSlideElements(root);
+        const active = slides.find((slide) => slide.getAttribute('aria-current') === 'true' ||
+            slide.getAttribute('aria-selected') === 'true' || slide.getAttribute('data-active') === 'true' ||
+            /(?:^|\s)(?:active|current|swiper-slide-active)(?:\s|$)/i.test(
+                getElementClassText(slide)
+            )) ?? slides.find((slide) => slide.getAttribute('aria-hidden') !== 'true') ??
+            (slides.length === 1 ? slides[0] : null) ?? root;
+        const stateElements = [active, root, ...getGenericGalleryMediaElements(active).slice(0, 1)];
+        const index = stateElements.flatMap((element) => [
+            'data-swiper-slide-index',
+            'data-slide-index',
+            'data-index',
+            'aria-posinset',
+            'data-active-slide'
+        ].map((attributeName) => {
+            const value = element?.getAttribute?.(attributeName)?.trim();
+            return value ? attributeName + ':' + value : null;
+        })).find(Boolean);
+        const activePagination = queryDeep(root, '[aria-current="true"], [aria-selected="true"]')
+            .find((element) => element !== active);
+        const pagination = activePagination?.getAttribute('aria-label')?.trim() ||
+            activePagination?.getAttribute('data-index')?.trim() || null;
+        const source = getGenericGalleryMediaElements(active).flatMap(getGenericElementSources)[0] ?? null;
+        const rawKey = index ? 'index:' + index : pagination ? 'pagination:' + pagination :
+            source ? 'source:' + source : null;
+        if (!rawKey) return null;
+
+        return {
+            active,
+            key: rawKey,
+            mountedSlides: slides.length,
+            totalHint: getGenericTotalHint(root)
+        };
+    };
+    const collectGenericCarouselSources = (root, gallery, stateLabel) => {
+        const elements = getGenericGalleryMediaElements(root);
+        const sourceURLs = new Set();
+        let lazySources = 0;
+
+        elements.forEach((element) => {
+            const hasLazyAttribute = Boolean(element.getAttribute?.('data-lazy-src') ||
+                element.getAttribute?.('data-lazy-srcset'));
+            const currentSource = element instanceof HTMLImageElement
+                ? getURL(element.currentSrc, element.baseURI)
+                : null;
+            getGenericElementSources(element).forEach((url) => {
+                sourceURLs.add(url);
+                candidates.push({
+                    url,
+                    width: url === currentSource ? Math.max(0, element.naturalWidth) : 0,
+                    height: url === currentSource ? Math.max(0, element.naturalHeight) : 0,
+                    source: 'imageelements',
+                    visuallyBlurred: false
+                });
+            });
+            if (hasLazyAttribute) lazySources += 1;
+        });
+
+        let preloadNew = 0;
+        sourceURLs.forEach((url) => {
+            if (!gallery.knownSources.has(url)) {
+                gallery.knownSources.add(url);
+                preloadNew += 1;
+            }
+        });
+        reportCarousel(
+            'CAROUSEL',
+            'gallery=' + gallery.key,
+            'state=' + stateLabel,
+            'preloadSources=' + sourceURLs.size,
+            'lazySources=' + lazySources,
+            'preloadNew=' + preloadNew
+        );
+        return {newSources: preloadNew, lazySources, preloadSources: sourceURLs.size};
+    };
+    const enrichGenericCarouselState = async (state) => {
+        const activeTarget = state.active.matches?.('[at-attr="media_locator"]')
+            ? state.active
+            : state.active.querySelector?.('[at-attr="media_locator"]') ?? null;
+        if (!activeTarget || processedTargets.has(activeTarget) || isAborted()) return;
+
+        processedTargets.add(activeTarget);
+        const sourceKey = getTargetSourceKey(activeTarget);
+        if (sourceKey) processedTargetSources.add(sourceKey);
+        let temporaryStyle = null;
+        try {
+            temporaryStyle = createTemporaryStyle();
+            activeTarget.click();
+            const photoSwipe = await waitFor(findOpenPhotoSwipe, 2000);
+            if (!photoSwipe || isAborted()) return;
+
+            reportActivity();
+            const readySlide = await waitFor(() => getReadyActiveSlideImage(photoSwipe), 3000);
+            if (!readySlide || isAborted()) return;
+            candidates.push(...collectPhotoSwipeCandidates(photoSwipe, {includePreloaded: true}));
+            const beforeZoom = getImageSnapshot(readySlide.image);
+            try {
+                readySlide.image.click();
+                reportActivity();
+            } catch {
+                return;
+            }
+            const zoomedSlide = await waitFor(() => {
+                const activeSlide = getReadyActiveSlideImage(photoSwipe);
+                if (!activeSlide) return null;
+                const afterZoom = getImageSnapshot(activeSlide.image);
+                return didZoomStateChange(beforeZoom, afterZoom, photoSwipe)
+                    ? {activeSlide, afterZoom}
+                    : null;
+            }, 3000);
+            if (zoomedSlide) candidates.push(...collectPhotoSwipeCandidates(
+                zoomedSlide.activeSlide.photoSwipe,
+                {includePreloaded: true}
+            ));
+        } catch {
+            // One optional enrichment failure must not stop horizontal traversal.
+        } finally {
+            try {
+                const closed = await closePhotoSwipe();
+                if (!closed && findOpenPhotoSwipe()) await closePhotoSwipe();
+            } finally {
+                temporaryStyle?.remove();
+            }
+        }
+    };
+    const processGenericCarouselState = async (root, gallery, state, direction) => {
+        const stateLabel = getCarouselStateLabel(gallery, state.key);
+        const alreadyVisited = gallery.visitedStates.has(state.key);
+        const sourceBefore = collectGenericCarouselSources(root, gallery, stateLabel);
+        reportCarousel(
+            'CAROUSEL',
+            'gallery=' + gallery.key,
+            'type=' + gallery.type,
+            'state=' + stateLabel,
+            'direction=' + direction,
+            'source=' + (alreadyVisited ? 'known' : 'new'),
+            'mountedSlides=' + state.mountedSlides,
+            'lazySources=' + sourceBefore.lazySources,
+            'preloadSources=' + sourceBefore.preloadSources,
+            'preloadNew=' + sourceBefore.newSources
+        );
+        if (alreadyVisited) return {alreadyVisited, newSources: sourceBefore.newSources};
+
+        gallery.visitedStates.add(state.key);
+        await enrichGenericCarouselState(state);
+        const sourceAfter = collectGenericCarouselSources(root, gallery, stateLabel);
+        return {
+            alreadyVisited: false,
+            newSources: sourceBefore.newSources + sourceAfter.newSources
+        };
+    };
+    const isGenericGalleryRoot = (root) => {
+        const rootLabel = [
+            root.id,
+            getElementClassText(root),
+            root.getAttribute?.('role'),
+            root.getAttribute?.('data-carousel-id'),
+            root.getAttribute?.('data-gallery-id')
+        ].filter(Boolean).join(' ');
+        const rootAppearsSlide = genericSlideTokens.test(getElementClassText(root)) && Boolean(
+            root.getAttribute?.('data-slide-index') || root.getAttribute?.('data-swiper-slide-index') ||
+            root.getAttribute?.('aria-posinset')
+        );
+        const hasGallerySignal = !rootAppearsSlide && (genericGalleryTokens.test(rootLabel) ||
+            root.hasAttribute?.('data-carousel-id') || root.hasAttribute?.('data-gallery-id')
+        );
+        const slides = getGenericSlideElements(root);
+        const mediaCount = getGenericGalleryMediaElements(root).length;
+        const hasControls = getGenericCarouselControl(root, 'forward').control ||
+            getGenericCarouselControl(root, 'backward').control;
+        const totalHint = getGenericTotalHint(root);
+        const score = Number(hasGallerySignal) + Number(slides.length > 1) +
+            Number(mediaCount > 0) + Number(Boolean(hasControls)) + Number(Boolean(totalHint));
+        return hasGallerySignal && score >= 2;
+    };
+    const traverseGenericCarousel = async (root) => {
+        const gallery = {
+            key: getGenericGalleryKey(root),
+            type: 'unknown',
+            knownSources: new Set(),
+            stateLabels: new Map(),
+            visitedStates: new Set()
+        };
+        const initialState = await waitFor(() => getGenericCarouselState(root, gallery), 1500);
+        if (!initialState || isAborted()) return;
+
+        const initialLabel = getCarouselStateLabel(gallery, initialState.key);
+        const virtualHint = /(?:virtual|recycl)/i.test([
+            getElementClassText(root),
+            root.getAttribute?.('data-virtual'),
+            root.getAttribute?.('data-swiper-virtual')
+        ].filter(Boolean).join(' '));
+        reportCarousel(
+            'CAROUSEL',
+            'discovered',
+            'gallery=' + gallery.key,
+            'type=unknown',
+            'state=' + initialLabel,
+            'virtualHint=' + virtualHint,
+            'mountedSlides=' + initialState.mountedSlides,
+            'totalHint=' + (initialState.totalHint ?? 'unknown')
+        );
+        await processGenericCarouselState(root, gallery, initialState, 'initial');
+        if (isAborted()) return;
+
+        const traverseDirection = async (direction) => {
+            let successfulTransitions = 0;
+            while (!isAborted()) {
+                const beforeState = await waitFor(() => getGenericCarouselState(root, gallery), 1000);
+                if (!beforeState) return {kind: 'failed', reason: 'gallery-unavailable'};
+
+                const controlState = getGenericCarouselControl(root, direction);
+                if (!controlState.control) {
+                    reportCarousel(
+                        'CAROUSEL EDGE',
+                        'gallery=' + gallery.key,
+                        'direction=' + direction,
+                        'reason=' + controlState.reason
+                    );
+                    return {kind: 'edge', reason: controlState.reason};
+                }
+                reportCarousel(
+                    'CAROUSEL NAV',
+                    'gallery=' + gallery.key,
+                    'direction=' + direction,
+                    'control=' + controlState.kind,
+                    'stateBefore=' + getCarouselStateLabel(gallery, beforeState.key)
+                );
+                try {
+                    controlState.control.click();
+                    reportActivity();
+                } catch {
+                    reportCarousel(
+                        'CAROUSEL EDGE',
+                        'gallery=' + gallery.key,
+                        'direction=' + direction,
+                        'reason=control-action-failed'
+                    );
+                    return {kind: 'failed', reason: 'control-action-failed'};
+                }
+
+                const nextState = await waitFor(() => {
+                    const state = getGenericCarouselState(root, gallery);
+                    return state && state.key !== beforeState.key ? state : null;
+                }, 3000);
+                if (isAborted()) return {kind: 'aborted'};
+                if (!nextState) {
+                    const settledControl = getGenericCarouselControl(root, direction);
+                    const reason = settledControl.control ? 'stable-state' : settledControl.reason;
+                    reportCarousel(
+                        'CAROUSEL EDGE',
+                        'gallery=' + gallery.key,
+                        'direction=' + direction,
+                        'reason=' + reason
+                    );
+                    return {kind: 'edge', reason};
+                }
+
+                successfulTransitions += 1;
+                const wasVisited = gallery.visitedStates.has(nextState.key);
+                const stateResult = await processGenericCarouselState(root, gallery, nextState, direction);
+                if (isAborted()) return {kind: 'aborted'};
+                if (direction === 'forward' && wasVisited && successfulTransitions > 1 &&
+                    stateResult.newSources === 0) {
+                    gallery.type = 'cyclic';
+                    reportCarousel(
+                        'CAROUSEL END',
+                        'gallery=' + gallery.key,
+                        'type=cyclic',
+                        'visitedStates=' + gallery.visitedStates.size,
+                        'totalHint=' + (nextState.totalHint ?? 'unknown'),
+                        'reason=cycle-complete'
+                    );
+                    return {kind: 'cycle', reason: 'cycle-complete'};
+                }
+            }
+            return {kind: 'aborted'};
+        };
+
+        const forward = await traverseDirection('forward');
+        if (forward.kind === 'aborted' || forward.kind === 'cycle' || forward.kind === 'failed') return;
+        const backward = await traverseDirection('backward');
+        if (backward.kind !== 'edge' || isAborted()) return;
+
+        const type = gallery.visitedStates.size === 1 ? 'single' : 'finite';
+        gallery.type = type;
+        reportCarousel(
+            'CAROUSEL END',
+            'gallery=' + gallery.key,
+            'type=' + type,
+            'visitedStates=' + gallery.visitedStates.size,
+            'totalHint=' + (initialState.totalHint ?? 'unknown'),
+            'reason=both-edges-exhausted'
+        );
+    };
+    const traverseGenericCarousels = async () => {
+        const roots = queryDeep(document, '*').filter(isGenericGalleryRoot);
+        const isExplicitGalleryRoot = (root) => Boolean(
+            root.id || root.getAttribute?.('data-carousel-id') || root.getAttribute?.('data-gallery-id')
+        );
+        const containsComposed = (ancestor, element) => {
+            for (let current = element; current;) {
+                if (current === ancestor) return true;
+                current = current.parentElement ?? current.getRootNode?.().host ?? null;
+            }
+            return false;
+        };
+        const uniqueRoots = roots.filter((root) => !roots.some((other) => other !== root &&
+            !isExplicitGalleryRoot(root) && isExplicitGalleryRoot(other) &&
+            (containsComposed(root, other) || containsComposed(other, root))
+        ));
+        for (const root of uniqueRoots) {
+            if (isAborted()) return;
+            if (processedCarouselRoots.has(root)) continue;
+            processedCarouselRoots.add(root);
+            await traverseGenericCarousel(root);
+        }
+    };
+    if (traverseCarousel) await traverseGenericCarousels();
+
+    const targets = queryDeep(document, '[at-attr="media_locator"]');
     for (const target of targets) {
         const targetSource = getTargetSourceKey(target);
         if (isAborted() || processedTargets.has(target) ||
@@ -1802,9 +2390,12 @@ export async function runHiddenFrameDeepScan({
     scrollStepFactor = 0.8,
     minimumSettleMs = 150,
     quietSettleMs = 350,
-    maximumSettleMs = 1500
+    maximumSettleMs = 1500,
+    minimumImageWidth = 200,
+    minimumImageHeight = 200
 } = {}) {
     const startedAt = Date.now();
+    const startedAtPerformance = performance.now();
     const seenCandidatesByURL = new Map();
     const seenCandidateURLsByBase = new Map();
     const knownTargets = new Set();
@@ -1812,6 +2403,7 @@ export async function runHiddenFrameDeepScan({
     const attemptedDownwardTargets = new WeakSet();
     const processedPhotoSwipeTargets = new WeakSet();
     const processedPhotoSwipeTargetSources = new Set();
+    const processedCarouselRoots = new WeakSet();
     const knownScrollContainerIndices = new Map();
     const completedScrollContainerStates = new Map();
     let observer = null;
@@ -1824,9 +2416,53 @@ export async function runHiddenFrameDeepScan({
     let photoSwipeActivityCount = 0;
     let progressDiagnosticBatchSequence = 0;
     let completedNaturally = false;
+    let deepScanPass = 0;
+    let currentPassMetrics = null;
+    let lastNewSourceAt = null;
+    let lastRawCandidateAt = null;
+    let collectionSequence = 0;
+    let observedMutationCount = 0;
+    let observedChildListMutationCount = 0;
+    let observedAttributeMutationCount = 0;
+    let observedAddedElementCount = 0;
+    let observedRemovedElementCount = 0;
+    let deepScanMutationStart = null;
+    // Kept central so a future setting can switch LOW traversal back on without
+    // changing the planner or any discovery code.
+    const skipLowPriorityContainers = true;
     const edgeLoadWaitMs = Math.max(5000, maximumSettleMs);
     const edgeLoadPollMs = 100;
     const isActive = () => signal?.aborted !== true;
+    const getElapsedMs = () => Math.max(0, Math.round(performance.now() - startedAtPerformance));
+    const createPerformanceMetrics = () => ({
+        steps: 0,
+        scrollActionMs: 0,
+        settleMs: 0,
+        collectSourcesMs: 0,
+        scanImagesMs: 0,
+        carouselPhotoSwipeMs: 0,
+        candidatePipelineMs: 0,
+        newSources: 0,
+        newRawCandidates: 0,
+        newDomImages: 0,
+        newTargets: 0,
+        newGalleries: 0,
+        mutationStart: null
+    });
+    const addMetric = (metrics, name, value) => {
+        if (!metrics || !Number.isFinite(value)) return;
+
+        metrics[name] = (metrics[name] ?? 0) + value;
+        if (currentPassMetrics && currentPassMetrics !== metrics) {
+            currentPassMetrics[name] = (currentPassMetrics[name] ?? 0) + value;
+        }
+    };
+    const recordCollectionMetric = (metrics, name, value) => {
+        addMetric(metrics, name, value);
+        if (currentPassMetrics && !metrics) {
+            currentPassMetrics[name] = (currentPassMetrics[name] ?? 0) + value;
+        }
+    };
     const wait = (milliseconds) => new Promise((resolve) => {
         if (signal?.aborted) {
             resolve(false);
@@ -1851,6 +2487,8 @@ export async function runHiddenFrameDeepScan({
         '[loading="lazy"]',
         '[data-src]',
         '[data-srcset]',
+        '[data-lazy-src]',
+        '[data-lazy-srcset]',
         '[data-image]',
         '[data-image-src]',
         '[data-full]',
@@ -1892,18 +2530,40 @@ export async function runHiddenFrameDeepScan({
         };
     };
     const getMutationSnapshot = () => ({
-        total: relevantMutationCount,
-        childList: relevantChildListMutationCount,
-        attributes: relevantAttributeMutationCount,
-        addedElements: relevantAddedElementCount,
-        removedElements: relevantRemovedElementCount
+        total: observedMutationCount,
+        childList: observedChildListMutationCount,
+        attributes: observedAttributeMutationCount,
+        addedElements: observedAddedElementCount,
+        removedElements: observedRemovedElementCount,
+        relevantTotal: relevantMutationCount,
+        relevantChildList: relevantChildListMutationCount,
+        relevantAttributes: relevantAttributeMutationCount,
+        relevantAddedElements: relevantAddedElementCount,
+        relevantRemovedElements: relevantRemovedElementCount
     });
     const getMutationDelta = (before) => ({
-        total: Math.max(0, relevantMutationCount - before.total),
-        childList: Math.max(0, relevantChildListMutationCount - before.childList),
-        attributes: Math.max(0, relevantAttributeMutationCount - before.attributes),
-        addedElements: Math.max(0, relevantAddedElementCount - before.addedElements),
-        removedElements: Math.max(0, relevantRemovedElementCount - before.removedElements)
+        total: Math.max(0, observedMutationCount - before.total),
+        childList: Math.max(0, observedChildListMutationCount - before.childList),
+        attributes: Math.max(0, observedAttributeMutationCount - before.attributes),
+        addedElements: Math.max(0, observedAddedElementCount - before.addedElements),
+        removedElements: Math.max(0, observedRemovedElementCount - before.removedElements),
+        relevantTotal: Math.max(0, relevantMutationCount - before.relevantTotal),
+        relevantChildList: Math.max(
+            0,
+            relevantChildListMutationCount - before.relevantChildList
+        ),
+        relevantAttributes: Math.max(
+            0,
+            relevantAttributeMutationCount - before.relevantAttributes
+        ),
+        relevantAddedElements: Math.max(
+            0,
+            relevantAddedElementCount - before.relevantAddedElements
+        ),
+        relevantRemovedElements: Math.max(
+            0,
+            relevantRemovedElementCount - before.relevantRemovedElements
+        )
     });
     const getCandidateURLClass = (candidateURL) => {
         try {
@@ -2073,18 +2733,20 @@ export async function runHiddenFrameDeepScan({
 
         return false;
     };
-    const reportActiveScrollContainer = (container = null) => {
+    const reportActiveScrollContainer = (container = null, colorIndex = 0) => {
         if (typeof onActiveScrollContainer !== 'function') return;
 
         try {
-            onActiveScrollContainer(container);
+            onActiveScrollContainer(container, colorIndex);
         } catch {
             // The temporary visible-tab marker must never affect the hidden traversal.
         }
     };
-    const collectSources = async ({diagnosticPhase = null} = {}) => {
+    const collectSources = async ({diagnosticPhase = null, metrics = null, context = null} = {}) => {
         if (!isActive()) return 0;
 
+        const collectionStartedAt = performance.now();
+        const scanImagesStartedAt = performance.now();
         const foundCandidates = await scanImages(
             ignoreHiddenImages,
             true,
@@ -2092,20 +2754,27 @@ export async function runHiddenFrameDeepScan({
             null,
             true
         );
+        const scanImagesMs = performance.now() - scanImagesStartedAt;
+        const carouselStartedAt = performance.now();
         const photoSwipeCandidates = await scanPhotoSwipeImages({
             processedTargets: processedPhotoSwipeTargets,
             processedTargetSources: processedPhotoSwipeTargetSources,
+            processedCarouselRoots,
             signal,
             onDiagnostic: (message) => console.info('[DeepScan ZOOM]', message),
-            onCarouselDiagnostic: (event, ...details) => console.info(
-                `[DeepScan ${event}]`,
-                ...details
-            ),
+            onCarouselDiagnostic: (event, ...details) => {
+                if (event === 'CAROUSEL' && details.includes('discovered')) {
+                    recordCollectionMetric(metrics, 'newGalleries', 1);
+                }
+                console.info(`[DeepScan ${event}]`, ...details);
+            },
             onActivity: () => {
                 photoSwipeActivityCount += 1;
             },
             traverseCarousel: true
         });
+        const carouselPhotoSwipeMs = performance.now() - carouselStartedAt;
+        const candidatePipelineStartedAt = performance.now();
         const newCandidates = [];
         const photoSwipeURLs = new Set(photoSwipeCandidates.map((candidate) => candidate?.url));
         const candidateClasses = {
@@ -2161,32 +2830,51 @@ export async function runHiddenFrameDeepScan({
             seenCandidatesByURL.set(serializedCandidate.url, serializedCandidate);
             newCandidates.push(serializedCandidate);
         }
+        if (newCandidates.length > 0) {
+            const discoveredAt = getElapsedMs();
+            lastNewSourceAt = discoveredAt;
+            lastRawCandidateAt = discoveredAt;
+            recordCollectionMetric(metrics, 'newSources', newCandidates.length);
+            recordCollectionMetric(metrics, 'newRawCandidates', newCandidates.length);
+        }
         if (newCandidates.length > 0 && typeof onBatch === 'function' && isActive()) {
-            const diagnostic = diagnosticPhase
-                ? {
-                    id: `${startedAt}-${++progressDiagnosticBatchSequence}`,
-                    phase: diagnosticPhase,
-                    rawCandidates: newCandidates.length,
-                    ...candidateClasses
-                }
-                : null;
-            if (diagnostic) {
-                console.info(
-                    '[DeepScan CANDIDATE CLASS]',
-                    `phase=${diagnostic.phase}`,
-                    `rawCandidates=${diagnostic.rawCandidates}`,
-                    `newBases=${diagnostic.newBases}`,
-                    `queryVariants=${diagnostic.queryVariants}`,
-                    `resolutionUpgrades=${diagnostic.resolutionUpgrades}`,
-                    `dataURLs=${diagnostic.dataURLs}`,
-                    `blobURLs=${diagnostic.blobURLs}`,
-                    `zeroDimensions=${diagnostic.zeroDimensions}`,
-                    `smallDimensions=${diagnostic.smallDimensions}`,
-                    `photoSwipe=${diagnostic.photoSwipe}`
-                );
-            }
+            const diagnostic = {
+                id: `${startedAt}-${++progressDiagnosticBatchSequence}`,
+                phase: diagnosticPhase ?? context?.scope ?? 'deep-scan',
+                rawCandidates: newCandidates.length,
+                collection: ++collectionSequence,
+                ...(Number.isInteger(context?.pass) ? {pass: context.pass} : {}),
+                ...(typeof context?.container === 'string' ? {container: context.container} : {}),
+                ...(typeof context?.direction === 'string' ? {direction: context.direction} : {}),
+                scanImagesMs: Math.round(scanImagesMs),
+                carouselPhotoSwipeMs: Math.round(carouselPhotoSwipeMs),
+                ...candidateClasses
+            };
+            console.info(
+                '[DeepScan CANDIDATE CLASS]',
+                `phase=${diagnostic.phase}`,
+                `collection=${diagnostic.collection}`,
+                ...(Number.isInteger(diagnostic.pass) ? [`pass=${diagnostic.pass}`] : []),
+                ...(diagnostic.container ? [`container=${diagnostic.container}`] : []),
+                ...(diagnostic.direction ? [`direction=${diagnostic.direction}`] : []),
+                `rawCandidates=${diagnostic.rawCandidates}`,
+                `newBases=${diagnostic.newBases}`,
+                `queryVariants=${diagnostic.queryVariants}`,
+                `resolutionUpgrades=${diagnostic.resolutionUpgrades}`,
+                `dataURLs=${diagnostic.dataURLs}`,
+                `blobURLs=${diagnostic.blobURLs}`,
+                `zeroDimensions=${diagnostic.zeroDimensions}`,
+                `smallDimensions=${diagnostic.smallDimensions}`,
+                `photoSwipe=${diagnostic.photoSwipe}`
+            );
             await onBatch(newCandidates, diagnostic);
         }
+        const candidatePipelineMs = performance.now() - candidatePipelineStartedAt;
+        const collectionMs = performance.now() - collectionStartedAt;
+        recordCollectionMetric(metrics, 'scanImagesMs', scanImagesMs);
+        recordCollectionMetric(metrics, 'carouselPhotoSwipeMs', carouselPhotoSwipeMs);
+        recordCollectionMetric(metrics, 'candidatePipelineMs', candidatePipelineMs);
+        recordCollectionMetric(metrics, 'collectSourcesMs', collectionMs);
         return newCandidates.length;
     };
     const isGeneratedScrollAnchor = (node) => node?.nodeType === Node.ELEMENT_NODE &&
@@ -2198,6 +2886,11 @@ export async function runHiddenFrameDeepScan({
 
         return Array.from(node.children).some((element) => !isGeneratedScrollAnchor(element));
     };
+    const countMutationElements = (nodes) => Array.from(nodes ?? []).reduce((count, node) => {
+        if (node?.nodeType === Node.ELEMENT_NODE) return count + 1;
+        if (node?.nodeType !== Node.DOCUMENT_FRAGMENT_NODE) return count;
+        return count + (node.querySelectorAll?.('*').length ?? 0);
+    }, 0);
     const isRelevantMutation = (record) => {
         if (record.type === 'attributes') {
             return !isGeneratedScrollAnchor(record.target) && record.attributeName !== 'class' &&
@@ -2244,6 +2937,226 @@ export async function runHiddenFrameDeepScan({
             clientHeight: Math.max(0, container.clientHeight ?? 0),
             images: container.querySelectorAll('img').length,
             targets: targets.length
+        };
+    };
+    const containerAnalyses = new WeakMap();
+    const getClassTokens = (element) => String(element?.getAttribute?.('class') ?? '')
+        .split(/\s+/)
+        .map((token) => token.trim().toLowerCase())
+        .filter((token) => /^[a-z][a-z-]{1,40}$/.test(token))
+        .slice(0, 4);
+    const getStructureAttributeNames = (element) => Array.from(element?.attributes ?? [])
+        .map((attribute) => attribute.name.toLowerCase())
+        .filter((name) => name === 'role' || name.startsWith('aria-') || name.startsWith('data-'))
+        .slice(0, 6);
+    const getRowFingerprint = (row) => {
+        const childTags = Array.from(row.children ?? [], (child) => child.tagName.toLowerCase())
+            .slice(0, 8)
+            .join(',');
+        const directCounts = ['img', 'svg', 'a', 'button'].map((tagName) =>
+            row.querySelectorAll(tagName).length
+        ).join(',');
+
+        return [
+            row.tagName.toLowerCase(),
+            getClassTokens(row).join(','),
+            row.getAttribute?.('role') ?? '',
+            getStructureAttributeNames(row).join(','),
+            childTags,
+            directCounts
+        ].join('|');
+    };
+    const getImageDimensions = (image) => {
+        let width = Math.max(0, image?.naturalWidth ?? 0, Number(image?.getAttribute?.('width')) || 0);
+        let height = Math.max(0, image?.naturalHeight ?? 0, Number(image?.getAttribute?.('height')) || 0);
+
+        if (width > 0 && height > 0) return {width: Math.round(width), height: Math.round(height)};
+
+        try {
+            const rect = image.getBoundingClientRect();
+            width = Math.max(width, Math.round(rect.width));
+            height = Math.max(height, Math.round(rect.height));
+        } catch {
+            // A removed page element is not relevant for the passive diagnosis.
+        }
+        return {width, height};
+    };
+    const analyzeScrollContainer = (container) => {
+        const directGroups = [container, ...Array.from(container.children ?? [])]
+            .map((element) => ({element, rows: Array.from(element.children ?? [])}))
+            .filter(({rows}) => rows.length >= 4)
+            .sort((first, second) => second.rows.length - first.rows.length);
+        const rowGroup = directGroups[0] ?? {element: container, rows: []};
+        const rows = rowGroup.rows;
+        const sampledRows = rows.slice(0, 160);
+        const fingerprints = new Map();
+        sampledRows.forEach((row) => {
+            const fingerprint = getRowFingerprint(row);
+            fingerprints.set(fingerprint, (fingerprints.get(fingerprint) ?? 0) + 1);
+        });
+        const dominantStructureCount = Math.max(0, ...fingerprints.values());
+        const repeatedStructureRatio = sampledRows.length > 0
+            ? dominantStructureCount / sampledRows.length
+            : 0;
+        const hasRepeatedRows = rows.length >= 4 && repeatedStructureRatio >= .7;
+        const images = Array.from(container.querySelectorAll('img'));
+        const links = container.querySelectorAll('a').length;
+        const buttons = container.querySelectorAll('button').length;
+        const svgs = container.querySelectorAll('svg').length;
+        const videos = container.querySelectorAll('video').length;
+        const mediaElements = container.querySelectorAll('picture, source, video').length;
+        const sizeCounts = new Map();
+        let smallImageCount = 0;
+        let largeEnoughImageCount = 0;
+
+        images.forEach((image) => {
+            const {width, height} = getImageDimensions(image);
+            if (width <= 0 || height <= 0) return;
+
+            const key = `${width}x${height}`;
+            sizeCounts.set(key, (sizeCounts.get(key) ?? 0) + 1);
+            if (width < minimumImageWidth || height < minimumImageHeight) smallImageCount += 1;
+            else largeEnoughImageCount += 1;
+        });
+        const [dominantImageSize = 'none', dominantImageSizeCount = 0] =
+            [...sizeCounts.entries()].sort((first, second) => second[1] - first[1])[0] ?? [];
+        const dominantImageSizeRatio = images.length > 0 ? dominantImageSizeCount / images.length : 0;
+        const [dominantImageWidth = 0, dominantImageHeight = 0] = dominantImageSize
+            .split('x')
+            .map(Number);
+        const dominantImageIsSmall = dominantImageWidth > 0 && dominantImageHeight > 0 &&
+            (dominantImageWidth < minimumImageWidth || dominantImageHeight < minimumImageHeight);
+        const dominantImageIsAvatarSized = dominantImageWidth > 0 && dominantImageHeight > 0 &&
+            Math.max(dominantImageWidth, dominantImageHeight) <= 192;
+        const eligibleImageRatio = images.length > 0 ? largeEnoughImageCount / images.length : 0;
+        const semanticElements = [container, ...Array.from(container.querySelectorAll('*')).slice(0, 200)];
+        const semanticStructure = semanticElements.map((element) => [
+            ...getClassTokens(element),
+            element.getAttribute?.('role') ?? '',
+            ...getStructureAttributeNames(element)
+        ].join(' ')).join(' ');
+        const navigationSemantic = /\b(?:menu|navigation|nav|icon|sidebar|toolbar)\b/i.test(
+            semanticStructure
+        );
+        const inboxSemantic = /\b(?:user|avatar|message|chat|conversation|inbox|thread)\b/i.test(
+            semanticStructure
+        );
+        const contentSemantic = /\b(?:media|gallery|carousel|slide|poster|picture|source)\b/i.test(
+            semanticStructure
+        );
+        const containerTag = container.tagName.toLowerCase();
+        const hasNavigationLandmark = containerTag === 'nav' || containerTag === 'aside' ||
+            container.querySelector('nav, aside') !== null;
+        const hasContentLandmark = containerTag === 'main' || containerTag === 'article';
+        const positiveSignals = [];
+        const negativeSignals = [];
+        let navigationStrength = 0;
+        let inboxStrength = 0;
+        let contentStrength = 0;
+
+        if (hasRepeatedRows) {
+            negativeSignals.push(`repeated-rows=${rows.length}`);
+            if (dominantImageIsSmall && dominantImageSizeRatio >= .6) {
+                negativeSignals.push(`dominant-small-images=${dominantImageSize}`);
+            }
+        }
+        if (hasRepeatedRows && hasNavigationLandmark) {
+            navigationStrength += 3;
+            negativeSignals.push('navigation-landmark-with-repeated-rows');
+        }
+        if (hasRepeatedRows && (links + buttons + svgs) >= Math.max(4, rows.length / 2)) {
+            navigationStrength += 2;
+            negativeSignals.push('repeated-interactive-or-icon-rows');
+        }
+        if (hasRepeatedRows && dominantImageIsSmall && dominantImageSizeRatio >= .6) {
+            navigationStrength += 1;
+        }
+        if (hasRepeatedRows && navigationSemantic) {
+            navigationStrength += 1;
+            negativeSignals.push('navigation-structure-token');
+        }
+        if (hasRepeatedRows && dominantImageIsAvatarSized && dominantImageSizeRatio >= .6) {
+            inboxStrength += 3;
+            negativeSignals.push('repeated-avatar-or-thumbnail-rows');
+        }
+        if (hasRepeatedRows && dominantImageIsAvatarSized && inboxSemantic) {
+            inboxStrength += 1;
+            negativeSignals.push('inbox-structure-token');
+        }
+        if (largeEnoughImageCount > 0) {
+            contentStrength += 2;
+            positiveSignals.push(`eligible-images=${largeEnoughImageCount}/${images.length}`);
+        }
+        if (sizeCounts.size >= 3) {
+            contentStrength += 1;
+            positiveSignals.push(`diverse-image-sizes=${sizeCounts.size}`);
+        }
+        if (contentSemantic && (mediaElements > 0 || largeEnoughImageCount > 0)) {
+            contentStrength += 2;
+            positiveSignals.push('media-or-gallery-structure');
+        }
+        if (videos > 0 || hasContentLandmark) {
+            contentStrength += 1;
+            positiveSignals.push('content-landmark-or-video');
+        }
+
+        let classification = 'unknown';
+        if (navigationStrength >= 4 && navigationStrength >= inboxStrength &&
+            navigationStrength >= contentStrength) {
+            classification = 'navigation';
+        } else if (inboxStrength >= 3 && inboxStrength > contentStrength) {
+            classification = 'list/inbox';
+        } else if (contentStrength >= 2) {
+            classification = 'content';
+        } else if (navigationStrength > 0 || inboxStrength > 0 || contentStrength > 0) {
+            classification = 'mixed';
+        }
+        const baseScore = Math.max(0, Math.min(
+            100,
+            50 + contentStrength * 12 - navigationStrength * 14 - inboxStrength * 9
+        ));
+        const score = classification === 'navigation' ? Math.min(10, baseScore) : baseScore;
+        const suggestedAction = classification === 'navigation' ? 'skip' :
+            classification === 'list/inbox' ? 'deprioritize' :
+                classification === 'content' ? 'scan-first' : 'normal';
+        const hasStrongEligibleMedia = largeEnoughImageCount >= 3 &&
+            (eligibleImageRatio >= .35 || sizeCounts.size >= 3) &&
+            (contentSemantic || mediaElements > 0 || videos > 0 || hasContentLandmark);
+        const hasStructuredMediaContent = contentSemantic &&
+            (mediaElements > 0 || videos > 0 || largeEnoughImageCount >= 3);
+        const hasStrongContentSignals = hasStrongEligibleMedia || hasStructuredMediaContent ||
+            (hasContentLandmark && largeEnoughImageCount >= 3);
+        const clearNavigationPattern = classification === 'navigation' && hasRepeatedRows &&
+            hasNavigationLandmark && navigationSemantic;
+        const clearInboxPattern = classification === 'list/inbox' && hasRepeatedRows &&
+            dominantImageIsAvatarSized && dominantImageSizeRatio >= .6 && inboxSemantic;
+        const priority = classification === 'content' && hasStrongContentSignals
+            ? 'high'
+            : (clearNavigationPattern || clearInboxPattern) && !hasStrongContentSignals
+                ? 'low'
+                : 'medium';
+
+        return {
+            classification,
+            priority,
+            score,
+            suggestedAction,
+            repeatedStructureRatio,
+            rowCount: rows.length,
+            rowGroupTag: rowGroup.element.tagName?.toLowerCase() ?? 'unknown',
+            links,
+            buttons,
+            svgs,
+            imageCount: images.length,
+            smallImageCount,
+            largeEnoughImageCount,
+            eligibleImageRatio,
+            dominantImageSize,
+            dominantImageSizeRatio,
+            distinctImageSizes: sizeCounts.size,
+            mediaSignals: mediaElements + videos + Number(contentSemantic),
+            positiveSignals,
+            negativeSignals
         };
     };
     const getContainerTraversalState = (container) => {
@@ -2301,6 +3214,87 @@ export async function runHiddenFrameDeepScan({
         const id = typeof container?.id === 'string' ? container.id.trim() : '';
         return id ? `container#${id}` : `container#?=${index}`;
     };
+    const getContainerAnalysis = (container) => {
+        if (!containerAnalyses.has(container)) {
+            containerAnalyses.set(container, analyzeScrollContainer(container));
+        }
+        return containerAnalyses.get(container);
+    };
+    const logContainerAnalysis = (container, index) => {
+        const analysis = getContainerAnalysis(container);
+        console.info(
+            '[DeepScan CONTAINER ANALYSIS]',
+            getContainerLogLabel(container, index),
+            `classification=${analysis.classification}`,
+            `priority=${analysis.priority}`,
+            `score=${analysis.score}`,
+            `suggestedAction=${analysis.suggestedAction}`,
+            `repeatedStructureRatio=${analysis.repeatedStructureRatio.toFixed(2)}`,
+            `rows=${analysis.rowCount}`,
+            `rowGroup=${analysis.rowGroupTag}`,
+            `links=${analysis.links}`,
+            `buttons=${analysis.buttons}`,
+            `svg=${analysis.svgs}`,
+            `images=${analysis.imageCount}`,
+            `smallImages=${analysis.smallImageCount}`,
+            `largeEnoughImages=${analysis.largeEnoughImageCount}`,
+            `eligibleImageRatio=${analysis.eligibleImageRatio.toFixed(2)}`,
+            `dominantImageSize=${analysis.dominantImageSize}`,
+            `dominantImageSizeRatio=${analysis.dominantImageSizeRatio.toFixed(2)}`,
+            `distinctImageSizes=${analysis.distinctImageSizes}`,
+            `mediaSignals=${analysis.mediaSignals}`,
+            `positiveSignals=${analysis.positiveSignals.join(',') || 'none'}`,
+            `negativeSignals=${analysis.negativeSignals.join(',') || 'none'}`
+        );
+        return analysis;
+    };
+    const getContainerPlanLabel = (container, index) => {
+        const id = typeof container?.id === 'string' ? container.id.trim() : '';
+        return id ? `#${id}` : `?=${index}`;
+    };
+    const createContainerPlan = (containers) => {
+        const entries = containers.map((container) => {
+            const isNewContainer = !knownScrollContainerIndices.has(container);
+            const index = getScrollContainerIndex(container);
+            const analysis = getContainerAnalysis(container);
+            return {container, index, analysis, priority: analysis.priority, isNewContainer};
+        });
+        const high = entries.filter((entry) => entry.priority === 'high');
+        const medium = entries.filter((entry) => entry.priority === 'medium');
+        const low = entries.filter((entry) => entry.priority === 'low');
+        const skipped = skipLowPriorityContainers ? low : [];
+        const scanEntries = skipLowPriorityContainers
+            ? [...high, ...medium]
+            : [...high, ...medium, ...low];
+
+        return {entries, high, medium, low, skipped, scanEntries};
+    };
+    const logContainerPriority = (entry) => {
+        const action = entry.priority === 'low' && skipLowPriorityContainers ? 'skip' : 'scan';
+        console.info(
+            '[DeepScan CONTAINER PRIORITY]',
+            `container=${getContainerPlanLabel(entry.container, entry.index)}`,
+            `classification=${entry.analysis.classification}`,
+            `priority=${entry.priority}`,
+            `score=${entry.analysis.score}`,
+            `action=${action}`,
+            ...(action === 'skip' ? ['reason=low-priority-policy'] : [])
+        );
+    };
+    const logContainerPlan = (plan) => {
+        const labels = (entries) => entries.map(({container, index}) =>
+            getContainerPlanLabel(container, index)
+        ).join(',');
+        console.info(
+            '[DeepScan CONTAINER PLAN]',
+            `high=[${labels(plan.high)}]`,
+            `medium=[${labels(plan.medium)}]`,
+            `low=[${labels(plan.low)}]`,
+            `skipLowPriorityContainers=${skipLowPriorityContainers}`,
+            `scanOrder=[${labels(plan.scanEntries)}]`,
+            `skipped=[${labels(plan.skipped)}]`
+        );
+    };
     const logContainerDirection = (label, container, index, {
         reason = null,
         durationMs = null
@@ -2332,6 +3326,63 @@ export async function runHiddenFrameDeepScan({
             `clientHeight=${metrics.clientHeight}`
         );
     };
+    const logContainerPerformance = (container, index, direction, result, metrics, durationMs) => {
+        const mutations = getMutationDelta(metrics.mutationStart ?? getMutationSnapshot());
+        const otherMs = Math.max(
+            0,
+            durationMs - metrics.scrollActionMs - metrics.settleMs - metrics.collectSourcesMs
+        );
+        console.info(
+            '[DeepScan CONTAINER PERF]',
+            `container=${getContainerLogLabel(container, index)}`,
+            `direction=${direction}`,
+            `result=${result}`,
+            `durationMs=${Math.round(durationMs)}`,
+            `steps=${metrics.steps}`,
+            `scrollActionMs=${Math.round(metrics.scrollActionMs)}`,
+            `settleMs=${Math.round(metrics.settleMs)}`,
+            `collectSourcesMs=${Math.round(metrics.collectSourcesMs)}`,
+            `scanImagesMs=${Math.round(metrics.scanImagesMs)}`,
+            `carouselPhotoSwipeMs=${Math.round(metrics.carouselPhotoSwipeMs)}`,
+            `candidatePipelineMs=${Math.round(metrics.candidatePipelineMs)}`,
+            `otherMs=${Math.round(otherMs)}`,
+            `newSources=${metrics.newSources}`,
+            `newRawCandidates=${metrics.newRawCandidates}`,
+            'newAcceptedCandidates=pipeline-reported',
+            `newDomImages=${metrics.newDomImages}`,
+            `newTargets=${metrics.newTargets}`,
+            `mutations=${mutations.total}`,
+            `mutationChildList=${mutations.childList}`,
+            `mutationAttributes=${mutations.attributes}`,
+            `mutationAddedElements=${mutations.addedElements}`,
+            `mutationRemovedElements=${mutations.removedElements}`,
+            `relevantMutations=${mutations.relevantTotal}`
+        );
+    };
+    const logPassSummary = (pass, metrics, durationMs, repeat, repeatReasons, newContainers) => {
+        const mutations = getMutationDelta(metrics.mutationStart ?? getMutationSnapshot());
+        console.info(
+            '[DeepScan PASS SUMMARY]',
+            `pass=${pass}`,
+            `durationMs=${Math.round(durationMs)}`,
+            `newSources=${metrics.newSources}`,
+            `newCandidates=${metrics.newRawCandidates}`,
+            `newImages=${metrics.newDomImages}`,
+            `newContainers=${newContainers}`,
+            `newGalleries=${metrics.newGalleries}`,
+            `mutations=${mutations.total}`,
+            `mutationChildList=${mutations.childList}`,
+            `mutationAttributes=${mutations.attributes}`,
+            `mutationAddedElements=${mutations.addedElements}`,
+            `mutationRemovedElements=${mutations.removedElements}`,
+            `relevantMutations=${mutations.relevantTotal}`,
+            `lastNewSourceAt=${lastNewSourceAt ?? 'none'}`,
+            `lastRawCandidateAt=${lastRawCandidateAt ?? 'none'}`,
+            'lastAcceptedCandidateAt=pipeline-reported',
+            `repeat=${repeat}`,
+            `repeatReasons=${repeatReasons.join(',') || 'none'}`
+        );
+    };
     const isAtContainerTop = (metrics) => metrics.scrollTop <= 4;
     const isAtContainerBottom = (metrics) => metrics.scrollTop + metrics.clientHeight >=
         metrics.scrollHeight - 4;
@@ -2350,17 +3401,37 @@ export async function runHiddenFrameDeepScan({
         let progressDiagnosticLogged = false;
         const label = direction === 'up' ? 'UP' : 'DOWN';
         const directionStartedAt = performance.now();
+        const directionMetrics = createPerformanceMetrics();
+        directionMetrics.mutationStart = getMutationSnapshot();
+        const containerLabel = getContainerLogLabel(container, index);
+        let directionFinished = false;
 
-        reportActiveScrollContainer(container);
+        const finishContainerScan = (result) => {
+            if (!directionFinished) {
+                directionFinished = true;
+                logContainerPerformance(
+                    container,
+                    index,
+                    direction,
+                    result,
+                    directionMetrics,
+                    performance.now() - directionStartedAt
+                );
+            }
+            return result;
+        };
+
         logContainerDirection(label, container, index);
 
         while (isActive() && container.isConnected && isRelevantScrollableContainer(container)) {
+            addMetric(directionMetrics, 'steps', 1);
             const before = getContainerMetrics(container);
             const atEdge = direction === 'up'
                 ? isAtContainerTop(before)
                 : isAtContainerBottom(before);
             const mutationsBefore = getMutationSnapshot();
 
+            const scrollActionStartedAt = performance.now();
             if (!atEdge) {
                 const offset = Math.ceil(before.clientHeight * scrollStepFactor);
                 const maximumScrollTop = Math.max(0, before.scrollHeight - before.clientHeight);
@@ -2369,17 +3440,29 @@ export async function runHiddenFrameDeepScan({
                     : Math.min(maximumScrollTop, before.scrollTop + offset);
                 container.scrollTop = nextScrollTop;
             }
+            addMetric(directionMetrics, 'scrollActionMs', performance.now() - scrollActionStartedAt);
 
-            if (!(await waitForSettle({minimumMs: atEdge ? 400 : minimumSettleMs}))) {
-                return 'aborted';
+            const settleStartedAt = performance.now();
+            const settled = await waitForSettle({minimumMs: atEdge ? 400 : minimumSettleMs});
+            addMetric(directionMetrics, 'settleMs', performance.now() - settleStartedAt);
+            if (!settled) {
+                return finishContainerScan('aborted');
             }
 
-            let newCandidates = await collectSources();
+            let newCandidates = await collectSources({
+                metrics: directionMetrics,
+                context: {
+                    scope: 'container',
+                    pass: deepScanPass,
+                    container: containerLabel,
+                    direction
+                }
+            });
             registerTargets();
             let after = getContainerMetrics(container);
             let newImages = Math.max(0, after.images - before.images);
             let newTargets = Math.max(0, after.targets - before.targets);
-            const mutations = getMutationDelta(mutationsBefore).total;
+            const mutations = getMutationDelta(mutationsBefore).relevantTotal;
             let scrollMoved = direction === 'up'
                 ? after.scrollTop < before.scrollTop
                 : after.scrollTop > before.scrollTop;
@@ -2397,10 +3480,18 @@ export async function runHiddenFrameDeepScan({
                     () => getScrollRange(getContainerMetrics(container)),
                     () => container.isConnected && isRelevantScrollableContainer(container)
                 );
-                if (!isActive()) return 'aborted';
+                if (!isActive()) return finishContainerScan('aborted');
 
                 if (rangeGrewAfterEdgeWait) {
-                    newCandidates += await collectSources();
+                    newCandidates += await collectSources({
+                        metrics: directionMetrics,
+                        context: {
+                            scope: 'container',
+                            pass: deepScanPass,
+                            container: containerLabel,
+                            direction
+                        }
+                    });
                     registerTargets();
                     after = getContainerMetrics(container);
                     newImages = Math.max(0, after.images - before.images);
@@ -2415,6 +3506,9 @@ export async function runHiddenFrameDeepScan({
                     edgeLoadWaited = false;
                 }
             }
+
+            addMetric(directionMetrics, 'newDomImages', newImages);
+            addMetric(directionMetrics, 'newTargets', newTargets);
 
             const traversalProgress = scrollMoved || scrollRangeGrew;
             const structuralProgress = newImages > 0 || newTargets > 0 || mutations > 0;
@@ -2446,7 +3540,7 @@ export async function runHiddenFrameDeepScan({
                         reason: 'stable',
                         durationMs: performance.now() - directionStartedAt
                     });
-                    return 'stable';
+                    return finishContainerScan('stable');
                 }
             }
         }
@@ -2456,20 +3550,21 @@ export async function runHiddenFrameDeepScan({
                 reason: 'stable',
                 durationMs: performance.now() - directionStartedAt
             });
-            return 'stable';
+            return finishContainerScan('stable');
         }
 
-        return 'aborted';
+        return finishContainerScan('aborted');
     };
     const scanRelevantScrollContainers = async () => {
         while (isActive()) {
             const containers = getPendingRelevantScrollContainers();
             if (containers.length === 0) return;
 
-            for (const container of containers) {
-                const isNewContainer = !knownScrollContainerIndices.has(container);
-                const index = getScrollContainerIndex(container);
-                if (isNewContainer) {
+            const plan = createContainerPlan(containers);
+            for (const entry of plan.entries) {
+                const {container, index} = entry;
+                if (entry.isNewContainer) {
+                    logContainerAnalysis(container, index);
                     const state = getContainerDiagnosticState(container);
                     console.info(
                         '[DeepScan CONTAINER] added',
@@ -2489,16 +3584,37 @@ export async function runHiddenFrameDeepScan({
                         `current=${getContainerTraversalState(container)}`
                     );
                 }
-                await scanScrollableContainer(container, 'up', index);
-                if (!isActive()) return;
+                logContainerPriority(entry);
+            }
+            logContainerPlan(plan);
 
-                await scanScrollableContainer(container, 'down', index);
-                if (!isActive()) return;
+            for (const {container} of plan.skipped) {
                 if (container.isConnected && isRelevantScrollableContainer(container)) {
                     completedScrollContainerStates.set(
                         container,
                         getContainerTraversalState(container)
                     );
+                }
+            }
+
+            for (const {container, index} of plan.scanEntries) {
+                if (!container.isConnected || !isRelevantScrollableContainer(container)) continue;
+
+                reportActiveScrollContainer(container, index);
+                try {
+                    await scanScrollableContainer(container, 'up', index);
+                    if (!isActive()) return;
+
+                    await scanScrollableContainer(container, 'down', index);
+                    if (!isActive()) return;
+                    if (container.isConnected && isRelevantScrollableContainer(container)) {
+                        completedScrollContainerStates.set(
+                            container,
+                            getContainerTraversalState(container)
+                        );
+                    }
+                } finally {
+                    reportActiveScrollContainer();
                 }
             }
         }
@@ -2545,14 +3661,16 @@ export async function runHiddenFrameDeepScan({
             let newCandidates = await collectSources({
                 diagnosticPhase: direction === 'down' && !progressDiagnosticLogged
                     ? 'document-down'
-                    : null
+                    : null,
+                metrics: currentPassMetrics,
+                context: {scope: 'document', pass: deepScanPass, direction}
             });
             let afterNewTargets = registerTargets();
             let after = getMetrics();
             let newImages = Math.max(0, after.images - before.images);
             let newTargets = beforeNewTargets + afterNewTargets;
             const mutationDelta = getMutationDelta(mutationsBefore);
-            const mutations = mutationDelta.total;
+            const mutations = mutationDelta.relevantTotal;
             let scrollRangeGrew = getScrollRange(after) > getScrollRange(before);
             let documentScrollMoved = direction === 'up'
                 ? after.effectiveScrollTop < before.effectiveScrollTop
@@ -2576,7 +3694,9 @@ export async function runHiddenFrameDeepScan({
                     newCandidates += await collectSources({
                         diagnosticPhase: direction === 'down' && !progressDiagnosticLogged
                             ? 'document-down'
-                            : null
+                            : null,
+                        metrics: currentPassMetrics,
+                        context: {scope: 'document', pass: deepScanPass, direction}
                     });
                     afterNewTargets += registerTargets();
                     after = getMetrics();
@@ -2597,6 +3717,8 @@ export async function runHiddenFrameDeepScan({
             const traversalProgress = scrollMoved || scrollRangeGrew;
             const discoveryProgress = newImages > 0 || newTargets > 0 || newCandidates > 0 ||
                 mutations > 0;
+            addMetric(currentPassMetrics, 'newDomImages', newImages);
+            addMetric(currentPassMetrics, 'newTargets', newTargets);
 
             if (!atEdge && !reachedEdge) edgeLoadWaited = false;
 
@@ -2612,11 +3734,14 @@ export async function runHiddenFrameDeepScan({
                         `newCandidates=${newCandidates}`,
                         `newTargets=${newTargets}`,
                         `newImages=${newImages}`,
-                        `mutations=${mutations}`,
+                        `mutations=${mutationDelta.total}`,
                         `mutationChildList=${mutationDelta.childList}`,
                         `mutationAttributes=${mutationDelta.attributes}`,
                         `mutationAddedElements=${mutationDelta.addedElements}`,
                         `mutationRemovedElements=${mutationDelta.removedElements}`,
+                        `relevantMutations=${mutations}`,
+                        `relevantMutationChildList=${mutationDelta.relevantChildList}`,
+                        `relevantMutationAttributes=${mutationDelta.relevantAttributes}`,
                         `photoSwipeActivity=${photoSwipeActivityCount - photoSwipeActivityBefore}`,
                         'acceptedCandidates=pending-pipeline',
                         'visibleImageDelta=pending-pipeline',
@@ -2652,6 +3777,17 @@ export async function runHiddenFrameDeepScan({
     try {
         if (typeof MutationObserver === 'function' && document.documentElement) {
             observer = new MutationObserver((records) => {
+                records.forEach((record) => {
+                    observedMutationCount += 1;
+                    if (record.type === 'attributes') {
+                        observedAttributeMutationCount += 1;
+                        return;
+                    }
+
+                    observedChildListMutationCount += 1;
+                    observedAddedElementCount += countMutationElements(record.addedNodes);
+                    observedRemovedElementCount += countMutationElements(record.removedNodes);
+                });
                 const relevantMutations = records.filter(isRelevantMutation);
                 if (relevantMutations.length === 0) return;
 
@@ -2681,6 +3817,8 @@ export async function runHiddenFrameDeepScan({
                     'srcset',
                     'data-src',
                     'data-srcset',
+                    'data-lazy-src',
+                    'data-lazy-srcset',
                     'data-image',
                     'data-image-src',
                     'data-full',
@@ -2688,20 +3826,29 @@ export async function runHiddenFrameDeepScan({
                     'data-fullsize',
                     'data-large',
                     'data-original',
+                    'data-original-src',
                     'data-lightbox-src'
                 ]
             });
         }
 
         const readinessDeadline = Date.now() + DEEP_SCAN_READINESS_MAX_WAIT_MS;
+        deepScanMutationStart = getMutationSnapshot();
         while (isActive() && (window.innerWidth <= 0 || window.innerHeight <= 0 ||
             document.readyState === 'loading') && Date.now() < readinessDeadline) {
             if (!(await wait(DEEP_SCAN_READINESS_POLL_INTERVAL_MS))) break;
         }
 
         registerTargets();
-        await collectSources();
+        await collectSources({context: {scope: 'initial'}});
         while (isActive()) {
+            const pass = ++deepScanPass;
+            const passStartedAt = performance.now();
+            const passMetrics = createPerformanceMetrics();
+            passMetrics.mutationStart = getMutationSnapshot();
+            const containersAtPassStart = knownScrollContainerIndices.size;
+            currentPassMetrics = passMetrics;
+            console.info('[DeepScan PASS START]', `pass=${pass}`);
             const photoSwipeActivityAtPassStart = photoSwipeActivityCount;
             await scanRelevantScrollContainers();
             if (!isActive()) break;
@@ -2720,8 +3867,12 @@ export async function runHiddenFrameDeepScan({
             if (!(await waitForSettle({minimumMs: 400}))) break;
 
             const photoSwipeActivityBeforeFinalCollection = photoSwipeActivityCount;
-            const newCandidates = await collectSources();
+            const newCandidates = await collectSources({
+                metrics: passMetrics,
+                context: {scope: 'final-settle', pass}
+            });
             const newTargets = registerTargets();
+            addMetric(passMetrics, 'newTargets', newTargets);
             const documentStateAfterFinalSettle = getDocumentTraversalState();
             const mutationCountAfterFinalSettle = relevantMutationCount;
             const documentChangedAfterDirections = documentStateAfterDirections !==
@@ -2752,6 +3903,20 @@ export async function runHiddenFrameDeepScan({
             // Discovery work has already been collected and sent to the client. Repeat traversal
             // only when the reachable document range changed or a container range is unfinished.
             const repeatPass = documentChangedAfterDirections || pendingContainers.length > 0;
+            const repeatReasons = [];
+            if (documentChangedAfterDirections) repeatReasons.push('document-scroll-range-changed');
+            if (pendingContainers.length > 0) repeatReasons.push('container-still-open');
+            if (newContainersDetected) repeatReasons.push('new-container-discovered');
+
+            logPassSummary(
+                pass,
+                passMetrics,
+                performance.now() - passStartedAt,
+                repeatPass,
+                repeatReasons,
+                Math.max(0, knownScrollContainerIndices.size - containersAtPassStart)
+            );
+            currentPassMetrics = null;
 
             if (!repeatPass) {
                 console.info('[DeepScan PASS] complete');
@@ -2761,6 +3926,8 @@ export async function runHiddenFrameDeepScan({
 
             console.info(
                 '[DeepScan PASS] repeat',
+                `pass=${pass}`,
+                `repeatReasons=${repeatReasons.join(',')}`,
                 `mutation=${mutationDetected}`,
                 `candidates=${candidatesDetected}`,
                 `targets=${targetsDetected}`,
@@ -2772,12 +3939,35 @@ export async function runHiddenFrameDeepScan({
         }
     } finally {
         observer?.disconnect();
+        currentPassMetrics = null;
         reportActiveScrollContainer();
     }
 
     const status = signal?.aborted === true ? 'cancelled' : 'completed';
     if (status === 'completed' && completedNaturally) {
-        console.info('[DeepScan END] status=completed');
+        const mutations = getMutationDelta(deepScanMutationStart ?? getMutationSnapshot());
+        console.info(
+            '[DeepScan END] status=completed',
+            `mutations=${mutations.total}`,
+            `mutationChildList=${mutations.childList}`,
+            `mutationAttributes=${mutations.attributes}`,
+            `mutationAddedElements=${mutations.addedElements}`,
+            `mutationRemovedElements=${mutations.removedElements}`,
+            `relevantMutations=${mutations.relevantTotal}`,
+            'styleClassObserved=false'
+        );
+    } else if (status === 'cancelled') {
+        const mutations = getMutationDelta(deepScanMutationStart ?? getMutationSnapshot());
+        console.info(
+            '[DeepScan END] status=cancelled',
+            `mutations=${mutations.total}`,
+            `mutationChildList=${mutations.childList}`,
+            `mutationAttributes=${mutations.attributes}`,
+            `mutationAddedElements=${mutations.addedElements}`,
+            `mutationRemovedElements=${mutations.removedElements}`,
+            `relevantMutations=${mutations.relevantTotal}`,
+            'styleClassObserved=false'
+        );
     }
 
     return {

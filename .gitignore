@@ -1,2 +1,4 @@
 tests/images/
-tests/imgblur
+tests/imgblur/
+tests/carousel/
+Scanflow.md

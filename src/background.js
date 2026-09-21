@@ -469,7 +469,9 @@ function createHiddenDeepScanHostMessage(job, action) {
         token: job.token,
         ...(action === 'start' ? {
             url: job.url,
-            ignoreHiddenImages: job.ignoreHiddenImages === true
+            ignoreHiddenImages: job.ignoreHiddenImages === true,
+            minimumImageWidth: job.minimumImageWidth,
+            minimumImageHeight: job.minimumImageHeight
         } : {})
     };
 }
@@ -575,6 +577,12 @@ async function startHiddenDeepScan(request) {
         hostFrameId: HIDDEN_DEEP_SCAN_HOST_FRAME_ID,
         url: request.url,
         ignoreHiddenImages: request.ignoreHiddenImages === true,
+        minimumImageWidth: Number.isFinite(request.minimumImageWidth)
+            ? Math.max(0, Math.round(request.minimumImageWidth))
+            : 200,
+        minimumImageHeight: Number.isFinite(request.minimumImageHeight)
+            ? Math.max(0, Math.round(request.minimumImageHeight))
+            : 200,
         allowProtectedDeepScan: request.allowProtectedDeepScan === true,
         protectedFrameRuleAttempted: false,
         cancelled: false
@@ -828,6 +836,12 @@ async function startIsolatedDeepScan(request) {
         url: request.url,
         tabId: request.tabId,
         ignoreHiddenImages: request.ignoreHiddenImages === true,
+        minimumImageWidth: Number.isFinite(request.minimumImageWidth)
+            ? Math.max(0, Math.round(request.minimumImageWidth))
+            : 200,
+        minimumImageHeight: Number.isFinite(request.minimumImageHeight)
+            ? Math.max(0, Math.round(request.minimumImageHeight))
+            : 200,
         allowProtectedDeepScan: request.allowProtectedDeepScan === true,
         popupClientId: typeof request.popupClientId === 'string' && request.popupClientId
             ? request.popupClientId
@@ -852,6 +866,8 @@ async function startIsolatedDeepScan(request) {
             tabId: job.tabId,
             url: job.url,
             ignoreHiddenImages: job.ignoreHiddenImages,
+            minimumImageWidth: job.minimumImageWidth,
+            minimumImageHeight: job.minimumImageHeight,
             allowProtectedDeepScan: job.allowProtectedDeepScan
         });
     } catch (error) {
@@ -1186,6 +1202,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
                 '[DeepScan PIPELINE]',
                 `phase=${diagnostic.phase}`,
                 `batch=${diagnostic.id}`,
+                `collection=${diagnostic.collection ?? 'unknown'}`,
+                `pass=${diagnostic.pass ?? 'initial'}`,
+                `container=${diagnostic.container ?? 'document'}`,
+                `direction=${diagnostic.direction ?? 'none'}`,
                 `rawCandidates=${diagnostic.rawCandidates}`,
                 `scannerNewURLs=${result.scannerNewURLs}`,
                 `imageFinderNewURLs=${result.imageFinderNewURLs}`,
@@ -1195,7 +1215,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
                 `visibleNewURLs=${result.visibleNewURLs}`,
                 `visibleWinnersFromBatch=${result.visibleWinnersFromBatch}`,
                 `notVisibleAfterFiltering=${result.notVisibleAfterFiltering}`,
+                `candidatePipelineMs=${result.candidatePipelineMs}`,
                 `visibleImages=${result.visibleImages}`,
+                `scanImagesMs=${diagnostic.scanImagesMs ?? 'unavailable'}`,
+                `carouselPhotoSwipeMs=${diagnostic.carouselPhotoSwipeMs ?? 'unavailable'}`,
                 `newBases=${diagnostic.newBases}`,
                 `queryVariants=${diagnostic.queryVariants}`,
                 `resolutionUpgrades=${diagnostic.resolutionUpgrades}`,

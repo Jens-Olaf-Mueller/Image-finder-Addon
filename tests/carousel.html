@@ -50,6 +50,21 @@
             line-height: 1.45;
         }
 
+        .fixture-toggle {
+            display: inline-flex;
+            align-items: center;
+            gap: .5rem;
+            margin-top: .85rem;
+            color: #dce8fb;
+            cursor: pointer;
+        }
+
+        .fixture-toggle input {
+            inline-size: 1rem;
+            block-size: 1rem;
+            accent-color: #ffe600;
+        }
+
         .fixture-overview {
             display: grid;
             grid-template-columns: repeat(4, minmax(120px, 1fr));
@@ -71,7 +86,7 @@
 
         .fixture-columns {
             display: grid;
-            grid-template-columns: 250px 350px minmax(440px, 1fr);
+            grid-template-columns: 250px 350px minmax(440px, 1fr) 170px;
             gap: 1px;
             height: calc(100vh - 142px);
             background: #33415c;
@@ -79,7 +94,8 @@
 
         #asdMenu,
         #divMessages,
-        #mainChat {
+        #mainChat,
+        #mixedContainer {
             min-width: 0;
             min-height: 0;
             overflow-y: auto;
@@ -98,6 +114,28 @@
         #mainChat {
             padding: 1rem;
             scroll-behavior: auto;
+        }
+
+        #mixedContainer {
+            padding: .75rem;
+        }
+
+        .mixed-entry {
+            display: flex;
+            align-items: center;
+            min-height: 72px;
+            margin-bottom: .55rem;
+            padding: .55rem;
+            border: 1px solid #344563;
+            border-radius: .45rem;
+            background: #202d45;
+            color: #b9c7df;
+        }
+
+        .mixed-entry img {
+            width: 1px;
+            height: 1px;
+            margin-right: .55rem;
         }
 
         .column-title {
@@ -263,6 +301,25 @@
             opacity: .42;
         }
 
+        .slider-prev,
+        .slider-next {
+            display: grid;
+            min-height: 44px;
+            place-items: center;
+            border: 1px solid #7488aa;
+            border-radius: .45rem;
+            background: #314361;
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .slider-prev[aria-disabled="true"],
+        .slider-next[aria-disabled="true"] {
+            cursor: not-allowed;
+            opacity: .42;
+            pointer-events: none;
+        }
+
         .carousel-active {
             min-width: 0;
         }
@@ -367,9 +424,13 @@
         <div>
             <h1>Carousel Test Fixture</h1>
             <p>
-                Three independent scrollcontainers, real local media files and
+                Four independent scrollcontainers, real local media files and
                 PhotoSwipe-compatible gallery markup for DeepScan diagnostics.
             </p>
+            <label class="fixture-toggle">
+                <input id="fullInbox" type="checkbox" checked>
+                <span>Long message list</span>
+            </label>
         </div>
         <section id="fixtureOverview" class="fixture-overview" aria-label="Carousel overview"></section>
     </header>
@@ -448,8 +509,37 @@
                 </div>
             </section>
 
+            <section class="carousel" aria-labelledby="shadowLazyHeading">
+                <div class="carousel-heading">
+                    <h2 id="shadowLazyHeading">Carousel 5</h2>
+                    <p>finite · 19 deferred slides · open Shadow DOM</p>
+                </div>
+                <div id="shadowLazyCarouselHost"></div>
+            </section>
+
+            <section id="virtualCarousel" class="carousel virtual-slider" data-carousel-id="virtual-finite" data-total="24">
+                <div class="carousel-heading">
+                    <h2>Carousel 6</h2>
+                    <p>finite · 24 virtualized slides · recycled DOM nodes</p>
+                </div>
+                <div class="carousel-stage">
+                    <span class="slider-prev" aria-label="Previous image" role="button" tabindex="0">←</span>
+                    <div class="virtual-slides" aria-live="polite"></div>
+                    <span class="slider-next" aria-label="Next image" role="button" tabindex="0">→</span>
+                </div>
+            </section>
+
             <div id="chatAfter"></div>
         </main>
+
+        <aside id="mixedContainer" aria-label="Fixture sample">
+            <h2 class="column-title">Mixed sample</h2>
+            <div class="mixed-entry"><img width="1" height="1" alt=""><span>Sample alpha</span></div>
+            <div class="mixed-entry"><img width="1" height="1" alt=""><span>Sample beta</span></div>
+            <div class="mixed-entry"><img width="1" height="1" alt=""><span>Sample gamma</span></div>
+            <div class="mixed-entry"><img width="1" height="1" alt=""><span>Sample delta</span></div>
+            <div class="mixed-entry"><img width="1" height="1" alt=""><span>Sample epsilon</span></div>
+        </aside>
     </div>
 
     <script>
@@ -459,12 +549,12 @@
                 type: 'cyclic',
                 startIndex: 0,
                 slides: [
-                    'carousel/carousel1/c1Pic1.jpg',
-                    'carousel/carousel1/c1Pic2.jpg',
-                    'carousel/carousel1/c1Pic3.jpg',
-                    'carousel/carousel1/c1Pic4.jpg',
-                    'carousel/carousel1/c1Pic5.jpg',
-                    'carousel/carousel1/c1Pic6.jpg'
+                    'carousel/carousel1/c1Pic01.jpg',
+                    'carousel/carousel1/c1Pic02.jpg',
+                    'carousel/carousel1/c1Pic03.jpg',
+                    'carousel/carousel1/c1Pic04.jpg',
+                    'carousel/carousel1/c1Pic05.jpg',
+                    'carousel/carousel1/c1Pic06.jpg'
                 ]
             },
             {
@@ -472,14 +562,14 @@
                 type: 'finite',
                 startIndex: 3,
                 slides: [
-                    'carousel/carousel2/c2Pic1.jpg',
-                    'carousel/carousel2/c2Pic2.jpg',
-                    'carousel/carousel2/c2Pic3.jpg',
-                    'carousel/carousel2/c2Pic4.jpg',
-                    'carousel/carousel2/c2Pic5.jpg',
-                    'carousel/carousel2/c2Pic6.jpg',
-                    'carousel/carousel2/c2Pic7.jpg',
-                    'carousel/carousel2/c2Pic8.jpg'
+                    'carousel/carousel2/c2Pic01.jpg',
+                    'carousel/carousel2/c2Pic02.jpg',
+                    'carousel/carousel2/c2Pic03.jpg',
+                    'carousel/carousel2/c2Pic04.jpg',
+                    'carousel/carousel2/c2Pic05.jpg',
+                    'carousel/carousel2/c2Pic06.jpg',
+                    'carousel/carousel2/c2Pic07.jpg',
+                    'carousel/carousel2/c2Pic08.jpg'
                 ]
             },
             {
@@ -487,15 +577,15 @@
                 type: 'cyclic',
                 startIndex: 0,
                 slides: [
-                    'carousel/carousel3/c3Pic1.jpg',
-                    'carousel/carousel3/c3Pic2.jpg',
-                    'carousel/carousel3/c3Pic3.jpg',
-                    'carousel/carousel3/c3Pic4.jpg',
-                    'carousel/carousel3/c3Pic5.jpg',
-                    'carousel/carousel3/c3Pic6.jpg',
-                    'carousel/carousel3/c3Pic7.jpg',
-                    'carousel/carousel3/c3Pic8.jpg',
-                    'carousel/carousel3/c3Pic9.jpg',
+                    'carousel/carousel3/c3Pic01.jpg',
+                    'carousel/carousel3/c3Pic02.jpg',
+                    'carousel/carousel3/c3Pic03.jpg',
+                    'carousel/carousel3/c3Pic04.jpg',
+                    'carousel/carousel3/c3Pic05.jpg',
+                    'carousel/carousel3/c3Pic06.jpg',
+                    'carousel/carousel3/c3Pic07.jpg',
+                    'carousel/carousel3/c3Pic08.jpg',
+                    'carousel/carousel3/c3Pic09.jpg',
                     'carousel/carousel3/c3Pic10.jpg',
                     'carousel/carousel3/c3Pic11.jpg'
                 ]
@@ -505,15 +595,15 @@
                 type: 'finite',
                 startIndex: 5,
                 slides: [
-                    'carousel/carousel4/c4Pic1.jpg',
-                    'carousel/carousel4/c4Pic2.jpg',
-                    'carousel/carousel4/c4Pic3.jpg',
-                    'carousel/carousel4/c4Pic4.jpg',
-                    'carousel/carousel4/c4Pic5.jpg',
-                    'carousel/carousel4/c4Pic6.jpg',
-                    'carousel/carousel4/c4Pic7.jpg',
-                    'carousel/carousel4/c4Pic8.jpg',
-                    'carousel/carousel4/c4Pic9.jpg',
+                    'carousel/carousel4/c4Pic01.jpg',
+                    'carousel/carousel4/c4Pic02.jpg',
+                    'carousel/carousel4/c4Pic03.jpg',
+                    'carousel/carousel4/c4Pic04.jpg',
+                    'carousel/carousel4/c4Pic05.jpg',
+                    'carousel/carousel4/c4Pic06.jpg',
+                    'carousel/carousel4/c4Pic07.jpg',
+                    'carousel/carousel4/c4Pic08.jpg',
+                    'carousel/carousel4/c4Pic09.jpg',
                     'carousel/carousel4/c4Pic10.jpg'
                 ]
             }
@@ -575,6 +665,25 @@
             'images/test5.jpg',
             'images/woods.webp'
         ];
+        const shadowLazyCarousel = {
+            id: 'shadow-lazy-finite',
+            type: 'finite',
+            startIndex: 8,
+            slides: [
+                'images/Kinsky-small500.JPG',
+                ...chatImages.slice(1, 19)
+            ],
+            fullSlides: [
+                'images/Kinsky-original1952x1440.JPG',
+                ...chatImages.slice(1, 19)
+            ]
+        };
+        const virtualCarouselData = {
+            id: 'virtual-finite',
+            type: 'finite',
+            startIndex: 11,
+            slides: chatImages.slice(19, 43)
+        };
 
         const menuItems = [
             ['Home', '../assets/icons/icon64.png'],
@@ -591,6 +700,9 @@
             ...alphabet,
             ...alphabet.flatMap((first) => alphabet.map((second) => first + second))
         ];
+        const fullInboxControl = document.getElementById('fullInbox');
+        const inboxMode = new URLSearchParams(location.search).get('inbox');
+        fullInboxControl.checked = inboxMode !== 'short';
         const carouselState = new Map(
             carouselData.map((carousel) => [carousel.id, {index: carousel.startIndex}])
         );
@@ -643,8 +755,9 @@
         const renderMessages = () => {
             const target = document.getElementById('messageEntries');
             const fragment = document.createDocumentFragment();
+            const messageInitials = fullInboxControl.checked ? initials : initials.slice(0, alphabet.length);
 
-            initials.forEach((initial, index) => {
+            messageInitials.forEach((initial, index) => {
                 const entry = document.createElement('article');
                 entry.className = 'message-entry';
 
@@ -663,7 +776,9 @@
                 entry.append(avatar, copy);
                 fragment.append(entry);
             });
-            target.append(fragment);
+            target.replaceChildren(fragment);
+            document.documentElement.dataset.fixtureInboxMode = fullInboxControl.checked ? 'long' : 'short';
+            document.documentElement.dataset.fixtureMessageCount = String(messageInitials.length);
         };
 
         const appendChatImages = (targetID, files) => {
@@ -830,7 +945,7 @@
 
                     const image = document.createElement('img');
                     image.className = 'pswp__img';
-                    image.src = imageURL(carousel.slides[index]);
+                    image.src = imageURL(carousel.fullSlides?.[index] ?? carousel.slides[index]);
                     image.alt = carousel.id + ' full-size slide ' + getSlideNumber(carousel, index);
                     image.loading = 'eager';
                     if (isActive) {
@@ -857,6 +972,143 @@
             document.body.append(dialog);
         };
 
+        const createShadowLazyCarousel = () => {
+            const host = document.getElementById('shadowLazyCarouselHost');
+            const root = host.attachShadow({mode: 'open'});
+            const state = {index: shadowLazyCarousel.startIndex};
+            const style = document.createElement('style');
+            style.textContent = [
+                ':host { display:block; }',
+                '.lazy-gallery { padding:.8rem; border:1px dashed #7488aa; border-radius:.5rem; }',
+                '.lazy-stage { display:grid; grid-template-columns:52px minmax(0, 1fr) 52px; gap:.6rem; align-items:center; }',
+                '.lazy-control { min-height:44px; border:1px solid #7488aa; border-radius:.45rem; background:#314361; color:#eef5ff; cursor:pointer; }',
+                '.lazy-control:disabled { opacity:.42; cursor:not-allowed; }',
+                '.lazy-slide { display:none; border:0; padding:0; background:#0d1320; cursor:zoom-in; }',
+                '.lazy-slide[aria-current="true"] { display:block; }',
+                '.lazy-slide img { display:block; width:100%; max-height:420px; object-fit:contain; }'
+            ].join('');
+            const gallery = document.createElement('section');
+            gallery.className = 'lazy-gallery carousel';
+            gallery.dataset.carouselId = shadowLazyCarousel.id;
+            gallery.dataset.slideCount = String(shadowLazyCarousel.slides.length);
+            gallery.innerHTML = [
+                '<div class="lazy-stage">',
+                '<button class="lazy-control" data-carousel-prev rel="prev" aria-label="Previous image">←</button>',
+                '<div class="lazy-slides"></div>',
+                '<button class="lazy-control" data-carousel-next rel="next" aria-label="Next image">→</button>',
+                '</div>'
+            ].join('');
+            const slides = gallery.querySelector('.lazy-slides');
+            const previousControl = gallery.querySelector('[data-carousel-prev]');
+            const nextControl = gallery.querySelector('[data-carousel-next]');
+            const isPreloaded = (index) => index >= state.index && index <= state.index + 3;
+
+            shadowLazyCarousel.slides.forEach((path, index) => {
+                const slide = document.createElement('button');
+                slide.type = 'button';
+                slide.className = 'lazy-slide';
+                slide.dataset.slideIndex = String(index + 1);
+                slide.setAttribute('aria-hidden', 'true');
+                slide.setAttribute('at-attr', 'media_locator');
+                slide.addEventListener('click', () => openPhotoSwipe(shadowLazyCarousel, index));
+
+                const image = document.createElement('img');
+                image.alt = 'Deferred shadow slide ' + (index + 1);
+                image.setAttribute('data-lazy-src', imageURL(path));
+                image.setAttribute('data-lazy-srcset', imageURL(path) + ' 1x');
+                slide.append(image);
+                slides.append(slide);
+            });
+
+            const render = () => {
+                gallery.dataset.activeSlide = String(state.index + 1);
+                Array.from(slides.children).forEach((slide, index) => {
+                    const active = index === state.index;
+                    const image = slide.querySelector('img');
+                    slide.setAttribute('aria-current', String(active));
+                    slide.setAttribute('aria-hidden', String(!active));
+                    if (isPreloaded(index)) {
+                        image.src = image.getAttribute('data-lazy-src');
+                        image.srcset = image.getAttribute('data-lazy-srcset');
+                    } else {
+                        image.removeAttribute('src');
+                        image.removeAttribute('srcset');
+                    }
+                });
+                updateControl(previousControl, state.index === 0);
+                updateControl(nextControl, state.index === shadowLazyCarousel.slides.length - 1);
+            };
+            previousControl.addEventListener('click', () => {
+                if (state.index === 0) return;
+                state.index -= 1;
+                render();
+            });
+            nextControl.addEventListener('click', () => {
+                if (state.index >= shadowLazyCarousel.slides.length - 1) return;
+                state.index += 1;
+                render();
+            });
+            root.append(style, gallery);
+            render();
+        };
+
+        const initializeVirtualCarousel = () => {
+            const root = document.getElementById('virtualCarousel');
+            const previousControl = root.querySelector('.slider-prev');
+            const nextControl = root.querySelector('.slider-next');
+            const mount = root.querySelector('.virtual-slides');
+            const state = {index: virtualCarouselData.startIndex};
+            const pool = [-1, 0, 1].map(() => {
+                const slide = document.createElement('article');
+                slide.className = 'virtual-slide slider-slide';
+                slide.setAttribute('at-attr', 'media_locator');
+                const image = document.createElement('img');
+                image.alt = 'Virtual carousel image';
+                slide.append(image);
+                slide.addEventListener('click', () => {
+                    const index = Number(slide.dataset.slideIndex) - 1;
+                    if (Number.isInteger(index)) openPhotoSwipe(virtualCarouselData, index);
+                });
+                return slide;
+            });
+            const updateSpanControl = (control, disabled) => {
+                control.setAttribute('aria-disabled', String(disabled));
+                control.classList.toggle('disabled', disabled);
+            };
+            const render = () => {
+                root.dataset.activeSlide = String(state.index + 1);
+                root.dataset.slideCount = String(virtualCarouselData.slides.length);
+                const fragment = document.createDocumentFragment();
+                [-1, 0, 1].forEach((offset, poolIndex) => {
+                    const slide = pool[poolIndex];
+                    const index = state.index + offset;
+                    if (index < 0 || index >= virtualCarouselData.slides.length) return;
+
+                    slide.dataset.slideIndex = String(index + 1);
+                    slide.setAttribute('aria-current', String(index === state.index));
+                    slide.setAttribute('aria-hidden', String(index !== state.index));
+                    const image = slide.querySelector('img');
+                    image.src = imageURL(virtualCarouselData.slides[index]);
+                    image.srcset = imageURL(virtualCarouselData.slides[index]) + ' 1x';
+                    fragment.append(slide);
+                });
+                mount.replaceChildren(fragment);
+                updateSpanControl(previousControl, state.index === 0);
+                updateSpanControl(nextControl, state.index === virtualCarouselData.slides.length - 1);
+            };
+            previousControl.addEventListener('click', () => {
+                if (state.index === 0) return;
+                state.index -= 1;
+                render();
+            });
+            nextControl.addEventListener('click', () => {
+                if (state.index >= virtualCarouselData.slides.length - 1) return;
+                state.index += 1;
+                render();
+            });
+            render();
+        };
+
         const initializeCarousels = () => {
             carouselData.forEach((carousel) => {
                 const root = document.getElementById(carousel.id);
@@ -878,6 +1130,10 @@
 
         renderMenu();
         renderMessages();
+        fullInboxControl.addEventListener('change', () => {
+            renderMessages();
+            document.getElementById('divMessages').scrollTop = 0;
+        });
         appendChatImages('chatBefore', chatImages.slice(0, 6));
         appendChatImages('chatBetweenOneTwo', chatImages.slice(6, 12));
         appendChatImages('chatBetweenTwoThree', chatImages.slice(12, 40));
@@ -885,6 +1141,36 @@
         appendChatImages('chatAfter', chatImages.slice(46));
         renderOverview();
         initializeCarousels();
+        createShadowLazyCarousel();
+        initializeVirtualCarousel();
+
+        const runDeepScanCarouselFixture = async () => {
+            if (!new URLSearchParams(location.search).has('runDeepScanCarousel')) return;
+
+            const {scanImages, scanPhotoSwipeImages} = await import('../src/content.js');
+            const candidates = [
+                ...await scanImages(false, true, true),
+                ...await scanPhotoSwipeImages({traverseCarousel: true})
+            ];
+            const foundURLs = new Set(candidates.map((candidate) => candidate.url));
+            const expectedURLs = [
+                ...carouselData.flatMap((carousel) => carousel.slides),
+                ...shadowLazyCarousel.slides,
+                ...shadowLazyCarousel.fullSlides.slice(0, 1),
+                ...virtualCarouselData.slides
+            ].map((path) => new URL(imageURL(path), location.href).href);
+            const missing = expectedURLs.filter((url) => !foundURLs.has(url));
+            document.documentElement.dataset.deepScanCarouselResult = missing.length === 0
+                ? 'passed'
+                : 'failed';
+            document.documentElement.dataset.deepScanCarouselExpected = String(expectedURLs.length);
+            document.documentElement.dataset.deepScanCarouselFound = String(
+                expectedURLs.length - missing.length
+            );
+        };
+        void runDeepScanCarouselFixture().catch(() => {
+            document.documentElement.dataset.deepScanCarouselResult = 'failed';
+        });
 
         window.addEventListener('load', () => {
             requestAnimationFrame(setInitialChatPosition);
@@ -892,4 +1178,3 @@
     </script>
 </body>
 </html>
-
