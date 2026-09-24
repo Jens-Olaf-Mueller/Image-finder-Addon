@@ -23,6 +23,8 @@ export class ImageFinder {
     };
     #scanGeneration = 0;
     #downloadStates = new Map();
+    #deepScanStartedAt = null;
+    #deepScanTitleInterval = null;
 
     get selectedItem() {
         return this.DOM.lstImages.querySelector('.selected') || null;
@@ -85,6 +87,7 @@ export class ImageFinder {
         window.chrome?.downloads?.onChanged?.addListener((delta) => {
             this.#handleDownloadChanged(delta);
         });
+        window.addEventListener('pagehide', () => this.#stopDeepScanTitleTimer(), {once: true});
         this.#updateLED();
         this.#updateLEDActivity();
 
@@ -1340,10 +1343,13 @@ export class ImageFinder {
         this.DOM.divLED.classList.toggle('flash-led', activity === 'deepScan');
         this.DOM.divLED.dataset.activity = activity;
         if (activity === 'deepScan') {
-            this.DOM.divLED.title = 'Deep scan running...';
+            if (this.#deepScanStartedAt === null) this.#startDeepScanTitleTimer();
+            this.#updateDeepScanTitle();
         } else if (activity === 'none') {
+            this.#stopDeepScanTitleTimer();
             this.DOM.divLED.title = `Images found: ${this.images.size}`;
         } else {
+            this.#stopDeepScanTitleTimer();
             this.DOM.divLED.removeAttribute('title');
         }
         this.#updateDeepScanStopButton();
@@ -1353,6 +1359,37 @@ export class ImageFinder {
         } else if (activity === 'blurScanner' || activity === 'matcher') {
             this.info = 'Filtering list...';
         }
+    }
+
+    #startDeepScanTitleTimer() {
+        this.#stopDeepScanTitleTimer();
+        this.#deepScanStartedAt = Date.now();
+        this.#deepScanTitleInterval = setInterval(() => {
+            if (this.#activityCounts.deepScan === 0) {
+                this.#stopDeepScanTitleTimer();
+                return;
+            }
+            this.#updateDeepScanTitle();
+        }, 1000);
+    }
+
+    #stopDeepScanTitleTimer() {
+        if (this.#deepScanTitleInterval !== null) {
+            clearInterval(this.#deepScanTitleInterval);
+            this.#deepScanTitleInterval = null;
+        }
+        this.#deepScanStartedAt = null;
+    }
+
+    #updateDeepScanTitle() {
+        if (this.#deepScanStartedAt === null) return;
+
+        const elapsedMilliseconds = Date.now() - this.#deepScanStartedAt;
+        const elapsedSeconds = Math.max(0, Math.floor(elapsedMilliseconds / 1000));
+        const elapsed = elapsedSeconds < 60
+            ? `${elapsedSeconds}s`
+            : `${Math.floor(elapsedSeconds / 60)}:${String(elapsedSeconds % 60).padStart(2, '0')}`;
+        this.DOM.divLED.title = `Deep scan running ${elapsed} ...`;
     }
 
     #updateDeepScanStopButton() {

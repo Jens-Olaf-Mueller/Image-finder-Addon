@@ -1,3 +1,5 @@
+import ContainerAnalyser from './classes/ContainerAnalyser.js';
+
 export async function scanImages(
     ignoreHiddenImages = false,
     includeAllImageSources = false,
@@ -2406,6 +2408,8 @@ export async function runHiddenFrameDeepScan({
     const processedCarouselRoots = new WeakSet();
     const knownScrollContainerIndices = new Map();
     const completedScrollContainerStates = new Map();
+    const handledStructureContainers = new WeakSet();
+    const lowPriorityStructureContainers = new WeakSet();
     let observer = null;
     let lastRelevantMutationAt = startedAt;
     let relevantMutationCount = 0;
@@ -2599,7 +2603,9 @@ export async function runHiddenFrameDeepScan({
             ? attemptedUpwardTargets
             : attemptedDownwardTargets;
         const targets = getTargetElements().flatMap((element) => {
-            if (attemptedTargets.has(element)) return [];
+            if (attemptedTargets.has(element) || isInsideLowPriorityStructureContainer(element)) {
+                return [];
+            }
 
             try {
                 const rect = element.getBoundingClientRect();
@@ -2903,296 +2909,85 @@ export async function runHiddenFrameDeepScan({
     const isRelevantScrollableContainer = (element) => {
         if (!element || element === document.documentElement || element === document.body) return false;
 
-        try {
-            const style = getComputedStyle(element);
-            return element.scrollHeight > element.clientHeight && element.clientHeight > 0 &&
-                /(?:auto|scroll|overlay)/i.test(style.overflowY);
-        } catch {
-            return false;
-        }
+        return ContainerAnalyser.getScrollInfo(element).verticallyScrollable;
     };
-    const getRelevantScrollContainers = () => {
-        const containers = new Set();
+    const getRelevantContainerCandidates = () => {
+        const candidates = new Map();
+        const examinedElements = new WeakSet();
 
         getTargetElements().forEach((element) => {
             let parent = element.parentElement;
             while (parent && parent !== document.body && parent !== document.documentElement) {
-                if (isRelevantScrollableContainer(parent)) containers.add(parent);
+                if (!examinedElements.has(parent)) {
+                    examinedElements.add(parent);
+                    const isScrollable = isRelevantScrollableContainer(parent);
+                    const isStructural = ContainerAnalyser.isPlausibleStructureContainer(parent);
+                    if (isScrollable || isStructural) {
+                        candidates.set(parent, {container: parent, isScrollable, isStructural});
+                    }
+                }
                 parent = parent.parentElement;
             }
         });
 
-        return Array.from(containers).sort((first, second) => {
-            if (first.contains(second)) return 1;
-            if (second.contains(first)) return -1;
+        return Array.from(candidates.values()).sort((first, second) => {
+            if (first.container.contains(second.container)) return 1;
+            if (second.container.contains(first.container)) return -1;
             return 0;
         });
     };
     const getContainerMetrics = (container) => {
         const targets = getTargetElements().filter((element) => container.contains(element));
+        const {geometry} = ContainerAnalyser.getScrollInfo(container);
 
         return {
-            scrollTop: Math.max(0, Math.round(container.scrollTop ?? 0)),
-            scrollHeight: Math.max(0, container.scrollHeight ?? 0),
-            clientHeight: Math.max(0, container.clientHeight ?? 0),
+            scrollTop: geometry.scrollTop,
+            scrollHeight: geometry.scrollHeight,
+            clientHeight: geometry.clientHeight,
             images: container.querySelectorAll('img').length,
             targets: targets.length
         };
     };
     const containerAnalyses = new WeakMap();
-    const getClassTokens = (element) => String(element?.getAttribute?.('class') ?? '')
-        .split(/\s+/)
-        .map((token) => token.trim().toLowerCase())
-        .filter((token) => /^[a-z][a-z-]{1,40}$/.test(token))
-        .slice(0, 4);
-    const getStructureAttributeNames = (element) => Array.from(element?.attributes ?? [])
-        .map((attribute) => attribute.name.toLowerCase())
-        .filter((name) => name === 'role' || name.startsWith('aria-') || name.startsWith('data-'))
-        .slice(0, 6);
-    const getRowFingerprint = (row) => {
-        const childTags = Array.from(row.children ?? [], (child) => child.tagName.toLowerCase())
-            .slice(0, 8)
-            .join(',');
-        const directCounts = ['img', 'svg', 'a', 'button'].map((tagName) =>
-            row.querySelectorAll(tagName).length
-        ).join(',');
-
-        return [
-            row.tagName.toLowerCase(),
-            getClassTokens(row).join(','),
-            row.getAttribute?.('role') ?? '',
-            getStructureAttributeNames(row).join(','),
-            childTags,
-            directCounts
-        ].join('|');
-    };
-    const getImageDimensions = (image) => {
-        let width = Math.max(0, image?.naturalWidth ?? 0, Number(image?.getAttribute?.('width')) || 0);
-        let height = Math.max(0, image?.naturalHeight ?? 0, Number(image?.getAttribute?.('height')) || 0);
-
-        if (width > 0 && height > 0) return {width: Math.round(width), height: Math.round(height)};
-
-        try {
-            const rect = image.getBoundingClientRect();
-            width = Math.max(width, Math.round(rect.width));
-            height = Math.max(height, Math.round(rect.height));
-        } catch {
-            // A removed page element is not relevant for the passive diagnosis.
+    const isInsideLowPriorityStructureContainer = (element) => {
+        let current = element;
+        while (current && current !== document.body && current !== document.documentElement) {
+            if (lowPriorityStructureContainers.has(current)) return true;
+            current = current.parentElement;
         }
-        return {width, height};
-    };
-    const analyzeScrollContainer = (container) => {
-        const directGroups = [container, ...Array.from(container.children ?? [])]
-            .map((element) => ({element, rows: Array.from(element.children ?? [])}))
-            .filter(({rows}) => rows.length >= 4)
-            .sort((first, second) => second.rows.length - first.rows.length);
-        const rowGroup = directGroups[0] ?? {element: container, rows: []};
-        const rows = rowGroup.rows;
-        const sampledRows = rows.slice(0, 160);
-        const fingerprints = new Map();
-        sampledRows.forEach((row) => {
-            const fingerprint = getRowFingerprint(row);
-            fingerprints.set(fingerprint, (fingerprints.get(fingerprint) ?? 0) + 1);
-        });
-        const dominantStructureCount = Math.max(0, ...fingerprints.values());
-        const repeatedStructureRatio = sampledRows.length > 0
-            ? dominantStructureCount / sampledRows.length
-            : 0;
-        const hasRepeatedRows = rows.length >= 4 && repeatedStructureRatio >= .7;
-        const images = Array.from(container.querySelectorAll('img'));
-        const links = container.querySelectorAll('a').length;
-        const buttons = container.querySelectorAll('button').length;
-        const svgs = container.querySelectorAll('svg').length;
-        const videos = container.querySelectorAll('video').length;
-        const mediaElements = container.querySelectorAll('picture, source, video').length;
-        const sizeCounts = new Map();
-        let smallImageCount = 0;
-        let largeEnoughImageCount = 0;
-
-        images.forEach((image) => {
-            const {width, height} = getImageDimensions(image);
-            if (width <= 0 || height <= 0) return;
-
-            const key = `${width}x${height}`;
-            sizeCounts.set(key, (sizeCounts.get(key) ?? 0) + 1);
-            if (width < minimumImageWidth || height < minimumImageHeight) smallImageCount += 1;
-            else largeEnoughImageCount += 1;
-        });
-        const [dominantImageSize = 'none', dominantImageSizeCount = 0] =
-            [...sizeCounts.entries()].sort((first, second) => second[1] - first[1])[0] ?? [];
-        const dominantImageSizeRatio = images.length > 0 ? dominantImageSizeCount / images.length : 0;
-        const [dominantImageWidth = 0, dominantImageHeight = 0] = dominantImageSize
-            .split('x')
-            .map(Number);
-        const dominantImageIsSmall = dominantImageWidth > 0 && dominantImageHeight > 0 &&
-            (dominantImageWidth < minimumImageWidth || dominantImageHeight < minimumImageHeight);
-        const dominantImageIsAvatarSized = dominantImageWidth > 0 && dominantImageHeight > 0 &&
-            Math.max(dominantImageWidth, dominantImageHeight) <= 192;
-        const eligibleImageRatio = images.length > 0 ? largeEnoughImageCount / images.length : 0;
-        const semanticElements = [container, ...Array.from(container.querySelectorAll('*')).slice(0, 200)];
-        const semanticStructure = semanticElements.map((element) => [
-            ...getClassTokens(element),
-            element.getAttribute?.('role') ?? '',
-            ...getStructureAttributeNames(element)
-        ].join(' ')).join(' ');
-        const navigationSemantic = /\b(?:menu|navigation|nav|icon|sidebar|toolbar)\b/i.test(
-            semanticStructure
-        );
-        const inboxSemantic = /\b(?:user|avatar|message|chat|conversation|inbox|thread)\b/i.test(
-            semanticStructure
-        );
-        const contentSemantic = /\b(?:media|gallery|carousel|slide|poster|picture|source)\b/i.test(
-            semanticStructure
-        );
-        const containerTag = container.tagName.toLowerCase();
-        const hasNavigationLandmark = containerTag === 'nav' || containerTag === 'aside' ||
-            container.querySelector('nav, aside') !== null;
-        const hasContentLandmark = containerTag === 'main' || containerTag === 'article';
-        const positiveSignals = [];
-        const negativeSignals = [];
-        let navigationStrength = 0;
-        let inboxStrength = 0;
-        let contentStrength = 0;
-
-        if (hasRepeatedRows) {
-            negativeSignals.push(`repeated-rows=${rows.length}`);
-            if (dominantImageIsSmall && dominantImageSizeRatio >= .6) {
-                negativeSignals.push(`dominant-small-images=${dominantImageSize}`);
-            }
-        }
-        if (hasRepeatedRows && hasNavigationLandmark) {
-            navigationStrength += 3;
-            negativeSignals.push('navigation-landmark-with-repeated-rows');
-        }
-        if (hasRepeatedRows && (links + buttons + svgs) >= Math.max(4, rows.length / 2)) {
-            navigationStrength += 2;
-            negativeSignals.push('repeated-interactive-or-icon-rows');
-        }
-        if (hasRepeatedRows && dominantImageIsSmall && dominantImageSizeRatio >= .6) {
-            navigationStrength += 1;
-        }
-        if (hasRepeatedRows && navigationSemantic) {
-            navigationStrength += 1;
-            negativeSignals.push('navigation-structure-token');
-        }
-        if (hasRepeatedRows && dominantImageIsAvatarSized && dominantImageSizeRatio >= .6) {
-            inboxStrength += 3;
-            negativeSignals.push('repeated-avatar-or-thumbnail-rows');
-        }
-        if (hasRepeatedRows && dominantImageIsAvatarSized && inboxSemantic) {
-            inboxStrength += 1;
-            negativeSignals.push('inbox-structure-token');
-        }
-        if (largeEnoughImageCount > 0) {
-            contentStrength += 2;
-            positiveSignals.push(`eligible-images=${largeEnoughImageCount}/${images.length}`);
-        }
-        if (sizeCounts.size >= 3) {
-            contentStrength += 1;
-            positiveSignals.push(`diverse-image-sizes=${sizeCounts.size}`);
-        }
-        if (contentSemantic && (mediaElements > 0 || largeEnoughImageCount > 0)) {
-            contentStrength += 2;
-            positiveSignals.push('media-or-gallery-structure');
-        }
-        if (videos > 0 || hasContentLandmark) {
-            contentStrength += 1;
-            positiveSignals.push('content-landmark-or-video');
-        }
-
-        let classification = 'unknown';
-        if (navigationStrength >= 4 && navigationStrength >= inboxStrength &&
-            navigationStrength >= contentStrength) {
-            classification = 'navigation';
-        } else if (inboxStrength >= 3 && inboxStrength > contentStrength) {
-            classification = 'list/inbox';
-        } else if (contentStrength >= 2) {
-            classification = 'content';
-        } else if (navigationStrength > 0 || inboxStrength > 0 || contentStrength > 0) {
-            classification = 'mixed';
-        }
-        const baseScore = Math.max(0, Math.min(
-            100,
-            50 + contentStrength * 12 - navigationStrength * 14 - inboxStrength * 9
-        ));
-        const score = classification === 'navigation' ? Math.min(10, baseScore) : baseScore;
-        const suggestedAction = classification === 'navigation' ? 'skip' :
-            classification === 'list/inbox' ? 'deprioritize' :
-                classification === 'content' ? 'scan-first' : 'normal';
-        const hasStrongEligibleMedia = largeEnoughImageCount >= 3 &&
-            (eligibleImageRatio >= .35 || sizeCounts.size >= 3) &&
-            (contentSemantic || mediaElements > 0 || videos > 0 || hasContentLandmark);
-        const hasStructuredMediaContent = contentSemantic &&
-            (mediaElements > 0 || videos > 0 || largeEnoughImageCount >= 3);
-        const hasStrongContentSignals = hasStrongEligibleMedia || hasStructuredMediaContent ||
-            (hasContentLandmark && largeEnoughImageCount >= 3);
-        const clearNavigationPattern = classification === 'navigation' && hasRepeatedRows &&
-            hasNavigationLandmark && navigationSemantic;
-        const clearInboxPattern = classification === 'list/inbox' && hasRepeatedRows &&
-            dominantImageIsAvatarSized && dominantImageSizeRatio >= .6 && inboxSemantic;
-        const priority = classification === 'content' && hasStrongContentSignals
-            ? 'high'
-            : (clearNavigationPattern || clearInboxPattern) && !hasStrongContentSignals
-                ? 'low'
-                : 'medium';
-
-        return {
-            classification,
-            priority,
-            score,
-            suggestedAction,
-            repeatedStructureRatio,
-            rowCount: rows.length,
-            rowGroupTag: rowGroup.element.tagName?.toLowerCase() ?? 'unknown',
-            links,
-            buttons,
-            svgs,
-            imageCount: images.length,
-            smallImageCount,
-            largeEnoughImageCount,
-            eligibleImageRatio,
-            dominantImageSize,
-            dominantImageSizeRatio,
-            distinctImageSizes: sizeCounts.size,
-            mediaSignals: mediaElements + videos + Number(contentSemantic),
-            positiveSignals,
-            negativeSignals
-        };
+        return false;
     };
     const getContainerTraversalState = (container) => {
         const metrics = getContainerMetrics(container);
         return [metrics.scrollHeight, metrics.clientHeight].join(':');
     };
-    const getPendingRelevantScrollContainers = () => {
+    const getPendingRelevantContainerCandidates = () => {
         completedScrollContainerStates.forEach((_state, container) => {
             if (!container.isConnected) completedScrollContainerStates.delete(container);
         });
 
-        return getRelevantScrollContainers().filter((container) =>
-            completedScrollContainerStates.get(container) !== getContainerTraversalState(container)
-        );
+        return getRelevantContainerCandidates().filter((candidate) => candidate.isScrollable
+            ? completedScrollContainerStates.get(candidate.container) !==
+                getContainerTraversalState(candidate.container)
+            : !handledStructureContainers.has(candidate.container));
     };
     const synchronizeCompletedScrollContainerStates = () => {
-        getRelevantScrollContainers().forEach((container) => {
-            if (!completedScrollContainerStates.has(container)) return;
+        getRelevantContainerCandidates().forEach(({container, isScrollable}) => {
+            if (!isScrollable || !completedScrollContainerStates.has(container)) return;
 
             completedScrollContainerStates.set(container, getContainerTraversalState(container));
         });
     };
     const getContainerDiagnosticState = (container) => {
-        let style = null;
-        try {
-            style = getComputedStyle(container);
-        } catch {
-            // Diagnostics must not affect traversal when a page removes a container.
-        }
+        const scrollInfo = ContainerAnalyser.getScrollInfo(container);
+        const {geometry} = scrollInfo;
 
         return {
-            scrollTop: container?.scrollTop,
-            scrollHeight: container?.scrollHeight,
-            clientHeight: container?.clientHeight,
-            overflowY: style?.overflowY ?? '(unavailable)',
-            flexDirection: style?.flexDirection ?? '(unavailable)'
+            scrollTop: geometry.scrollTop,
+            scrollHeight: geometry.scrollHeight,
+            clientHeight: geometry.clientHeight,
+            overflowY: scrollInfo.overflowY,
+            flexDirection: scrollInfo.flexDirection
         };
     };
     const getScrollContainerIndex = (container) => {
@@ -3216,7 +3011,10 @@ export async function runHiddenFrameDeepScan({
     };
     const getContainerAnalysis = (container) => {
         if (!containerAnalyses.has(container)) {
-            containerAnalyses.set(container, analyzeScrollContainer(container));
+            containerAnalyses.set(container, ContainerAnalyser.analyze(container, {
+                minimumImageWidth,
+                minimumImageHeight
+            }));
         }
         return containerAnalyses.get(container);
     };
@@ -3252,33 +3050,48 @@ export async function runHiddenFrameDeepScan({
         const id = typeof container?.id === 'string' ? container.id.trim() : '';
         return id ? `#${id}` : `?=${index}`;
     };
-    const createContainerPlan = (containers) => {
-        const entries = containers.map((container) => {
+    const createContainerPlan = (candidates) => {
+        const entries = candidates.map(({container, isScrollable, isStructural}) => {
             const isNewContainer = !knownScrollContainerIndices.has(container);
             const index = getScrollContainerIndex(container);
             const analysis = getContainerAnalysis(container);
-            return {container, index, analysis, priority: analysis.priority, isNewContainer};
+            return {
+                container,
+                index,
+                analysis,
+                priority: analysis.priority,
+                isNewContainer,
+                isScrollable,
+                isStructural
+            };
         });
         const high = entries.filter((entry) => entry.priority === 'high');
         const medium = entries.filter((entry) => entry.priority === 'medium');
         const low = entries.filter((entry) => entry.priority === 'low');
-        const skipped = skipLowPriorityContainers ? low : [];
-        const scanEntries = skipLowPriorityContainers
+        const analysisOnly = entries.filter((entry) => !entry.isScrollable);
+        const skipped = skipLowPriorityContainers ? low.filter((entry) => entry.isScrollable) : [];
+        const scanEntries = (skipLowPriorityContainers
             ? [...high, ...medium]
-            : [...high, ...medium, ...low];
+            : [...high, ...medium, ...low]
+        ).filter((entry) => entry.isScrollable);
 
-        return {entries, high, medium, low, skipped, scanEntries};
+        return {entries, high, medium, low, analysisOnly, skipped, scanEntries};
     };
     const logContainerPriority = (entry) => {
-        const action = entry.priority === 'low' && skipLowPriorityContainers ? 'skip' : 'scan';
+        const action = !entry.isScrollable
+            ? 'classify-only'
+            : entry.priority === 'low' && skipLowPriorityContainers ? 'skip' : 'scan';
         console.info(
             '[DeepScan CONTAINER PRIORITY]',
             `container=${getContainerPlanLabel(entry.container, entry.index)}`,
             `classification=${entry.analysis.classification}`,
             `priority=${entry.priority}`,
             `score=${entry.analysis.score}`,
+            `scrollable=${entry.isScrollable}`,
+            `structural=${entry.isStructural}`,
             `action=${action}`,
-            ...(action === 'skip' ? ['reason=low-priority-policy'] : [])
+            ...(action === 'skip' ? ['reason=low-priority-policy'] : []),
+            ...(action === 'classify-only' ? ['reason=non-scrollable-structure'] : [])
         );
     };
     const logContainerPlan = (plan) => {
@@ -3290,6 +3103,7 @@ export async function runHiddenFrameDeepScan({
             `high=[${labels(plan.high)}]`,
             `medium=[${labels(plan.medium)}]`,
             `low=[${labels(plan.low)}]`,
+            `analysisOnly=[${labels(plan.analysisOnly)}]`,
             `skipLowPriorityContainers=${skipLowPriorityContainers}`,
             `scanOrder=[${labels(plan.scanEntries)}]`,
             `skipped=[${labels(plan.skipped)}]`
@@ -3557,10 +3371,11 @@ export async function runHiddenFrameDeepScan({
     };
     const scanRelevantScrollContainers = async () => {
         while (isActive()) {
-            const containers = getPendingRelevantScrollContainers();
-            if (containers.length === 0) return;
+            const candidates = getPendingRelevantContainerCandidates();
+            if (candidates.length === 0) return;
 
-            const plan = createContainerPlan(containers);
+            const plan = createContainerPlan(candidates);
+            if (!isActive()) return;
             for (const entry of plan.entries) {
                 const {container, index} = entry;
                 if (entry.isNewContainer) {
@@ -3587,6 +3402,12 @@ export async function runHiddenFrameDeepScan({
                 logContainerPriority(entry);
             }
             logContainerPlan(plan);
+
+            for (const entry of plan.analysisOnly) {
+                handledStructureContainers.add(entry.container);
+                if (entry.priority === 'low') lowPriorityStructureContainers.add(entry.container);
+                else lowPriorityStructureContainers.delete(entry.container);
+            }
 
             for (const {container} of plan.skipped) {
                 if (container.isConnected && isRelevantScrollableContainer(container)) {
@@ -3892,12 +3713,14 @@ export async function runHiddenFrameDeepScan({
                 synchronizeCompletedScrollContainerStates();
             }
 
-            const pendingContainers = getPendingRelevantScrollContainers();
-            const newContainersDetected = pendingContainers.some((container) =>
-                !completedScrollContainerStates.has(container)
+            const pendingContainers = getPendingRelevantContainerCandidates();
+            const newContainersDetected = pendingContainers.some(({container, isScrollable}) =>
+                isScrollable
+                    ? !completedScrollContainerStates.has(container)
+                    : !handledStructureContainers.has(container)
             );
-            const containersDetected = pendingContainers.some((container) =>
-                completedScrollContainerStates.has(container)
+            const containersDetected = pendingContainers.some(({container, isScrollable}) =>
+                isScrollable && completedScrollContainerStates.has(container)
             );
 
             // Discovery work has already been collected and sent to the client. Repeat traversal

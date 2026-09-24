@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Image Finder – ContainerAnalyser Fixture</title>
+    <style>
+        body {
+            margin: 24px;
+            font-family: system-ui, sans-serif;
+        }
+
+        .scroll-container {
+            width: 360px;
+            height: 160px;
+            overflow-y: auto;
+        }
+
+        .message-row {
+            display: grid;
+            grid-template-columns: 48px minmax(0, 1fr) auto;
+            gap: 8px;
+            align-items: center;
+            min-height: 64px;
+        }
+
+        .avatar {
+            width: 48px;
+            height: 48px;
+        }
+
+        .ellipsis {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .status-badge {
+            min-width: 18px;
+            border-radius: 99px;
+        }
+
+        .golden-row {
+            display: grid;
+            grid-template-columns: 48px minmax(0, 1fr) auto;
+            gap: 8px;
+            align-items: center;
+            min-height: 94px;
+        }
+
+        .menu-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            min-height: 44px;
+        }
+
+        .menu-row img {
+            width: 28px;
+            height: 28px;
+        }
+
+        #contentFixture img {
+            display: block;
+            width: 600px;
+            height: 360px;
+        }
+    </style>
+</head>
+<body>
+    <section id="inboxFixture" class="scroll-container inbox" aria-label="Inbox conversations">
+        <div class="wrapper">
+            <div class="virtual-scroller">
+                <article class="message-row chat-message"><img class="avatar" alt=""><span class="ellipsis">Message preview one</span><i class="status-badge">1</i></article>
+                <article class="message-row chat-message"><img class="avatar" alt=""><span class="ellipsis">Message preview two</span><i class="status-badge">2</i></article>
+                <article class="message-row chat-message"><img class="avatar" alt=""><span class="ellipsis">Message preview three</span><i class="status-badge">3</i></article>
+                <article class="message-row chat-message"><img class="avatar" alt=""><span class="ellipsis">Message preview four</span><i class="status-badge">4</i></article>
+                <article class="message-row chat-message"><img class="avatar" alt=""><span class="ellipsis">Message preview five</span><i class="status-badge">5</i></article>
+                <article class="message-row chat-message"><img class="avatar" alt=""><span class="ellipsis">Message preview six</span><i class="status-badge">6</i></article>
+                <article class="message-row chat-message"><img class="avatar" alt=""><span class="ellipsis">Message preview seven</span><i class="status-badge">7</i></article>
+                <article class="message-row chat-message"><img class="avatar" alt=""><span class="ellipsis">Message preview eight</span><i class="status-badge">8</i></article>
+            </div>
+        </div>
+    </section>
+
+    <ul id="goldenBrideFixture" data-testid="profilesList">
+        <li class="golden-row MuiListItem-root h-[94px]"><div class="MuiListItemAvatar-root"><div class="MuiAvatar-root MuiAvatar-circular" data-testid="profileAvatar"><picture><img class="avatar" alt=""></picture></div></div><div class="MuiListItemText-root"><p data-testid="profileName">Profile one</p><p><span data-testid="profileLocation">Location</span><span data-testid="profileId">1</span></p></div><span data-testid="profileUnread" class="MuiBadge-root"><span class="MuiBadge-badge">1</span></span></li>
+        <li class="golden-row MuiListItem-root h-[94px]"><div class="MuiListItemAvatar-root"><div class="MuiAvatar-root MuiAvatar-circular" data-testid="profileAvatar"><picture><img class="avatar" alt=""></picture></div></div><div class="MuiListItemText-root"><p data-testid="profileName">Profile two</p><p><span data-testid="profileLocation">Location</span><span data-testid="profileId">2</span></p></div><span data-testid="profileUnread" class="MuiBadge-root"><span class="MuiBadge-badge">2</span></span></li>
+        <li class="golden-row MuiListItem-root h-[94px]"><div class="MuiListItemAvatar-root"><div class="MuiAvatar-root MuiAvatar-circular" data-testid="profileAvatar"><picture><img class="avatar" alt=""></picture></div></div><div class="MuiListItemText-root"><p data-testid="profileName">Profile three</p><p><span data-testid="profileLocation">Location</span><span data-testid="profileId">3</span></p></div><span data-testid="profileUnread" class="MuiBadge-root"><span class="MuiBadge-badge">3</span></span></li>
+        <li class="golden-row MuiListItem-root h-[94px]"><div class="MuiListItemAvatar-root"><div class="MuiAvatar-root MuiAvatar-circular" data-testid="profileAvatar"><picture><img class="avatar" alt=""></picture></div></div><div class="MuiListItemText-root"><p data-testid="profileName">Profile four</p><p><span data-testid="profileLocation">Location</span><span data-testid="profileId">4</span></p></div><span data-testid="profileUnread" class="MuiBadge-root"><span class="MuiBadge-badge">4</span></span></li>
+        <li class="golden-row MuiListItem-root h-[94px]"><div class="MuiListItemAvatar-root"><div class="MuiAvatar-root MuiAvatar-circular" data-testid="profileAvatar"><picture><img class="avatar" alt=""></picture></div></div><div class="MuiListItemText-root"><p data-testid="profileName">Profile five</p><p><span data-testid="profileLocation">Location</span><span data-testid="profileId">5</span></p></div><span data-testid="profileUnread" class="MuiBadge-root"><span class="MuiBadge-badge">5</span></span></li>
+        <li class="golden-row MuiListItem-root h-[94px]"><div class="MuiListItemAvatar-root"><div class="MuiAvatar-root MuiAvatar-circular" data-testid="profileAvatar"><picture><img class="avatar" alt=""></picture></div></div><div class="MuiListItemText-root"><p data-testid="profileName">Profile six</p><p><span data-testid="profileLocation">Location</span><span data-testid="profileId">6</span></p></div><span data-testid="profileUnread" class="MuiBadge-root"><span class="MuiBadge-badge">6</span></span></li>
+        <li class="golden-row MuiListItem-root h-[94px]"><div class="MuiListItemAvatar-root"><div class="MuiAvatar-root MuiAvatar-circular" data-testid="profileAvatar"><picture><img class="avatar" alt=""></picture></div></div><div class="MuiListItemText-root"><p data-testid="profileName">Profile seven</p><p><span data-testid="profileLocation">Location</span><span data-testid="profileId">7</span></p></div><span data-testid="profileUnread" class="MuiBadge-root"><span class="MuiBadge-badge">7</span></span></li>
+        <li class="golden-row MuiListItem-root h-[94px]"><div class="MuiListItemAvatar-root"><div class="MuiAvatar-root MuiAvatar-circular" data-testid="profileAvatar"><picture><img class="avatar" alt=""></picture></div></div><div class="MuiListItemText-root"><p data-testid="profileName">Profile eight</p><p><span data-testid="profileLocation">Location</span><span data-testid="profileId">8</span></p></div><span data-testid="profileUnread" class="MuiBadge-root"><span class="MuiBadge-badge">8</span></span></li>
+    </ul>
+
+    <main id="contentFixture" class="gallery" aria-label="Media content gallery">
+        <img alt="" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='600' height='360'/%3E">
+        <img alt="" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='600' height='360'/%3E">
+        <img alt="" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='600' height='360'/%3E">
+    </main>
+
+    <aside id="menuFixture" class="scroll-container sidebar navigation" aria-label="Main menu">
+        <div class="menu-entries">
+            <a class="menu-row"><img alt=""><span>Menu one</span></a>
+            <a class="menu-row"><img alt=""><span>Menu two</span></a>
+            <a class="menu-row"><img alt=""><span>Menu three</span></a>
+            <a class="menu-row"><img alt=""><span>Menu four</span></a>
+            <a class="menu-row"><img alt=""><span>Menu five</span></a>
+            <a class="menu-row"><img alt=""><span>Menu six</span></a>
+        </div>
+    </aside>
+
+    <script type="module">
+        const runFixture = async () => {
+            if (!new URLSearchParams(location.search).has('runContainerAnalyser')) return;
+
+            const {default: ContainerAnalyser} = await import('../src/classes/ContainerAnalyser.js');
+            const inbox = ContainerAnalyser.analyze(document.getElementById('inboxFixture'));
+            const goldenBrideElement = document.getElementById('goldenBrideFixture');
+            const goldenBride = ContainerAnalyser.analyze(goldenBrideElement);
+            const content = ContainerAnalyser.analyze(document.getElementById('contentFixture'));
+            const menu = ContainerAnalyser.analyze(document.getElementById('menuFixture'));
+            const passed = inbox.scrollable && inbox.scrollAxis === 'y' && inbox.repeatedRows &&
+                inbox.rowGroupDepth >= 2 && inbox.rowCount === 8 && inbox.avatarPattern &&
+                inbox.textPattern && inbox.truncationPattern && inbox.badgePattern &&
+                inbox.inboxSemantics && !inbox.largeContentImages && inbox.classification === 'list/inbox' &&
+                inbox.priority === 'low' && !goldenBride.scrollable &&
+                ContainerAnalyser.isPlausibleStructureContainer(goldenBrideElement) &&
+                goldenBride.repeatedRows && goldenBride.rowCount === 8 && goldenBride.avatarPattern &&
+                goldenBride.textPattern && goldenBride.badgePattern && goldenBride.inboxSemantics &&
+                goldenBride.classification === 'list/inbox' && goldenBride.priority === 'low' &&
+                content.largeContentImages &&
+                content.classification === 'content' && content.priority === 'high' &&
+                menu.repeatedRows && menu.menuSemantics && menu.classification === 'navigation' &&
+                menu.priority === 'low' && menu.menuScore > menu.inboxScore;
+
+            document.documentElement.dataset.containerAnalyserResult = passed ? 'passed' : 'failed';
+            document.documentElement.dataset.containerAnalyserInbox =
+                `${inbox.classification}/${inbox.priority}/${inbox.rowGroupDepth}`;
+            document.documentElement.dataset.containerAnalyserGoldenBride =
+                `${goldenBride.classification}/${goldenBride.priority}/${goldenBride.scrollable}`;
+            document.documentElement.dataset.containerAnalyserContent =
+                `${content.classification}/${content.priority}`;
+            document.documentElement.dataset.containerAnalyserMenu =
+                `${menu.classification}/${menu.priority}`;
+        };
+
+        void runFixture().catch(() => {
+            document.documentElement.dataset.containerAnalyserResult = 'failed';
+        });
+    </script>
+</body>
+</html>
