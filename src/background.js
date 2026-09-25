@@ -362,36 +362,6 @@ async function sendOffscreenMessage(action, payload = {}) {
     return response;
 }
 
-function getDeepScanClientState(job) {
-    const clientId = job?.popupClientId ?? null;
-    const port = clientId ? popupDeepScanPorts.get(clientId) : null;
-
-    return {
-        clientId,
-        clientFound: Boolean(port),
-        // A port is removed from the map synchronously by its disconnect listener.
-        portConnected: Boolean(clientId && popupDeepScanPorts.get(clientId) === port),
-        queueAvailable: Boolean(job?.clientEventQueue && typeof job.clientEventQueue.then === 'function'),
-        queuePending: job?.clientQueuePending ?? 0
-    };
-}
-
-function logDeepScanClientState(job) {
-    const state = getDeepScanClientState(job);
-
-    console.info(
-        '[DeepScan COMPLETE TRACE] background-client-state',
-        `scanId=${job.scanId}`,
-        `clientId=${state.clientId ?? 'none'}`,
-        `clientFound=${state.clientFound}`,
-        `portConnected=${state.portConnected}`,
-        `queueAvailable=${state.queueAvailable}`,
-        `queuePending=${state.queuePending}`
-    );
-
-    return state;
-}
-
 async function sendDeepScanClientMessage(job, message) {
     const isCompletion = message?.action === 'complete' && message.status === 'completed';
     const clientId = job?.popupClientId ?? null;
@@ -402,15 +372,6 @@ async function sendDeepScanClientMessage(job, message) {
             `scanId=${job.scanId}`,
             `clientId=${clientId ?? 'none'}`
         );
-        if (clientId && !popupDeepScanPorts.has(clientId)) {
-            console.warn(
-                '[DeepScan COMPLETE TRACE] background-client-send-error',
-                `scanId=${job.scanId}`,
-                `clientId=${clientId}`,
-                'error=POPUP_CLIENT_MISSING'
-            );
-            return false;
-        }
     }
 
     try {
@@ -672,7 +633,6 @@ async function finishIsolatedDeepScan(job, status, reason = null) {
         logIsolatedDeepScanFailure(job, status, reason);
     }
     if (status === 'completed') {
-        logDeepScanClientState(job);
         console.info(
             '[DeepScan COMPLETE TRACE] background-queue-start',
             `scanId=${job.scanId}`,
@@ -823,11 +783,6 @@ async function startIsolatedDeepScan(request) {
         typeof request?.url !== 'string' || !request.url || !Number.isInteger(request.tabId)) {
         throw new Error('The isolated DeepScan request is invalid');
     }
-    if (typeof request.popupClientId === 'string' && request.popupClientId &&
-        !popupDeepScanPorts.has(request.popupClientId)) {
-        return {scanId: request.scanId};
-    }
-
     await cancelIsolatedDeepScan();
     await removeProtectedDeepScanFrameRule();
     const job = {
