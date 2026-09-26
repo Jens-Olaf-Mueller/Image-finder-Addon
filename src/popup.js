@@ -14,18 +14,19 @@ try {
     });
     imageFinder.setDeepScanClientId(popupDeepScanClientId);
 } catch {
-    // pagehide still attempts the normal cancellation path when a lifecycle port is unavailable.
+    // pagehide still uses the central scan cancellation path when a lifecycle port is unavailable.
 }
 
 window.addEventListener('pagehide', () => {
-    if (!imageFinder.isDeepScanRunning) return;
+    if (!imageFinder.isScanRunning) return;
 
-    console.info('[DeepScan LIFECYCLE]', {
+    console.info('[Scan LIFECYCLE]', {
         event: 'popup-disconnected',
-        scanRunning: true,
+        scanRunning: imageFinder.isScanRunning,
+        deepScanRunning: imageFinder.isDeepScanRunning,
         abortRequested: true
     });
-    void imageFinder.stopDeepScan({endReason: 'popup-closed'});
+    void imageFinder.stopScan({endReason: 'popup-closed'});
 }, {once: true});
 
 runPopup();

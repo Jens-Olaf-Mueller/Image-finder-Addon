@@ -1,9 +1,18 @@
-import { abortPhotoSwipeImages, scanImages, scanPhotoSwipeImages } from '../content.js';
+import { scanImages } from '../content.js';
 import { getImageType } from '../image-types.js';
 
 const DEFAULT_BYTES_PER_PIXEL = 0.1;
 const UTF8_ENCODER = new TextEncoder();
 const ISOLATED_DEEP_SCAN_TARGET = 'image-finder-isolated-deepscan';
+
+function getPixelCount(candidate) {
+    const width = Number(candidate?.width);
+    const height = Number(candidate?.height);
+
+    return Number.isFinite(width) && Number.isFinite(height)
+        ? Math.max(0, width) * Math.max(0, height)
+        : 0;
+}
 
 export default class ImageScanner {
     #imageDimensionsByURL = new Map();
@@ -39,13 +48,16 @@ export default class ImageScanner {
             : null;
     }
 
-    async scan({onStart = null, onProgress = null} = {}) {
+    async scan({onStart = null, onProgress = null, signal = null} = {}) {
+        if (signal?.aborted) return [];
+
         this.currentTab = null;
         this.#imageDimensionsByURL.clear();
         const [tab] = await window.chrome.tabs.query({
             active: true,
             currentWindow: true
         });
+        if (signal?.aborted || !Number.isInteger(tab?.id)) return [];
         this.currentTab = tab ?? null;
 
         const filters = this.settings.get('filters') ?? {};
@@ -54,9 +66,10 @@ export default class ImageScanner {
             func: scanImages,
             args: [filters.ignoreHiddenImages === true]
         });
+        if (signal?.aborted) return [];
         const filesFound = result[0]?.result ?? [];
 
-        return this.createCandidates(filesFound, tab.id, {onStart, onProgress});
+        return this.createCandidates(filesFound, tab.id, {onStart, onProgress, signal});
     }
 
     async createCandidates(
@@ -184,19 +197,13 @@ export default class ImageScanner {
         const session = this.#activeDeepScan;
         if (!session) return false;
 
-        const normalizedEndReason = ['user-abort', 'popup-closed'].includes(endReason)
+        const normalizedEndReason = ['user-abort', 'popup-closed', 'settings-open', 'tab-reload']
+            .includes(endReason)
             ? endReason
             : 'cancelled';
         session.cancelled = true;
         session.controller.abort();
         session.finish({status: 'cancelled', endReason: normalizedEndReason});
-        if (session.photoSwipeScanActive) {
-            void window.chrome.scripting.executeScript({
-                target: {tabId: session.tabId},
-                func: abortPhotoSwipeImages,
-                args: [session.scanId]
-            }).catch(() => undefined);
-        }
         try {
             await window.chrome.runtime.sendMessage({
                 target: ISOLATED_DEEP_SCAN_TARGET,
@@ -234,10 +241,8 @@ export default class ImageScanner {
         });
         const session = {
             scanId,
-            tabId: scanContext.tabId,
             controller: new AbortController(),
             cancelled: false,
-            photoSwipeScanActive: false,
             finished: false,
             finish: (result) => {
                 if (session.finished) return;
@@ -278,7 +283,12 @@ export default class ImageScanner {
             const pipelineStartedAt = performance.now();
             const newCandidates = [];
             for (const candidate of foundCandidates ?? []) {
-                if (typeof candidate?.url !== 'string' || candidatesByURL.has(candidate.url)) continue;
+                if (typeof candidate?.url !== 'string') continue;
+
+                const existingCandidate = candidatesByURL.get(candidate.url);
+                if (existingCandidate && getPixelCount(candidate) <= getPixelCount(existingCandidate)) {
+                    continue;
+                }
 
                 candidatesByURL.set(candidate.url, candidate);
                 newCandidates.push(candidate);
@@ -370,22 +380,6 @@ export default class ImageScanner {
         window.chrome.runtime.onMessage.addListener(onMessage);
 
         try {
-            try {
-                session.photoSwipeScanActive = true;
-                try {
-                    const result = await window.chrome.scripting.executeScript({
-                        target: {tabId: scanContext.tabId},
-                        func: scanPhotoSwipeImages,
-                        args: [{abortKey: scanId}]
-                    });
-                    await processCandidates(result[0]?.result ?? []);
-                } finally {
-                    session.photoSwipeScanActive = false;
-                }
-            } catch {
-                // One visible PhotoSwipe target must never prevent the isolated DeepScan.
-            }
-
             if (!session.cancelled) {
                 const response = await window.chrome.runtime.sendMessage({
                     target: ISOLATED_DEEP_SCAN_TARGET,

@@ -39,17 +39,17 @@
                 data-sort="dimensions">
                 <img src="../assets/icons/sort-dims-asc.png" alt="sort dimensions">
             </button>
-
-            <button type="button" id="btnStopDeepScan" class="toolbar-button tbr-btn__small"
-                title="Stop deepscan on this page"
-                aria-label="Stop deepscan on this page"
-                hidden>
-                <img src="../assets/icons/stop.png" alt="stop deepscan">
+            <button type="button" id="btnSortChronologic" class="toolbar-button tbr-btn__small"
+                title="Sort cronological"
+                aria-label="Sort cronological"
+                data-sort="cronologic"
+                value="asc">
+                <img src="../assets/icons/sort-crono-asc.png" alt="sort cronologic">
             </button>
+            <div id="divLED" class="toolbar-button scanner-led" style="margin-left: auto;">0</div>
         </div>
         <div id="divToolbarTopRight" class="toolbar-section" role="group" aria-label="Image preview controls">
-            <div id="divLED" class="toolbar-button tbr-btn__small scanner-led">0</div>
-            <div class="control theme">
+            <div class="control theme toolbar-button tbr-btn__small" style="margin-left: auto;">
                 <label title="Switch theme">
                     <input type="checkbox" id="chkTheme" name="theme" title="Switch theme" aria-label="Switch theme">
                     <img class="theme-light" src="../assets/icons/sun.png" alt="sun">
@@ -77,51 +77,55 @@
         <div id="divToolbarActions" class="toolbar-actions" role="group" aria-label="Image actions">
             <button type="button" id="btnSearch" class="toolbar-button"
                 title="Find images"
-                aria-label="Find images">
+                aria-label="Find images"
+                value="false">
                 <img src="../assets/icons/search.png" alt="find">
             </button>
-
             <button type="button" id="btnDownload" class="toolbar-button"
                 title="Download image"
                 aria-label="Download image"
                 disabled>
                 <img src="../assets/icons/download.png" alt="download">
             </button>
-
             <button type="button" id="btnSaveAll" class="toolbar-button"
                 title="Save all images"
                 aria-label="Save all images"
                 disabled>
                 <img src="../assets/icons/saveall.png" alt="save all">
             </button>
-
             <button type="button" id="btnDelete" class="toolbar-button"
                 title="Delete image"
                 aria-label="Delete image"
                 disabled>
                 <img src="../assets/icons/bin.png" alt="delete">
             </button>
-
             <button type="button" id="btnClear" class="toolbar-button"
                 title="Clear list"
                 aria-label="Clear list"
                 disabled>
                 <img src="../assets/icons/clear.png" alt="clear list">
             </button>
-
             <button type="button" id="btnOpenDownloadFolder" class="toolbar-button"
                 title="Open download folder"
                 aria-label="Open download folder"
                 disabled>
                 <img src="../assets/icons/folder-open.png" alt="open folder">
             </button>
-
-            <button type="button" id="btnRestart" class="toolbar-button"
-                title="Start addon new"
-                aria-label="Start addon new">
-                <img src="../assets/icons/restart.png" alt="restart">
+            <button type="button" id="btnTabReload" class="toolbar-button"
+                title="Reload current tab"
+                aria-label="Reload current tab"
+                style="margin-left: 0.75rem;">
+                <img src="../assets/icons/reload-tab.svg" alt="reload tab">
             </button>
         </div>
+
+        <button type="button" id="btnRestart" class="toolbar-button"
+            title="Start addon new"
+            aria-label="Start addon new"
+            style="margin-right: auto;"
+            hidden>
+            <img src="../assets/icons/restart.png" alt="restart">
+        </button>
 
         <div id="divToolbarSpacer" class="toolbar-spacer">
             <span id="spnStatusBar" class="statusbar"></span>
@@ -131,10 +135,9 @@
         <button type="button" id="btnDefaultSettings" class="toolbar-button"
             title="Load addon default settings"
             aria-label="Load addon default settings"
-            disabled>
+            hidden>
             <img src="../assets/icons/default-settings.png" alt="defaults">
         </button>
-
         <button type="button" id="btnSettings" class="toolbar-button"
             title="Settings"
             aria-label="Settings"

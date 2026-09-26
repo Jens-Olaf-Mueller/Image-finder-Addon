@@ -18,10 +18,10 @@ function cloneData(data) {
 }
 
 function mergeData(defaultData, savedData) {
-    const mergedData = cloneData(savedData);
+    const mergedData = {};
 
     Object.entries(defaultData).forEach(([sectionName, section]) => {
-        mergedData[sectionName] ??= {};
+        mergedData[sectionName] = {};
 
         Object.entries(section).forEach(([key, defaultValue]) => {
             mergedData[sectionName][key] =
@@ -138,9 +138,16 @@ function normalizeSettings(data) {
 function hasCompleteSettings(data) {
     if (!isObject(data)) return false;
 
+    const hasOnlyKnownSections = Object.keys(data).every((sectionName) =>
+        Object.prototype.hasOwnProperty.call(DEFAULT_SETTINGS, sectionName)
+    );
+    if (!hasOnlyKnownSections) return false;
+
     return Object.entries(DEFAULT_SETTINGS).every(([sectionName, section]) =>
         isObject(data[sectionName]) &&
-        Object.keys(section).every(key =>
+        Object.keys(data[sectionName]).every((key) =>
+            Object.prototype.hasOwnProperty.call(section, key)
+        ) && Object.keys(section).every(key =>
             Object.prototype.hasOwnProperty.call(data[sectionName], key)
         )
     );
@@ -465,7 +472,6 @@ export const DEFAULT_SETTINGS = {
         scanOnStart: true,
         allowBackgroundScan: false,
         allowProtectedDeepScan: false,
-        scanOnSettingsChanged: true,
         saveSettingsForURL: false,
         keepSettingsForDays: 365
     },

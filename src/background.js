@@ -40,6 +40,8 @@ function getPopupDeepScanClientId(port) {
 function getDeepScanCancelSource(endReason) {
     if (endReason === 'user-abort') return 'user';
     if (endReason === 'popup-closed') return 'popup-closed';
+    if (endReason === 'settings-open') return 'settings-open';
+    if (endReason === 'tab-reload') return 'tab-reload';
     return null;
 }
 
@@ -727,7 +729,8 @@ function getBackgroundDeepScanHost() {
 
 async function cancelIsolatedDeepScan(scanId = null, endReason = 'cancelled') {
     const job = activeIsolatedDeepScan;
-    const normalizedEndReason = ['user-abort', 'popup-closed'].includes(endReason)
+    const normalizedEndReason = ['user-abort', 'popup-closed', 'settings-open', 'tab-reload']
+        .includes(endReason)
         ? endReason
         : 'cancelled';
     const hiddenDeepScanJob = activeHiddenDeepScan;

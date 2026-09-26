@@ -743,12 +743,9 @@ export async function scanPhotoSwipeImages({
     onDiagnostic = null,
     onCarouselDiagnostic = null,
     onActivity = null,
-    traverseCarousel = false,
-    abortKey = null
+    traverseCarousel = false
 } = {}) {
-    const abortRegistryKey = '__imageFinderPhotoSwipeAbortKeys';
-    const isAborted = () => signal?.aborted === true ||
-        (typeof abortKey === 'string' && globalThis[abortRegistryKey]?.has(abortKey));
+    const isAborted = () => signal?.aborted === true;
     const getOpenRoots = (initialRoot = document) => {
         const roots = [initialRoot];
         const seenRoots = new Set(roots);
@@ -1872,19 +1869,7 @@ export async function scanPhotoSwipeImages({
         }
     }
 
-    if (typeof abortKey === 'string') {
-        globalThis[abortRegistryKey]?.delete(abortKey);
-    }
     return candidates;
-}
-
-export function abortPhotoSwipeImages(abortKey) {
-    if (typeof abortKey !== 'string' || !abortKey) return;
-
-    const registryKey = '__imageFinderPhotoSwipeAbortKeys';
-    const abortKeys = globalThis[registryKey] ?? new Set();
-    abortKeys.add(abortKey);
-    globalThis[registryKey] = abortKeys;
 }
 
 const DEEP_SCAN_READINESS_POLL_INTERVAL_MS = 100;

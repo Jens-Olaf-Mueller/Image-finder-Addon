@@ -9,10 +9,16 @@ const SORT_ICON_BASE_NAMES = Object.freeze({
     filename: 'sort-alphabetical',
     type: 'sort-type',
     size: 'sort-size',
-    dimensions: 'sort-dims'
+    dimensions: 'sort-dims',
+    cronologic: 'sort-crono'
 });
 const SCAN_PROGRESS_COLOR = '#32CD32';
 const FILTER_PROGRESS_COLOR = '#FF6347';
+const RESULT_MARKER_PRIORITIES = Object.freeze({
+    normal: 0,
+    new: 1,
+    upgrade: 2
+});
 
 export class ImageFinder {
     #activityCounts = {
@@ -25,6 +31,8 @@ export class ImageFinder {
     #downloadStates = new Map();
     #deepScanStartedAt = null;
     #deepScanTitleInterval = null;
+    #scanController = null;
+    #nextDiscoveryOrder = 0;
 
     get selectedItem() {
         return this.DOM.lstImages.querySelector('.selected') || null;
@@ -125,9 +133,6 @@ export class ImageFinder {
     setEventListeners() {
         this.DOM.divToolbar.addEventListener('click', e => this.onButtonClick(e));
         this.DOM.divToolbarTopLeft.addEventListener('click', e => this.onSortButtonClick(e));
-        this.DOM.btnStopDeepScan?.addEventListener('click', () => {
-            void this.stopDeepScanByUser();
-        });
         this.DOM.lstImages.addEventListener('click', e => this.onListItemClick(e));
         this.DOM.lstImages.addEventListener('keydown', e => this.onKeyPress(e));
         document.addEventListener('keydown', e => {
@@ -142,21 +147,32 @@ export class ImageFinder {
         this.sort(button.dataset.sort);
     }
 
-    async stopDeepScanByUser() {
-        return this.stopDeepScan({endReason: 'user-abort'});
-    }
-
     async stopDeepScan({endReason = 'cancelled'} = {}) {
         if (this.#activityCounts.deepScan === 0 && !this.isDeepScanRunning) return false;
 
-        const cancellation = this.cancelDeepScan({endReason});
+        return this.stopScan({endReason});
+    }
+
+    async stopScan({endReason = 'user-abort'} = {}) {
+        if (!this.isScanRunning) return false;
+
         this.#scanGeneration += 1;
+        this.#scanController?.abort();
+        this.#scanController = null;
         this.#resetScanActivities();
-        return cancellation;
+        this.#setSearchButtonActive(false);
+        await this.cancelDeepScan({endReason});
+        return true;
     }
 
     get isDeepScanRunning() {
         return this.scanner.isDeepScanRunning;
+    }
+
+    get isScanRunning() {
+        return this.#scanController !== null || this.isDeepScanRunning ||
+            Object.values(this.#activityCounts).some((count) => count > 0) ||
+            this.DOM.btnSearch?.value === 'true';
     }
 
     async cancelDeepScan({endReason = 'cancelled'} = {}) {
@@ -168,7 +184,7 @@ export class ImageFinder {
     }
 
     sort(criterion, initialDirection = null) {
-        if (!['filename', 'type', 'size', 'dimensions'].includes(criterion)) return;
+        if (!['filename', 'type', 'size', 'dimensions', 'cronologic'].includes(criterion)) return;
 
         const direction = initialDirection ?? (this.sortState.criterion === criterion &&
             this.sortState.direction === 'asc'
@@ -221,6 +237,10 @@ export class ImageFinder {
                 case 'dimensions':
                     comparison = (first.width * first.height) - (second.width * second.height) ||
                         compareFileNames(first, second);
+                    break;
+
+                case 'cronologic':
+                    comparison = first.discoveryOrder - second.discoveryOrder;
                     break;
             }
 
@@ -377,7 +397,11 @@ export class ImageFinder {
                 break;
 
             case 'search':
-                await this.scan();
+                if (this.DOM.btnSearch.value === 'true') {
+                    await this.stopScan({endReason: 'user-abort'});
+                } else {
+                    await this.scan();
+                }
                 break;
 
             case 'scan':
@@ -404,6 +428,10 @@ export class ImageFinder {
                 this.clear();
                 break;
 
+            case 'tabreload':
+                await this.reloadCurrentTab();
+                break;
+
             case 'restart':
                 window.chrome.runtime.reload();
                 break;
@@ -424,11 +452,15 @@ export class ImageFinder {
     }
 
     async #openSettingsPanel() {
+        await this.stopScan({endReason: 'settings-open'});
+
         this.DOM.btnSettings.value = 'true';
         this.DOM.divSettingsPanel.classList.add('open');
         this.DOM.divToolbarActions.hidden = true;
         this.DOM.divProgressbar.hidden = true;
         this.DOM.spnStatusBar.hidden = true;
+        this.DOM.btnRestart.hidden = false;
+        this.DOM.btnDefaultSettings.hidden = false;
         this.DOM.btnDefaultSettings.disabled = false;
 
         await this.settingsForm?.refresh();
@@ -442,14 +474,13 @@ export class ImageFinder {
         this.DOM.divToolbarActions.hidden = false;
         this.DOM.divProgressbar.hidden = false;
         this.DOM.spnStatusBar.hidden = false;
+        this.DOM.btnRestart.hidden = true;
+        this.DOM.btnDefaultSettings.hidden = true;
         this.DOM.btnDefaultSettings.disabled = true;
 
         await this.settingsForm?.waitForPendingSave();
         this.updateDownloadTitles();
         this.#updateLEDActivity();
-        if (this.settings.get('common', 'scanOnSettingsChanged', true)) {
-            await this.scan();
-        }
     }
 
     #isSettingsPanelOpen() {
@@ -473,15 +504,25 @@ export class ImageFinder {
         this.updateDownloadTitles();
     }
 
+    async reloadCurrentTab() {
+        await this.stopScan({endReason: 'tab-reload'});
+
+        await window.chrome.tabs.reload();
+    }
+
     clear({invalidateScan = true} = {}) {
         if (invalidateScan) {
             void this.scanner.cancelDeepScan();
             this.#scanGeneration += 1;
+            this.#scanController?.abort();
+            this.#scanController = null;
             this.#resetScanActivities();
+            this.#setSearchButtonActive(false);
         }
 
         this.candidates.clear();
         this.images.clear();
+        this.#nextDiscoveryOrder = 0;
         this.analysisStore.clear();
         this.#downloadStates.clear();
         this.currentBlobPreview = null;
@@ -516,8 +557,12 @@ export class ImageFinder {
 
     async scan() {
         void this.scanner.cancelDeepScan();
+        this.#scanController?.abort();
+        const scanController = new AbortController();
+        this.#scanController = scanController;
         const scanGeneration = this.#scanGeneration + 1;
         this.#scanGeneration = scanGeneration;
+        this.#setSearchButtonActive(true);
         let scanCompleted = false;
         let scannerActivityActive = false;
         let deepScanActivityActive = false;
@@ -535,7 +580,8 @@ export class ImageFinder {
 
             const scanResults = await this.scanner.scan({
                 onStart: count => this.progressbar.show(count),
-                onProgress: () => this.progressbar.update()
+                onProgress: () => this.progressbar.update(),
+                signal: scanController.signal
             });
             if (!this.#isCurrentScan(scanGeneration)) return;
 
@@ -623,7 +669,7 @@ export class ImageFinder {
                                 : true;
                         }
 
-                        this.#setScanResults(candidates);
+                        this.#setScanResults(candidates, {markerOrigin: 'deepScan'});
                         const visibleImagesUpdated = await this.#refreshVisibleImages(
                             scanGeneration
                         );
@@ -683,6 +729,12 @@ export class ImageFinder {
                 this.info = this.images.size === 0 ? 'No images found!' : 'Image preview';
             }
             this.#finalizeDeepScanUI(scanGeneration);
+            if (this.#isCurrentScan(scanGeneration)) {
+                if (this.#scanController === scanController) {
+                    this.#scanController = null;
+                }
+                this.#setSearchButtonActive(false);
+            }
         }
     }
 
@@ -870,10 +922,27 @@ export class ImageFinder {
         this.#updateLED();
     }
 
-    #setScanResults(scanResults) {
+    #setScanResults(scanResults, {markerOrigin = 'normal'} = {}) {
         scanResults.forEach((image) => {
+            if (!Number.isInteger(image.discoveryOrder)) {
+                image.discoveryOrder = this.#nextDiscoveryOrder;
+                this.#nextDiscoveryOrder += 1;
+            }
+            if (markerOrigin === 'deepScan') {
+                image.pendingMarkerState = 'new';
+            } else {
+                this.#setResultMarker(image, 'normal');
+            }
             this.candidates.set(image.id, image);
         });
+    }
+
+    #setResultMarker(image, markerState) {
+        const currentMarkerState = image.markerState ?? 'normal';
+        const currentPriority = RESULT_MARKER_PRIORITIES[currentMarkerState] ?? 0;
+        const nextPriority = RESULT_MARKER_PRIORITIES[markerState] ?? 0;
+
+        if (nextPriority >= currentPriority) image.markerState = markerState;
     }
 
     #isCurrentScan(scanGeneration) {
@@ -885,6 +954,18 @@ export class ImageFinder {
             this.#activityCounts[type] = 0;
         });
         this.#updateLEDActivity();
+    }
+
+    #setSearchButtonActive(active) {
+        const button = this.DOM.btnSearch;
+        const icon = button.querySelector('img');
+        const isActive = active === true;
+
+        button.value = isActive ? 'true' : 'false';
+        button.title = isActive ? 'Stop scan' : 'Find images';
+        button.setAttribute('aria-label', button.title);
+        icon?.setAttribute('src', isActive ? '../assets/icons/stop.svg' : '../assets/icons/search.png');
+        icon?.setAttribute('alt', isActive ? 'stop scan' : 'find');
     }
 
     #getNewURLCandidates(rawCandidates) {
@@ -919,6 +1000,7 @@ export class ImageFinder {
 
                     existingCandidate.width = candidate.width;
                     existingCandidate.height = candidate.height;
+                    existingCandidate.pendingMarkerState = 'upgrade';
                     existingCandidatesUpdated = true;
                     existingCandidateUpgradeCount += 1;
                 });
@@ -972,11 +1054,18 @@ export class ImageFinder {
         this.DOM.lstImages.innerHTML = '';
         this.images.forEach((image, imageId) => {
             const item = document.createElement('li');
+            const marker = document.createElement('span');
+            const label = document.createElement('span');
 
-            item.textContent = image.fileName;
             item.title = image.fileName;
             item.dataset.imageId = imageId;
             item.dataset.url = image.url;
+            marker.className = 'result-marker';
+            marker.dataset.state = image.markerState ?? 'normal';
+            marker.setAttribute('aria-hidden', 'true');
+            label.className = 'result-label';
+            label.textContent = image.fileName;
+            item.append(marker, label);
             if (renderState.savedImageIds.has(imageId)) item.classList.add('saved');
             if (imageId === renderState.selectedImageId) selectedItem = item;
             if (!selectedItemByURL && image.url === renderState.selectedImageURL) {
@@ -1016,7 +1105,7 @@ export class ImageFinder {
         const selectedItem = this.#renderImages(renderState);
         if (!this.#isCurrentScan(scanGeneration)) return false;
 
-        if (initialSort) {
+        if (initialSort && !this.sortState.criterion) {
             this.sort('dimensions', 'desc');
         } else if (this.sortState.criterion) {
             this.sort(this.sortState.criterion, this.sortState.direction);
@@ -1086,6 +1175,7 @@ export class ImageFinder {
     }
 
     async #setVisibleImages(scanGeneration, {showFilteringProgress = false} = {}) {
+        const previousVisibleImageIds = new Set(this.images.keys());
         const candidates = Array.from(this.candidates);
         const filteringProgress = showFilteringProgress
             ? this.#createFilteringProgress(candidates)
@@ -1100,7 +1190,8 @@ export class ImageFinder {
         const visibleCandidates = await this.#getDuplicateWinners(
             blurAcceptedCandidates,
             scanGeneration,
-            filteringProgress?.onMatcherProgress
+            filteringProgress?.onMatcherProgress,
+            previousVisibleImageIds
         );
         if (!visibleCandidates || !this.#isCurrentScan(scanGeneration)) return false;
 
@@ -1148,10 +1239,18 @@ export class ImageFinder {
         return candidates.filter(([candidateId]) => acceptedCandidateIds.has(candidateId));
     }
 
-    async #getDuplicateWinners(acceptedCandidates, scanGeneration, onProgress = null) {
+    async #getDuplicateWinners(
+        acceptedCandidates,
+        scanGeneration,
+        onProgress = null,
+        previousVisibleImageIds = new Set()
+    ) {
         const filters = this.settings.get('filters') ?? {};
 
         if (filters.ignoreDuplicates !== true || acceptedCandidates.length < 2) {
+            acceptedCandidates.forEach((candidateEntry) => {
+                this.#resolvePendingResultMarker(candidateEntry, false);
+            });
             return acceptedCandidates;
         }
 
@@ -1186,7 +1285,20 @@ export class ImageFinder {
                 onProgress?.(index + 1, acceptedCandidates.length);
             }
 
-            return duplicateGroups.map(group => this.#selectDuplicateWinner(group));
+            return duplicateGroups.map((group) => {
+                const winner = this.#selectDuplicateWinner(group);
+                const replacedResult = group.find(([candidateId]) =>
+                    previousVisibleImageIds.has(candidateId) && candidateId !== winner[0]
+                );
+                const replacesExistingResult = Boolean(replacedResult);
+
+                if (replacedResult && Number.isInteger(replacedResult[1].discoveryOrder)) {
+                    winner[1].discoveryOrder = replacedResult[1].discoveryOrder;
+                }
+
+                this.#resolvePendingResultMarker(winner, replacesExistingResult);
+                return winner;
+            });
         } finally {
             this.stopActivity('matcher', scanGeneration);
         }
@@ -1229,6 +1341,17 @@ export class ImageFinder {
                 ? candidateEntry
                 : winner
         );
+    }
+
+    #resolvePendingResultMarker([_candidateId, candidate], replacesExistingResult) {
+        const pendingMarkerState = candidate.pendingMarkerState;
+        if (!pendingMarkerState) return;
+
+        const markerState = pendingMarkerState === 'upgrade' || replacesExistingResult
+            ? 'upgrade'
+            : 'new';
+        this.#setResultMarker(candidate, markerState);
+        delete candidate.pendingMarkerState;
     }
 
     #getPixelCount(candidate) {
@@ -1325,6 +1448,7 @@ export class ImageFinder {
 
             const direction = isActive ? this.sortState.direction : 'asc';
             icon.setAttribute('src', `../assets/icons/${iconBaseName}-${direction}.png`);
+            if (criterion === 'cronologic') sortButton.value = direction;
         });
     }
 
@@ -1352,8 +1476,6 @@ export class ImageFinder {
             this.#stopDeepScanTitleTimer();
             this.DOM.divLED.removeAttribute('title');
         }
-        this.#updateDeepScanStopButton();
-
         if (activity === 'scanner') {
             this.info = 'Scanning...';
         } else if (activity === 'blurScanner' || activity === 'matcher') {
@@ -1392,12 +1514,4 @@ export class ImageFinder {
         this.DOM.divLED.title = `Deep scan running ${elapsed} ...`;
     }
 
-    #updateDeepScanStopButton() {
-        const button = this.DOM.btnStopDeepScan;
-        if (!button) return;
-
-        const deepScanIsRunning = this.#activityCounts.deepScan > 0;
-        button.hidden = !deepScanIsRunning;
-        button.disabled = !deepScanIsRunning;
-    }
 }
