@@ -435,6 +435,20 @@ export class Settings {
         return this.data?.[section]?.[key] ?? defaultValue;
     }
 
+    getThemeMode() {
+        return this.get('common', 'themeMode', 'light') === 'dark' ? 'dark' : 'light';
+    }
+
+    async setThemeMode(mode) {
+        return this.save({
+            ...this.data,
+            common: {
+                ...(this.data.common ?? {}),
+                themeMode: mode === 'dark' ? 'dark' : 'light'
+            }
+        });
+    }
+
     async getMostLikelyDownloadFolder(limit = 50) {
         const downloads = await window.chrome.downloads.search({
             state: 'complete',
@@ -470,6 +484,7 @@ export class Settings {
 export const DEFAULT_SETTINGS = {
     common: {
         scanOnStart: true,
+        themeMode: 'light',
         allowBackgroundScan: false,
         allowProtectedDeepScan: false,
         saveSettingsForURL: false,

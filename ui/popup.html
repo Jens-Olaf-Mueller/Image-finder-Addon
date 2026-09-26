@@ -1,11 +1,12 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-mode="light">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
     <title>Image Finder</title>
 
+    <link rel="stylesheet" href="./addon-theme.css">
     <link rel="stylesheet" href="./popup.css">
     <link rel="stylesheet" href="./settings.css">
     <script src="../src/popup.js" type="module"></script>
@@ -18,33 +19,52 @@
             <button type="button" id="btnSortFilename" class="toolbar-button tbr-btn__small"
                 title="Sort by filename"
                 aria-label="Sort by filename"
-                data-sort="filename">
-                <img src="../assets/icons/sort-alphabetical-asc.png" alt="sort-alphabetical">
+                data-sort="filename"
+                value="asc">
+                <svg class="tbr-btn__icon" aria-hidden="true">
+                    <use class="icon-sort-asc" href="../assets/icons/button-icons.svg#svgSortAlphabeticalAsc"></use>
+                    <use class="icon-sort-desc" href="../assets/icons/button-icons.svg#svgSortAlphabeticalDesc"></use>
+                </svg>
             </button>
             <button type="button" id="btnSortType" class="toolbar-button tbr-btn__small"
                 title="Sort by image type"
                 aria-label="Sort by image type"
-                data-sort="type">
-                <img src="../assets/icons/sort-type-asc.png" alt="sort type">
+                data-sort="type"
+                value="asc">
+                <svg class="tbr-btn__icon" aria-hidden="true">
+                    <use class="icon-sort-asc" href="../assets/icons/button-icons.svg#svgSortTypeAsc"></use>
+                    <use class="icon-sort-desc" href="../assets/icons/button-icons.svg#svgSortTypeDesc"></use>
+                </svg>
             </button>
             <button type="button" id="btnSortFileSize" class="toolbar-button tbr-btn__small"
                 title="Sort by file size"
                 aria-label="Sort by file size"
-                data-sort="size">
-                <img src="../assets/icons/sort-size-asc.png" alt="sort size">
+                data-sort="size"
+                value="asc">
+                <svg class="tbr-btn__icon" aria-hidden="true">
+                    <use class="icon-sort-asc" href="../assets/icons/button-icons.svg#svgSortSizeAsc"></use>
+                    <use class="icon-sort-desc" href="../assets/icons/button-icons.svg#svgSortSizeDesc"></use>
+                </svg>
             </button>
             <button type="button" id="btnSortDimensions" class="toolbar-button tbr-btn__small"
                 title="Sort by dimensions"
                 aria-label="Sort by dimensions"
-                data-sort="dimensions">
-                <img src="../assets/icons/sort-dims-asc.png" alt="sort dimensions">
+                data-sort="dimensions"
+                value="asc">
+                <svg class="tbr-btn__icon" aria-hidden="true">
+                    <use class="icon-sort-asc" href="../assets/icons/button-icons.svg#svgSortDimsAsc"></use>
+                    <use class="icon-sort-desc" href="../assets/icons/button-icons.svg#svgSortDimsDesc"></use>
+                </svg>
             </button>
             <button type="button" id="btnSortChronologic" class="toolbar-button tbr-btn__small"
-                title="Sort cronological"
-                aria-label="Sort cronological"
+                title="Sort chronologically"
+                aria-label="Sort chronologically"
                 data-sort="cronologic"
                 value="asc">
-                <img src="../assets/icons/sort-crono-asc.png" alt="sort cronologic">
+                <svg class="tbr-btn__icon" aria-hidden="true">
+                    <use class="icon-sort-asc" href="../assets/icons/button-icons.svg#svgSortCronoAsc"></use>
+                    <use class="icon-sort-desc" href="../assets/icons/button-icons.svg#svgSortCronoDesc"></use>
+                </svg>
             </button>
             <div id="divLED" class="toolbar-button scanner-led" style="margin-left: auto;">0</div>
         </div>
@@ -52,8 +72,10 @@
             <div class="control theme toolbar-button tbr-btn__small" style="margin-left: auto;">
                 <label title="Switch theme">
                     <input type="checkbox" id="chkTheme" name="theme" title="Switch theme" aria-label="Switch theme">
-                    <img class="theme-light" src="../assets/icons/sun.png" alt="sun">
-                    <img class="theme-dark" src="../assets/icons/moon.png" alt="moon">
+                    <svg class="theme-icon" aria-hidden="true">
+                        <use class="theme-light" href="../assets/icons/button-icons.svg#svgSun"></use>
+                        <use class="theme-dark" href="../assets/icons/button-icons.svg#svgMoon"></use>
+                    </svg>
                 </label>
             </div>
         </div>
@@ -72,50 +94,65 @@
         </div>
     </main>
 
-    <!-- Toolbar -->
+    <!-- Bottom toolbar -->
     <div id="divToolbar" class="toolbar" role="toolbar" aria-label="Image actions">
         <div id="divToolbarActions" class="toolbar-actions" role="group" aria-label="Image actions">
             <button type="button" id="btnSearch" class="toolbar-button"
                 title="Find images"
                 aria-label="Find images"
                 value="false">
-                <img src="../assets/icons/search.png" alt="find">
+                <svg class="toolbar-button__icon" aria-hidden="true">
+                    <use class="icon-search" href="../assets/icons/button-icons.svg#svgSearch"></use>
+                    <use class="icon-stop" href="../assets/icons/button-icons.svg#svgStop"></use>
+                </svg>
             </button>
             <button type="button" id="btnDownload" class="toolbar-button"
                 title="Download image"
                 aria-label="Download image"
                 disabled>
-                <img src="../assets/icons/download.png" alt="download">
+                <svg class="toolbar-button__icon" aria-hidden="true">
+                    <use href="../assets/icons/button-icons.svg#svgDownload"></use>
+                </svg>
             </button>
             <button type="button" id="btnSaveAll" class="toolbar-button"
                 title="Save all images"
                 aria-label="Save all images"
                 disabled>
-                <img src="../assets/icons/saveall.png" alt="save all">
+                <svg class="toolbar-button__icon" aria-hidden="true">
+                    <use href="../assets/icons/button-icons.svg#svgSaveall"></use>
+                </svg>
             </button>
             <button type="button" id="btnDelete" class="toolbar-button"
                 title="Delete image"
                 aria-label="Delete image"
                 disabled>
-                <img src="../assets/icons/bin.png" alt="delete">
+                <svg class="toolbar-button__icon" aria-hidden="true">
+                    <use href="../assets/icons/button-icons.svg#svgBin"></use>
+                </svg>
             </button>
             <button type="button" id="btnClear" class="toolbar-button"
                 title="Clear list"
                 aria-label="Clear list"
                 disabled>
-                <img src="../assets/icons/clear.png" alt="clear list">
+                <svg class="toolbar-button__icon" aria-hidden="true">
+                    <use href="../assets/icons/button-icons.svg#svgClear"></use>
+                </svg>
             </button>
             <button type="button" id="btnOpenDownloadFolder" class="toolbar-button"
                 title="Open download folder"
                 aria-label="Open download folder"
                 disabled>
-                <img src="../assets/icons/folder-open.png" alt="open folder">
+                <svg class="toolbar-button__icon" aria-hidden="true">
+                    <use href="../assets/icons/button-icons.svg#svgFolderOpen"></use>
+                </svg>
             </button>
             <button type="button" id="btnTabReload" class="toolbar-button"
                 title="Reload current tab"
                 aria-label="Reload current tab"
                 style="margin-left: 0.75rem;">
-                <img src="../assets/icons/reload-tab.svg" alt="reload tab">
+                <svg class="toolbar-button__icon" aria-hidden="true">
+                    <use href="../assets/icons/button-icons.svg#svgReloadTab"></use>
+                </svg>
             </button>
         </div>
 
@@ -124,7 +161,9 @@
             aria-label="Start addon new"
             style="margin-right: auto;"
             hidden>
-            <img src="../assets/icons/restart.png" alt="restart">
+            <svg class="toolbar-button__icon" aria-hidden="true">
+                <use href="../assets/icons/button-icons.svg#svgRestart"></use>
+            </svg>
         </button>
 
         <div id="divToolbarSpacer" class="toolbar-spacer">
@@ -135,14 +174,19 @@
         <button type="button" id="btnDefaultSettings" class="toolbar-button"
             title="Load addon default settings"
             aria-label="Load addon default settings"
+            style="margin-right: 6px;"
             hidden>
-            <img src="../assets/icons/default-settings.png" alt="defaults">
+            <svg class="toolbar-button__icon" aria-hidden="true">
+                <use href="../assets/icons/button-icons.svg#svgDefaultSettings"></use>
+            </svg>
         </button>
         <button type="button" id="btnSettings" class="toolbar-button"
             title="Settings"
             aria-label="Settings"
             value="false">
-            <img src="../assets/icons/settings.png" alt="settings">
+            <svg class="toolbar-button__icon" aria-hidden="true">
+                <use href="../assets/icons/button-icons.svg#svgSettings"></use>
+            </svg>
         </button>
     </div>
 

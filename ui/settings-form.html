@@ -26,13 +26,13 @@
                 max="365"
                 value="365"
                 disabled>
-            <span> days</span>
-        </div>
-        <div class="control">
-            <button type="button" id="btnDeleteProfile" class="folder-button" disabled>
-                <img src="../assets/icons/bin.png" alt="delete">
+            <span> days  </span>
+            <button type="button" id="btnDeleteProfile" class="folder-button"
+                title="Delete settings for this profile" disabled>
+                <svg class="folder-button__icon" aria-hidden="true">
+                    <use href="../assets/icons/button-icons.svg#svgBin"></use>
+                </svg>
             </button>
-            <span> Delete settings for this profile</span>
         </div>
     </fieldset>
 
@@ -49,7 +49,9 @@
             <div class="control">
                 <input type="text" id="inpUserFolder" name="userFolder" disabled>
                 <button type="button" id="btnDownloadFolder" class="folder-button" disabled title="Change the browser's default download folder">
-                    <img src="../assets/icons/folder.png" alt="folder">
+                    <svg class="folder-button__icon" aria-hidden="true">
+                        <use href="../assets/icons/button-icons.svg#svgFolder"></use>
+                    </svg>
                 </button>
             </div>
         </div>

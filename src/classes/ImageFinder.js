@@ -5,12 +5,16 @@ import Progressbar from './Progressbar.js';
 import BlurScanner from './BlurScanner.js';
 import ImageMatcher from './ImageMatcher.js';
 import { ScanContext } from './ScanContext.js';
-const SORT_ICON_BASE_NAMES = Object.freeze({
-    filename: 'sort-alphabetical',
-    type: 'sort-type',
-    size: 'sort-size',
-    dimensions: 'sort-dims',
-    cronologic: 'sort-crono'
+const SORT_BUTTON_TITLES = Object.freeze({
+    filename: 'Sort by filename',
+    type: 'Sort by image type',
+    size: 'Sort by file size',
+    dimensions: 'Sort by dimensions',
+    cronologic: 'Sort chronologically'
+});
+const SORT_DIRECTION_TITLES = Object.freeze({
+    asc: 'ascending',
+    desc: 'descending'
 });
 const SCAN_PROGRESS_COLOR = '#32CD32';
 const FILTER_PROGRESS_COLOR = '#FF6347';
@@ -105,6 +109,7 @@ export class ImageFinder {
     async run(onSettingsReady = null) {
         await this.setWebsiteURLFromActiveTab();
         await this.settings.run();
+        this.#applyThemeMode();
         if (typeof onSettingsReady === 'function') await onSettingsReady();
         this.updateDownloadTitles();
         this.setEventListeners();
@@ -135,6 +140,9 @@ export class ImageFinder {
         this.DOM.divToolbarTopLeft.addEventListener('click', e => this.onSortButtonClick(e));
         this.DOM.lstImages.addEventListener('click', e => this.onListItemClick(e));
         this.DOM.lstImages.addEventListener('keydown', e => this.onKeyPress(e));
+        this.DOM.chkTheme?.addEventListener('change', () => {
+            void this.#setThemeMode(this.DOM.chkTheme.checked ? 'dark' : 'light');
+        });
         document.addEventListener('keydown', e => {
             this.#onSettingsKeyDown(e);
         }, true);
@@ -360,9 +368,9 @@ export class ImageFinder {
         const icon = IMAGE_TYPES[image.imageType].icon;
         const dims = `${image.width} × ${image.height} px`;
         this.statusBar = `
-            <img id="imgTypeInfoIcon" src="${icon}" alt="${image.imageType}" style="height: 1.25rem; transform: translateY(4px)" title="${image.imageType.toUpperCase()} image, Resolution: ${dims}, Size: ${size}${exactSize}">
+            <img id="imgTypeInfoIcon" src="${icon}" alt="${image.imageType}" style="height: 1.25rem;" title="${image.imageType.toUpperCase()} image, Resolution: ${dims}, Size: ${size}${exactSize}">
                ${dims} [${size}]`;
-        this.DOM.spnStatusBar.style.display = 'block';
+        this.DOM.spnStatusBar.style.display = 'flex';
     }
 
     async onListItemClick(e) {
@@ -500,8 +508,28 @@ export class ImageFinder {
 
         await this.settingsForm?.waitForPendingSave();
         await this.settings.resetToDefaults();
+        this.#applyThemeMode();
         await this.settingsForm?.refresh();
         this.updateDownloadTitles();
+    }
+
+    #applyThemeMode(mode = this.settings.getThemeMode()) {
+        const themeMode = mode === 'dark' ? 'dark' : 'light';
+
+        document.documentElement.dataset.mode = themeMode;
+        if (this.DOM.chkTheme) this.DOM.chkTheme.checked = themeMode === 'dark';
+    }
+
+    async #setThemeMode(mode) {
+        const themeMode = mode === 'dark' ? 'dark' : 'light';
+
+        this.#applyThemeMode(themeMode);
+
+        try {
+            await this.settings.setThemeMode(themeMode);
+        } catch (error) {
+            console.warn('Cannot save theme mode:', error);
+        }
     }
 
     async reloadCurrentTab() {
@@ -958,14 +986,11 @@ export class ImageFinder {
 
     #setSearchButtonActive(active) {
         const button = this.DOM.btnSearch;
-        const icon = button.querySelector('img');
         const isActive = active === true;
 
         button.value = isActive ? 'true' : 'false';
         button.title = isActive ? 'Stop scan' : 'Find images';
         button.setAttribute('aria-label', button.title);
-        icon?.setAttribute('src', isActive ? '../assets/icons/stop.svg' : '../assets/icons/search.png');
-        icon?.setAttribute('alt', isActive ? 'stop scan' : 'find');
     }
 
     #getNewURLCandidates(rawCandidates) {
@@ -1440,15 +1465,16 @@ export class ImageFinder {
         this.DOM.divToolbarTopLeft.querySelectorAll('button[data-sort]').forEach(sortButton => {
             const criterion = sortButton.dataset.sort;
             const isActive = criterion === this.sortState.criterion;
-            const iconBaseName = SORT_ICON_BASE_NAMES[criterion];
-            const icon = sortButton.querySelector('img');
+            const title = SORT_BUTTON_TITLES[criterion];
 
             sortButton.classList.toggle('sorted', isActive);
-            if (!icon || !iconBaseName) return;
+            if (!title) return;
 
             const direction = isActive ? this.sortState.direction : 'asc';
-            icon.setAttribute('src', `../assets/icons/${iconBaseName}-${direction}.png`);
-            if (criterion === 'cronologic') sortButton.value = direction;
+            sortButton.value = direction;
+            sortButton.title = isActive
+                ? `${title} ${SORT_DIRECTION_TITLES[direction]}`
+                : title;
         });
     }
 

@@ -1,0 +1,67 @@
+:root {
+    --adn-color-scheme: light;
+    --adn-icon-size: 2rem;
+    --adn-icon-size-small: 1.5rem;
+    --adn-marker-size: 1rem;
+    --adn-icon-color: #202020;
+
+    --adn-page-bg: #f4f4f4;
+    --adn-surface-bg: white;
+    --adn-preview-bg: #e8e8e8;
+    --adn-toolbar-bg: #dddddd;
+    --adn-text: #202020;
+    --adn-muted-text: #777;
+    --adn-settings-legend-text: #222;
+    --adn-border: #b0b0b0;
+    --adn-control-border: silver;
+    --adn-button-hover-border: #a0a0a0;
+    --adn-button-hover-bg: #cccccc;
+    --adn-button-active-bg: #bbbbbb;
+    --adn-button-inset-border: silver;
+    --adn-disabled-text: #777;
+
+    --adn-progressbar-bg: navy;
+    --adn-progressbar-border: silver;
+    --adn-progressbar-text: whitesmoke;
+    --adn-control-accent: #32CD32;
+
+    --adn-led-bg: #cccccc;
+    --adn-led-text: #000000;
+    --adn-led-active-text: #000000;
+    --adn-led-scanner: limegreen;
+    --adn-led-filter: tomato;
+    --adn-led-deep-scan: #ffe600;
+
+    --adn-marker-new: tomato;
+    --adn-marker-upgrade: #32CD32;
+    --adn-result-selected-bg: navy;
+    --adn-result-selected-text: whitesmoke;
+    --adn-result-saved-text: #006000;
+    --adn-result-selected-saved-bg: lightgreen;
+}
+
+html[data-mode="dark"] {
+    --adn-color-scheme: dark;
+
+    --adn-icon-color: #d4d4d4;
+
+    --adn-page-bg: #1e1e1e;
+    --adn-surface-bg: #191A1B;
+    --adn-preview-bg: #252526;
+    --adn-toolbar-bg: #1A1A1E;
+    --adn-text: #d4d4d4;
+    --adn-muted-text: #9d9d9d;
+    --adn-settings-legend-text: #d4d4d4;
+    --adn-border: #3e3e42;
+    --adn-control-border: #5a5d5e;
+    --adn-button-hover-border: #5a5d5e;
+    --adn-button-hover-bg: #37373d;
+    --adn-button-active-bg: #2F2F2F;
+    --adn-button-inset-border: #5a5d5e;
+    --adn-disabled-text: #6a6a6a;
+
+    --adn-result-selected-bg: dimgray;
+
+    --adn-led-bg: #3c3c3c;
+    --adn-led-text: #d4d4d4;
+}
