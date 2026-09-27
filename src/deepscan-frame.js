@@ -201,7 +201,13 @@
             ...message
         }, scan.parentOrigin);
     };
-    const completeHiddenDeepScanFrame = (scan, status, reason = null, endReason = null) => {
+    const completeHiddenDeepScanFrame = (
+        scan,
+        status,
+        reason = null,
+        endReason = null,
+        performance = null
+    ) => {
         if (!scan || scan.completed) return;
 
         scan.completed = true;
@@ -211,7 +217,8 @@
             action: 'complete',
             status,
             ...(typeof reason === 'string' && reason ? {reason} : {}),
-            ...(typeof endReason === 'string' && endReason ? {endReason} : {})
+            ...(typeof endReason === 'string' && endReason ? {endReason} : {}),
+            ...(performance && typeof performance === 'object' ? {performance} : {})
         });
         if (activeHiddenDeepScanFrame === scan) activeHiddenDeepScanFrame = null;
     };
@@ -405,7 +412,13 @@
                 `status=${result.status}`,
                 `endReason=${result.endReason}`
             );
-            completeHiddenDeepScanFrame(scan, result.status, null, result.endReason);
+            completeHiddenDeepScanFrame(
+                scan,
+                result.status,
+                null,
+                result.endReason,
+                result.performance
+            );
         } catch (error) {
             sendHiddenDeepScanFrameError(scan, 'initialization', error);
             completeHiddenDeepScanFrame(
@@ -434,7 +447,13 @@
         ).catch(() => false);
         return scan.eventQueue;
     };
-    const finishHiddenDeepScanHost = async (scan, status, reason = null, endReason = null) => {
+    const finishHiddenDeepScanHost = async (
+        scan,
+        status,
+        reason = null,
+        endReason = null,
+        performance = null
+    ) => {
         if (!scan || scan.finished) return;
 
         scan.finished = true;
@@ -450,7 +469,8 @@
                 scanId: scan.scanId,
                 status,
                 ...(typeof reason === 'string' && reason ? {reason} : {}),
-                ...(typeof endReason === 'string' && endReason ? {endReason} : {})
+                ...(typeof endReason === 'string' && endReason ? {endReason} : {}),
+                ...(performance && typeof performance === 'object' ? {performance} : {})
             });
         } finally {
             console.info(
@@ -680,7 +700,8 @@
                     scan,
                     data.status,
                     data.reason,
-                    data.endReason
+                    data.endReason,
+                    data.performance
                 );
             }
         };

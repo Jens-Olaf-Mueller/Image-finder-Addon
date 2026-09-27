@@ -743,8 +743,14 @@ export async function scanPhotoSwipeImages({
     onDiagnostic = null,
     onCarouselDiagnostic = null,
     onActivity = null,
+    onPerformance = null,
     traverseCarousel = false
 } = {}) {
+    const performanceStartedAt = performance.now();
+    let genericCarouselMs = 0;
+    let genericCarouselCalls = 0;
+    let directPhotoSwipeMs = 0;
+    let directPhotoSwipeCalls = 0;
     const isAborted = () => signal?.aborted === true;
     const getOpenRoots = (initialRoot = document) => {
         const roots = [initialRoot];
@@ -1638,6 +1644,8 @@ export async function scanPhotoSwipeImages({
         const hasGallerySignal = !rootAppearsSlide && (genericGalleryTokens.test(rootLabel) ||
             root.hasAttribute?.('data-carousel-id') || root.hasAttribute?.('data-gallery-id')
         );
+        if (!hasGallerySignal) return false;
+
         const slides = getGenericSlideElements(root);
         const mediaCount = getGenericGalleryMediaElements(root).length;
         const hasControls = getGenericCarouselControl(root, 'forward').control ||
@@ -1787,7 +1795,13 @@ export async function scanPhotoSwipeImages({
             if (isAborted()) return;
             if (processedCarouselRoots.has(root)) continue;
             processedCarouselRoots.add(root);
-            await traverseGenericCarousel(root);
+            const carouselStartedAt = performance.now();
+            genericCarouselCalls += 1;
+            try {
+                await traverseGenericCarousel(root);
+            } finally {
+                genericCarouselMs += performance.now() - carouselStartedAt;
+            }
         }
     };
     if (traverseCarousel) await traverseGenericCarousels();
@@ -1803,6 +1817,8 @@ export async function scanPhotoSwipeImages({
         processedTargets.add(target);
         if (targetSource) processedTargetSources.add(targetSource);
 
+        const photoSwipeStartedAt = performance.now();
+        directPhotoSwipeCalls += 1;
         let temporaryStyle = null;
         try {
             temporaryStyle = createTemporaryStyle();
@@ -1865,8 +1881,23 @@ export async function scanPhotoSwipeImages({
                 if (!closed && findOpenPhotoSwipe()) await closePhotoSwipe();
             } finally {
                 temporaryStyle?.remove();
+                directPhotoSwipeMs += performance.now() - photoSwipeStartedAt;
             }
         }
+    }
+
+    const scanPhotoSwipeMs = performance.now() - performanceStartedAt;
+    try {
+        onPerformance?.({
+            scanPhotoSwipeMs,
+            genericCarouselMs,
+            genericCarouselCalls,
+            directPhotoSwipeMs,
+            directPhotoSwipeCalls,
+            otherMs: Math.max(0, scanPhotoSwipeMs - genericCarouselMs - directPhotoSwipeMs)
+        });
+    } catch {
+        // Performance instrumentation must never affect the scanner.
     }
 
     return candidates;
@@ -2427,10 +2458,39 @@ export async function runHiddenFrameDeepScan({
         steps: 0,
         scrollActionMs: 0,
         settleMs: 0,
+        edgeRangeGrowthMs: 0,
         collectSourcesMs: 0,
         scanImagesMs: 0,
         carouselPhotoSwipeMs: 0,
+        scanPhotoSwipeMs: 0,
+        genericCarouselMs: 0,
+        directPhotoSwipeMs: 0,
+        photoSwipeOtherMs: 0,
         candidatePipelineMs: 0,
+        batchDispatchMs: 0,
+        containerDetectionMs: 0,
+        containerAnalysisMs: 0,
+        containerTraversalMs: 0,
+        documentUpMs: 0,
+        documentDownMs: 0,
+        finalSettleMs: 0,
+        finalCollectionMs: 0,
+        initialCollectionMs: 0,
+        readinessWaitMs: 0,
+        collectSourcesCalls: 0,
+        scanImagesCalls: 0,
+        scanPhotoSwipeCalls: 0,
+        genericCarouselCalls: 0,
+        directPhotoSwipeCalls: 0,
+        rawCandidates: 0,
+        dedupedCandidates: 0,
+        batches: 0,
+        documentUpSteps: 0,
+        documentDownSteps: 0,
+        containerScrollSteps: 0,
+        containersHandled: 0,
+        containersScanned: 0,
+        repeatContainers: 0,
         newSources: 0,
         newRawCandidates: 0,
         newDomImages: 0,
@@ -2438,19 +2498,98 @@ export async function runHiddenFrameDeepScan({
         newGalleries: 0,
         mutationStart: null
     });
+    const scanPerformanceMetrics = createPerformanceMetrics();
+    const passPerformanceRecords = [];
+    let currentPassRecord = null;
     const addMetric = (metrics, name, value) => {
-        if (!metrics || !Number.isFinite(value)) return;
+        if (!Number.isFinite(value)) return;
 
-        metrics[name] = (metrics[name] ?? 0) + value;
+        if (metrics) metrics[name] = (metrics[name] ?? 0) + value;
         if (currentPassMetrics && currentPassMetrics !== metrics) {
             currentPassMetrics[name] = (currentPassMetrics[name] ?? 0) + value;
         }
+        scanPerformanceMetrics[name] = (scanPerformanceMetrics[name] ?? 0) + value;
     };
-    const recordCollectionMetric = (metrics, name, value) => {
-        addMetric(metrics, name, value);
-        if (currentPassMetrics && !metrics) {
-            currentPassMetrics[name] = (currentPassMetrics[name] ?? 0) + value;
-        }
+    const recordCollectionMetric = (metrics, name, value) => addMetric(metrics, name, value);
+    const createPerformanceSummary = (status) => {
+        const totalMs = Math.max(0, performance.now() - startedAtPerformance);
+        const documentTraversalMs = scanPerformanceMetrics.documentUpMs +
+            scanPerformanceMetrics.documentDownMs;
+        const containerWorkMs = scanPerformanceMetrics.containerDetectionMs +
+            scanPerformanceMetrics.containerAnalysisMs +
+            scanPerformanceMetrics.containerTraversalMs;
+        const initialAndFinalMs = scanPerformanceMetrics.initialCollectionMs +
+            scanPerformanceMetrics.finalSettleMs + scanPerformanceMetrics.finalCollectionMs;
+        const accountedExclusiveMs = scanPerformanceMetrics.readinessWaitMs +
+            documentTraversalMs + containerWorkMs + initialAndFinalMs;
+        const exclusive = {
+            readinessMs: Math.round(scanPerformanceMetrics.readinessWaitMs),
+            initialAndFinalMs: Math.round(initialAndFinalMs),
+            documentTraversalMs: Math.round(documentTraversalMs),
+            containerWorkMs: Math.round(containerWorkMs),
+            otherMs: Math.round(Math.max(0, totalMs - accountedExclusiveMs))
+        };
+        const toPercent = (value) => totalMs > 0 ? Math.round(value * 100 / totalMs) : 0;
+        const passRecords = passPerformanceRecords.map((record) => ({
+            pass: record.pass,
+            startPosition: record.startPosition,
+            endPosition: record.endPosition,
+            durationMs: Math.round(record.durationMs),
+            documentUpMs: Math.round(record.metrics.documentUpMs),
+            documentDownMs: Math.round(record.metrics.documentDownMs),
+            containerMs: Math.round(
+                record.metrics.containerDetectionMs + record.metrics.containerAnalysisMs +
+                record.metrics.containerTraversalMs
+            ),
+            finalCollectionMs: Math.round(record.metrics.finalCollectionMs),
+            repeatReason: record.repeatReason
+        }));
+
+        return {
+            status,
+            totalMs: Math.round(totalMs),
+            passes: passRecords,
+            exclusive: {
+                ...exclusive,
+                percentages: Object.fromEntries(Object.entries(exclusive).map(([name, value]) => [
+                    name,
+                    toPercent(value)
+                ]))
+            },
+            nestedTimings: {
+                collectSourcesMs: Math.round(scanPerformanceMetrics.collectSourcesMs),
+                scanImagesMs: Math.round(scanPerformanceMetrics.scanImagesMs),
+                scanImagesCalls: scanPerformanceMetrics.scanImagesCalls,
+                scanPhotoSwipeMs: Math.round(scanPerformanceMetrics.scanPhotoSwipeMs),
+                scanPhotoSwipeCalls: scanPerformanceMetrics.scanPhotoSwipeCalls,
+                genericCarouselMs: Math.round(scanPerformanceMetrics.genericCarouselMs),
+                genericCarouselCalls: scanPerformanceMetrics.genericCarouselCalls,
+                directPhotoSwipeMs: Math.round(scanPerformanceMetrics.directPhotoSwipeMs),
+                directPhotoSwipeCalls: scanPerformanceMetrics.directPhotoSwipeCalls,
+                photoSwipeOtherMs: Math.round(scanPerformanceMetrics.photoSwipeOtherMs),
+                containerDetectionMs: Math.round(scanPerformanceMetrics.containerDetectionMs),
+                containerAnalysisMs: Math.round(scanPerformanceMetrics.containerAnalysisMs),
+                containerTraversalMs: Math.round(scanPerformanceMetrics.containerTraversalMs),
+                scrollActionMs: Math.round(scanPerformanceMetrics.scrollActionMs),
+                settleMs: Math.round(scanPerformanceMetrics.settleMs),
+                edgeRangeGrowthMs: Math.round(scanPerformanceMetrics.edgeRangeGrowthMs),
+                candidatePipelineMs: Math.round(scanPerformanceMetrics.candidatePipelineMs),
+                batchDispatchMs: Math.round(scanPerformanceMetrics.batchDispatchMs)
+            },
+            counters: {
+                collectSourcesCalls: scanPerformanceMetrics.collectSourcesCalls,
+                rawCandidates: scanPerformanceMetrics.rawCandidates,
+                afterDedupe: scanPerformanceMetrics.dedupedCandidates,
+                batches: scanPerformanceMetrics.batches,
+                documentUpSteps: scanPerformanceMetrics.documentUpSteps,
+                documentDownSteps: scanPerformanceMetrics.documentDownSteps,
+                containerScrollSteps: scanPerformanceMetrics.containerScrollSteps,
+                containersHandled: scanPerformanceMetrics.containersHandled,
+                containersScanned: scanPerformanceMetrics.containersScanned,
+                repeatContainers: scanPerformanceMetrics.repeatContainers
+            },
+            note: 'Exclusive percentages use only non-overlapping top-level phases; nested timings overlap with document/container traversal.'
+        };
     };
     const wait = (milliseconds) => new Promise((resolve) => {
         if (signal?.aborted) {
@@ -2736,6 +2875,7 @@ export async function runHiddenFrameDeepScan({
     const collectSources = async ({diagnosticPhase = null, metrics = null, context = null} = {}) => {
         if (!isActive()) return 0;
 
+        recordCollectionMetric(metrics, 'collectSourcesCalls', 1);
         const collectionStartedAt = performance.now();
         const scanImagesStartedAt = performance.now();
         const foundCandidates = await scanImages(
@@ -2746,6 +2886,7 @@ export async function runHiddenFrameDeepScan({
             true
         );
         const scanImagesMs = performance.now() - scanImagesStartedAt;
+        recordCollectionMetric(metrics, 'scanImagesCalls', 1);
         const carouselStartedAt = performance.now();
         const photoSwipeCandidates = await scanPhotoSwipeImages({
             processedTargets: processedPhotoSwipeTargets,
@@ -2762,9 +2903,18 @@ export async function runHiddenFrameDeepScan({
             onActivity: () => {
                 photoSwipeActivityCount += 1;
             },
+            onPerformance: (performanceMetrics) => {
+                recordCollectionMetric(metrics, 'scanPhotoSwipeMs', performanceMetrics.scanPhotoSwipeMs);
+                recordCollectionMetric(metrics, 'genericCarouselMs', performanceMetrics.genericCarouselMs);
+                recordCollectionMetric(metrics, 'genericCarouselCalls', performanceMetrics.genericCarouselCalls);
+                recordCollectionMetric(metrics, 'directPhotoSwipeMs', performanceMetrics.directPhotoSwipeMs);
+                recordCollectionMetric(metrics, 'directPhotoSwipeCalls', performanceMetrics.directPhotoSwipeCalls);
+                recordCollectionMetric(metrics, 'photoSwipeOtherMs', performanceMetrics.otherMs);
+            },
             traverseCarousel: true
         });
         const carouselPhotoSwipeMs = performance.now() - carouselStartedAt;
+        recordCollectionMetric(metrics, 'scanPhotoSwipeCalls', 1);
         const candidatePipelineStartedAt = performance.now();
         const newCandidates = [];
         const photoSwipeURLs = new Set(photoSwipeCandidates.map((candidate) => candidate?.url));
@@ -2778,6 +2928,11 @@ export async function runHiddenFrameDeepScan({
             smallDimensions: 0,
             photoSwipe: 0
         };
+        recordCollectionMetric(
+            metrics,
+            'rawCandidates',
+            foundCandidates.length + photoSwipeCandidates.length
+        );
 
         for (const candidate of [...foundCandidates, ...photoSwipeCandidates]) {
             if (typeof candidate?.url !== 'string') continue;
@@ -2821,6 +2976,7 @@ export async function runHiddenFrameDeepScan({
             seenCandidatesByURL.set(serializedCandidate.url, serializedCandidate);
             newCandidates.push(serializedCandidate);
         }
+        recordCollectionMetric(metrics, 'dedupedCandidates', newCandidates.length);
         if (newCandidates.length > 0) {
             const discoveredAt = getElapsedMs();
             lastNewSourceAt = discoveredAt;
@@ -2829,11 +2985,14 @@ export async function runHiddenFrameDeepScan({
             recordCollectionMetric(metrics, 'newRawCandidates', newCandidates.length);
         }
         if (newCandidates.length > 0 && typeof onBatch === 'function' && isActive()) {
+            const candidatePreparationMs = performance.now() - candidatePipelineStartedAt;
             const diagnostic = {
                 id: `${startedAt}-${++progressDiagnosticBatchSequence}`,
                 phase: diagnosticPhase ?? context?.scope ?? 'deep-scan',
                 rawCandidates: newCandidates.length,
                 collection: ++collectionSequence,
+                emittedAt: Date.now(),
+                candidatePreparationMs: Math.round(candidatePreparationMs),
                 ...(Number.isInteger(context?.pass) ? {pass: context.pass} : {}),
                 ...(typeof context?.container === 'string' ? {container: context.container} : {}),
                 ...(typeof context?.direction === 'string' ? {direction: context.direction} : {}),
@@ -2858,7 +3017,11 @@ export async function runHiddenFrameDeepScan({
                 `smallDimensions=${diagnostic.smallDimensions}`,
                 `photoSwipe=${diagnostic.photoSwipe}`
             );
+            const batchDispatchStartedAt = performance.now();
             await onBatch(newCandidates, diagnostic);
+            const batchDispatchMs = performance.now() - batchDispatchStartedAt;
+            recordCollectionMetric(metrics, 'batchDispatchMs', batchDispatchMs);
+            recordCollectionMetric(metrics, 'batches', 1);
         }
         const candidatePipelineMs = performance.now() - candidatePipelineStartedAt;
         const collectionMs = performance.now() - collectionStartedAt;
@@ -2897,6 +3060,7 @@ export async function runHiddenFrameDeepScan({
         return ContainerAnalyser.getScrollInfo(element).verticallyScrollable;
     };
     const getRelevantContainerCandidates = () => {
+        const detectionStartedAt = performance.now();
         const candidates = new Map();
         const examinedElements = new WeakSet();
 
@@ -2915,11 +3079,13 @@ export async function runHiddenFrameDeepScan({
             }
         });
 
-        return Array.from(candidates.values()).sort((first, second) => {
+        const sortedCandidates = Array.from(candidates.values()).sort((first, second) => {
             if (first.container.contains(second.container)) return 1;
             if (second.container.contains(first.container)) return -1;
             return 0;
         });
+        addMetric(null, 'containerDetectionMs', performance.now() - detectionStartedAt);
+        return sortedCandidates;
     };
     const getContainerMetrics = (container) => {
         const targets = getTargetElements().filter((element) => container.contains(element));
@@ -2996,10 +3162,15 @@ export async function runHiddenFrameDeepScan({
     };
     const getContainerAnalysis = (container) => {
         if (!containerAnalyses.has(container)) {
-            containerAnalyses.set(container, ContainerAnalyser.analyze(container, {
-                minimumImageWidth,
-                minimumImageHeight
-            }));
+            const analysisStartedAt = performance.now();
+            try {
+                containerAnalyses.set(container, ContainerAnalyser.analyze(container, {
+                    minimumImageWidth,
+                    minimumImageHeight
+                }));
+            } finally {
+                addMetric(null, 'containerAnalysisMs', performance.now() - analysisStartedAt);
+            }
         }
         return containerAnalyses.get(container);
     };
@@ -3208,6 +3379,11 @@ export async function runHiddenFrameDeepScan({
         const finishContainerScan = (result) => {
             if (!directionFinished) {
                 directionFinished = true;
+                addMetric(
+                    directionMetrics,
+                    'containerTraversalMs',
+                    performance.now() - directionStartedAt
+                );
                 logContainerPerformance(
                     container,
                     index,
@@ -3224,6 +3400,7 @@ export async function runHiddenFrameDeepScan({
 
         while (isActive() && container.isConnected && isRelevantScrollableContainer(container)) {
             addMetric(directionMetrics, 'steps', 1);
+            addMetric(directionMetrics, 'containerScrollSteps', 1);
             const before = getContainerMetrics(container);
             const atEdge = direction === 'up'
                 ? isAtContainerTop(before)
@@ -3275,9 +3452,15 @@ export async function runHiddenFrameDeepScan({
             // arbitrary mutations, targets, candidates, or PhotoSwipe churn.
             if ((atEdge || reachedEdge) && !edgeLoadWaited) {
                 edgeLoadWaited = true;
+                const edgeRangeGrowthStartedAt = performance.now();
                 const rangeGrewAfterEdgeWait = await waitForEdgeRangeGrowth(
                     () => getScrollRange(getContainerMetrics(container)),
                     () => container.isConnected && isRelevantScrollableContainer(container)
+                );
+                addMetric(
+                    directionMetrics,
+                    'edgeRangeGrowthMs',
+                    performance.now() - edgeRangeGrowthStartedAt
                 );
                 if (!isActive()) return finishContainerScan('aborted');
 
@@ -3363,6 +3546,8 @@ export async function runHiddenFrameDeepScan({
             if (!isActive()) return;
             for (const entry of plan.entries) {
                 const {container, index} = entry;
+                addMetric(null, 'containersHandled', 1);
+                if (!entry.isNewContainer) addMetric(null, 'repeatContainers', 1);
                 if (entry.isNewContainer) {
                     logContainerAnalysis(container, index);
                     const state = getContainerDiagnosticState(container);
@@ -3406,6 +3591,7 @@ export async function runHiddenFrameDeepScan({
             for (const {container, index} of plan.scanEntries) {
                 if (!container.isConnected || !isRelevantScrollableContainer(container)) continue;
 
+                addMetric(null, 'containersScanned', 1);
                 reportActiveScrollContainer(container, index);
                 try {
                     await scanScrollableContainer(container, 'up', index);
@@ -3431,10 +3617,21 @@ export async function runHiddenFrameDeepScan({
         let edgeLoadWaited = false;
         let progressDiagnosticLogged = false;
         const directionStartedAt = performance.now();
+        const durationMetric = direction === 'up' ? 'documentUpMs' : 'documentDownMs';
+        const stepMetric = direction === 'up' ? 'documentUpSteps' : 'documentDownSteps';
+        let directionFinished = false;
+        const finishDocumentScan = (result) => {
+            if (!directionFinished) {
+                directionFinished = true;
+                addMetric(currentPassMetrics, durationMetric, performance.now() - directionStartedAt);
+            }
+            return result;
+        };
 
         reportActiveScrollContainer();
         logDocumentDirection(label);
         while (isActive()) {
+            addMetric(currentPassMetrics, stepMetric, 1);
             const beforeNewTargets = registerTargets();
             const before = getMetrics();
             const atEdge = direction === 'up'
@@ -3444,6 +3641,7 @@ export async function runHiddenFrameDeepScan({
             const photoSwipeActivityBefore = photoSwipeActivityCount;
             let scrollResult = {scrolled: false, targetMovement: 0};
 
+            const scrollActionStartedAt = performance.now();
             if (atEdge) {
                 if (direction === 'down') {
                     const bottomTarget = getBottomDwellTarget();
@@ -3459,10 +3657,18 @@ export async function runHiddenFrameDeepScan({
                     scrollResult = scrollFurtherWithAnchor(before, direction);
                 }
             }
+            addMetric(
+                currentPassMetrics,
+                'scrollActionMs',
+                performance.now() - scrollActionStartedAt
+            );
 
+            const settleStartedAt = performance.now();
             if (!(await waitForSettle({minimumMs: atEdge ? 400 : minimumSettleMs}))) {
-                return 'aborted';
+                addMetric(currentPassMetrics, 'settleMs', performance.now() - settleStartedAt);
+                return finishDocumentScan('aborted');
             }
+            addMetric(currentPassMetrics, 'settleMs', performance.now() - settleStartedAt);
 
             let newCandidates = await collectSources({
                 diagnosticPhase: direction === 'down' && !progressDiagnosticLogged
@@ -3491,10 +3697,16 @@ export async function runHiddenFrameDeepScan({
 
             if ((atEdge || reachedEdge) && !edgeLoadWaited) {
                 edgeLoadWaited = true;
+                const edgeRangeGrowthStartedAt = performance.now();
                 const rangeGrewAfterEdgeWait = await waitForEdgeRangeGrowth(
                     () => getScrollRange(getMetrics())
                 );
-                if (!isActive()) return 'aborted';
+                addMetric(
+                    currentPassMetrics,
+                    'edgeRangeGrowthMs',
+                    performance.now() - edgeRangeGrowthStartedAt
+                );
+                if (!isActive()) return finishDocumentScan('aborted');
 
                 if (rangeGrewAfterEdgeWait) {
                     newCandidates += await collectSources({
@@ -3572,12 +3784,12 @@ export async function runHiddenFrameDeepScan({
                         reason: 'stable',
                         durationMs: performance.now() - directionStartedAt
                     });
-                    return 'stable';
+                    return finishDocumentScan('stable');
                 }
             }
         }
 
-        return 'aborted';
+        return finishDocumentScan('aborted');
     };
 
     try {
@@ -3638,20 +3850,34 @@ export async function runHiddenFrameDeepScan({
             });
         }
 
+        const readinessStartedAt = performance.now();
         const readinessDeadline = Date.now() + DEEP_SCAN_READINESS_MAX_WAIT_MS;
         deepScanMutationStart = getMutationSnapshot();
         while (isActive() && (window.innerWidth <= 0 || window.innerHeight <= 0 ||
             document.readyState === 'loading') && Date.now() < readinessDeadline) {
             if (!(await wait(DEEP_SCAN_READINESS_POLL_INTERVAL_MS))) break;
         }
+        addMetric(null, 'readinessWaitMs', performance.now() - readinessStartedAt);
 
         registerTargets();
+        const initialCollectionStartedAt = performance.now();
         await collectSources({context: {scope: 'initial'}});
+        addMetric(null, 'initialCollectionMs', performance.now() - initialCollectionStartedAt);
         while (isActive()) {
             const pass = ++deepScanPass;
             const passStartedAt = performance.now();
             const passMetrics = createPerformanceMetrics();
             passMetrics.mutationStart = getMutationSnapshot();
+            currentPassRecord = {
+                pass,
+                startedAt: passStartedAt,
+                startPosition: getMetrics().scrollY,
+                endPosition: null,
+                durationMs: 0,
+                metrics: passMetrics,
+                repeatReason: 'aborted'
+            };
+            passPerformanceRecords.push(currentPassRecord);
             const containersAtPassStart = knownScrollContainerIndices.size;
             currentPassMetrics = passMetrics;
             console.info('[DeepScan PASS START]', `pass=${pass}`);
@@ -3670,13 +3896,23 @@ export async function runHiddenFrameDeepScan({
             await scanRelevantScrollContainers();
             if (!isActive()) break;
 
-            if (!(await waitForSettle({minimumMs: 400}))) break;
+            const finalSettleStartedAt = performance.now();
+            if (!(await waitForSettle({minimumMs: 400}))) {
+                addMetric(passMetrics, 'settleMs', performance.now() - finalSettleStartedAt);
+                addMetric(passMetrics, 'finalSettleMs', performance.now() - finalSettleStartedAt);
+                break;
+            }
+            const finalSettleMs = performance.now() - finalSettleStartedAt;
+            addMetric(passMetrics, 'settleMs', finalSettleMs);
+            addMetric(passMetrics, 'finalSettleMs', finalSettleMs);
 
             const photoSwipeActivityBeforeFinalCollection = photoSwipeActivityCount;
+            const finalCollectionStartedAt = performance.now();
             const newCandidates = await collectSources({
                 metrics: passMetrics,
                 context: {scope: 'final-settle', pass}
             });
+            addMetric(passMetrics, 'finalCollectionMs', performance.now() - finalCollectionStartedAt);
             const newTargets = registerTargets();
             addMetric(passMetrics, 'newTargets', newTargets);
             const documentStateAfterFinalSettle = getDocumentTraversalState();
@@ -3715,6 +3951,16 @@ export async function runHiddenFrameDeepScan({
             if (documentChangedAfterDirections) repeatReasons.push('document-scroll-range-changed');
             if (pendingContainers.length > 0) repeatReasons.push('container-still-open');
             if (newContainersDetected) repeatReasons.push('new-container-discovered');
+            const repeatReason = documentChangedAfterDirections && pendingContainers.length > 0
+                ? 'both'
+                : documentChangedAfterDirections
+                    ? 'document-changed'
+                    : pendingContainers.length > 0
+                        ? 'container-pending'
+                        : 'none';
+            currentPassRecord.endPosition = getMetrics().scrollY;
+            currentPassRecord.durationMs = performance.now() - passStartedAt;
+            currentPassRecord.repeatReason = repeatReason;
 
             logPassSummary(
                 pass,
@@ -3725,6 +3971,7 @@ export async function runHiddenFrameDeepScan({
                 Math.max(0, knownScrollContainerIndices.size - containersAtPassStart)
             );
             currentPassMetrics = null;
+            currentPassRecord = null;
 
             if (!repeatPass) {
                 console.info('[DeepScan PASS] complete');
@@ -3747,7 +3994,13 @@ export async function runHiddenFrameDeepScan({
         }
     } finally {
         observer?.disconnect();
+        if (currentPassRecord?.endPosition === null) {
+            currentPassRecord.endPosition = getMetrics().scrollY;
+            currentPassRecord.durationMs = performance.now() - currentPassRecord.startedAt;
+            currentPassRecord.repeatReason = signal?.aborted === true ? 'aborted' : 'interrupted';
+        }
         currentPassMetrics = null;
+        currentPassRecord = null;
         reportActiveScrollContainer();
     }
 
@@ -3778,9 +4031,13 @@ export async function runHiddenFrameDeepScan({
         );
     }
 
+    const performanceSummary = createPerformanceSummary(status);
+    console.info('[DeepScan Performance Hidden]', performanceSummary);
+
     return {
         status,
-        endReason: status === 'cancelled' ? 'aborted' : 'stable'
+        endReason: status === 'cancelled' ? 'aborted' : 'stable',
+        performance: performanceSummary
     };
 }
 

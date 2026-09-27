@@ -234,8 +234,61 @@ export default class ImageScanner {
         await this.cancelDeepScan();
 
         const scanId = crypto.randomUUID();
+        const transportMetrics = {
+            batches: 0,
+            timestampedBatches: 0,
+            hiddenToBackgroundMs: 0,
+            backgroundQueueMs: 0,
+            backgroundToPopupMs: 0,
+            popupQueueMs: 0,
+            popupPipelineMs: 0,
+            endToEndMs: 0
+        };
+        const addTransportDuration = (name, value) => {
+            if (!Number.isFinite(value)) return;
+
+            transportMetrics[name] = (transportMetrics[name] ?? 0) + Math.max(0, value);
+        };
+        const recordTransportBatch = (
+            diagnostic,
+            popupReceivedAt,
+            popupProcessingStartedAt,
+            popupProcessingFinishedAt
+        ) => {
+            transportMetrics.batches += 1;
+            addTransportDuration(
+                'popupQueueMs',
+                popupProcessingStartedAt - popupReceivedAt
+            );
+            addTransportDuration(
+                'popupPipelineMs',
+                popupProcessingFinishedAt - popupProcessingStartedAt
+            );
+
+            const emittedAt = Number(diagnostic?.emittedAt);
+            const backgroundReceivedAt = Number(diagnostic?.backgroundReceivedAt);
+            const backgroundSentAt = Number(diagnostic?.backgroundSentAt);
+            if (![emittedAt, backgroundReceivedAt, backgroundSentAt].every(Number.isFinite)) {
+                return;
+            }
+
+            transportMetrics.timestampedBatches += 1;
+            addTransportDuration('hiddenToBackgroundMs', backgroundReceivedAt - emittedAt);
+            addTransportDuration('backgroundQueueMs', backgroundSentAt - backgroundReceivedAt);
+            addTransportDuration('backgroundToPopupMs', popupReceivedAt - backgroundSentAt);
+            addTransportDuration('endToEndMs', popupProcessingFinishedAt - emittedAt);
+        };
+        const createTransportSummary = (completionResult) => ({
+            hidden: completionResult?.performance ?? null,
+            popupTransport: Object.fromEntries(Object.entries(transportMetrics).map(([name, value]) => [
+                name,
+                Number.isFinite(value) ? Math.round(value) : value
+            ])),
+            note: 'Transport timings are wall-clock batch latencies; the hidden summary contains the non-overlapping DeepScan phase percentages.'
+        });
         let batchQueue = Promise.resolve();
         let resolveCompletion = null;
+        let completionResult = null;
         const completion = new Promise((resolve) => {
             resolveCompletion = resolve;
         });
@@ -277,49 +330,63 @@ export default class ImageScanner {
                 }
             }).catch(() => undefined);
         };
-        const processCandidates = async (foundCandidates, diagnostic = null) => {
+        const processCandidates = async (
+            foundCandidates,
+            diagnostic = null,
+            popupReceivedAt = Date.now()
+        ) => {
             if (session.cancelled || session.controller.signal.aborted) return;
 
+            const popupProcessingStartedAt = Date.now();
             const pipelineStartedAt = performance.now();
-            const newCandidates = [];
-            for (const candidate of foundCandidates ?? []) {
-                if (typeof candidate?.url !== 'string') continue;
+            try {
+                const newCandidates = [];
+                for (const candidate of foundCandidates ?? []) {
+                    if (typeof candidate?.url !== 'string') continue;
 
-                const existingCandidate = candidatesByURL.get(candidate.url);
-                if (existingCandidate && getPixelCount(candidate) <= getPixelCount(existingCandidate)) {
-                    continue;
+                    const existingCandidate = candidatesByURL.get(candidate.url);
+                    if (existingCandidate && getPixelCount(candidate) <= getPixelCount(existingCandidate)) {
+                        continue;
+                    }
+
+                    candidatesByURL.set(candidate.url, candidate);
+                    newCandidates.push(candidate);
+                }
+                if (newCandidates.length === 0 || typeof onCandidates !== 'function') {
+                    sendPipelineDiagnostic(diagnostic, {
+                        scannerNewURLs: 0,
+                        candidatePipelineMs: Math.round(performance.now() - pipelineStartedAt)
+                    });
+                    return;
                 }
 
-                candidatesByURL.set(candidate.url, candidate);
-                newCandidates.push(candidate);
-            }
-            if (newCandidates.length === 0 || typeof onCandidates !== 'function') {
-                sendPipelineDiagnostic(diagnostic, {
-                    scannerNewURLs: 0,
-                    candidatePipelineMs: Math.round(performance.now() - pipelineStartedAt)
-                });
-                return;
-            }
+                const result = await onCandidates(newCandidates, session.controller.signal, diagnostic);
+                if (diagnostic && result && typeof result === 'object') {
+                    sendPipelineDiagnostic(diagnostic, {
+                        scannerNewURLs: newCandidates.length,
+                        ...result,
+                        candidatePipelineMs: Math.round(performance.now() - pipelineStartedAt)
+                    });
+                }
 
-            const result = await onCandidates(newCandidates, session.controller.signal, diagnostic);
-            if (diagnostic && result && typeof result === 'object') {
-                sendPipelineDiagnostic(diagnostic, {
-                    scannerNewURLs: newCandidates.length,
-                    ...result,
-                    candidatePipelineMs: Math.round(performance.now() - pipelineStartedAt)
-                });
-            }
-
-            if ((result === false || result?.continue === false) ||
-                session.cancelled || session.controller.signal.aborted) {
-                session.cancelled = true;
-                session.controller.abort();
-                session.finish({status: 'cancelled'});
-                void window.chrome.runtime.sendMessage({
-                    target: ISOLATED_DEEP_SCAN_TARGET,
-                    action: 'cancel',
-                    scanId
-                }).catch(() => undefined);
+                if ((result === false || result?.continue === false) ||
+                    session.cancelled || session.controller.signal.aborted) {
+                    session.cancelled = true;
+                    session.controller.abort();
+                    session.finish({status: 'cancelled'});
+                    void window.chrome.runtime.sendMessage({
+                        target: ISOLATED_DEEP_SCAN_TARGET,
+                        action: 'cancel',
+                        scanId
+                    }).catch(() => undefined);
+                }
+            } finally {
+                recordTransportBatch(
+                    diagnostic,
+                    popupReceivedAt,
+                    popupProcessingStartedAt,
+                    Date.now()
+                );
             }
         };
         const onMessage = (message, _sender, sendResponse) => {
@@ -334,9 +401,11 @@ export default class ImageScanner {
             }
 
             if (message.action === 'batch' && Array.isArray(message.candidates)) {
+                const popupReceivedAt = Date.now();
                 batchQueue = batchQueue.then(() => processCandidates(
                     message.candidates,
-                    message.diagnostic ?? null
+                    message.diagnostic ?? null,
+                    popupReceivedAt
                 )).catch(() => {
                     session.cancelled = true;
                     session.controller.abort();
@@ -397,7 +466,7 @@ export default class ImageScanner {
                     session.finish({status: 'failed'});
                 }
 
-                const completionResult = await completion;
+                completionResult = await completion;
                 console.info(
                     '[DeepScan COMPLETE TRACE] scanDeepImages-resolved',
                     `scanId=${scanId}`,
@@ -409,6 +478,7 @@ export default class ImageScanner {
             session.finish({status: 'failed'});
         } finally {
             session.finish({status: 'finished'});
+            console.info('[DeepScan Performance]', createTransportSummary(completionResult));
         }
 
         return Array.from(candidatesByURL.values());

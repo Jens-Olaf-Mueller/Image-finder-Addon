@@ -450,7 +450,20 @@ function queueDeepScanClientMessage(job, message) {
 
     job.clientQueuePending = (job.clientQueuePending ?? 0) + 1;
     job.clientEventQueue = (job.clientEventQueue ?? Promise.resolve())
-        .then(() => job.cancelled ? undefined : sendDeepScanClientMessage(job, message))
+        .then(() => {
+            if (job.cancelled) return undefined;
+
+            const messageForClient = message?.action === 'batch' && message.diagnostic
+                ? {
+                    ...message,
+                    diagnostic: {
+                        ...message.diagnostic,
+                        backgroundSentAt: Date.now()
+                    }
+                }
+                : message;
+            return sendDeepScanClientMessage(job, messageForClient);
+        })
         .catch(() => undefined)
         .finally(() => {
             job.clientQueuePending = Math.max(0, (job.clientQueuePending ?? 1) - 1);
@@ -537,12 +550,12 @@ async function finishHiddenDeepScan(job) {
     }
 }
 
-async function completeHiddenDeepScanJob(job, status, reason = null) {
+async function completeHiddenDeepScanJob(job, status, reason = null, performance = null) {
     await finishHiddenDeepScan(job);
 
     const isolatedJob = activeIsolatedDeepScan;
     if (isolatedJob?.scanId === job.scanId) {
-        await finishIsolatedDeepScan(isolatedJob, status, reason);
+        await finishIsolatedDeepScan(isolatedJob, status, reason, performance);
     }
 }
 
@@ -614,12 +627,18 @@ function handleHiddenDeepScanEvent(event) {
     }
     if (event.action === 'batch' && Array.isArray(event.candidates)) {
         if (isolatedJob.cancelled) return;
+        const diagnostic = event.diagnostic && typeof event.diagnostic === 'object'
+            ? {
+                ...event.diagnostic,
+                backgroundReceivedAt: Date.now()
+            }
+            : null;
         void queueDeepScanClientMessage(isolatedJob, {
             action: 'batch',
             scanId: isolatedJob.scanId,
             url: isolatedJob.url,
             candidates: event.candidates,
-            ...(event.diagnostic ? {diagnostic: event.diagnostic} : {})
+            ...(diagnostic ? {diagnostic} : {})
         });
         return;
     }
@@ -641,7 +660,7 @@ function handleHiddenDeepScanEvent(event) {
     const status = ['completed', 'cancelled', 'unavailable', 'failed'].includes(event.status)
         ? event.status
         : 'failed';
-    void completeHiddenDeepScanJob(job, status, event.reason);
+    void completeHiddenDeepScanJob(job, status, event.reason, event.performance);
 }
 
 function logIsolatedDeepScanFailure(job, status, reason = null) {
@@ -658,7 +677,7 @@ function logIsolatedDeepScanFailure(job, status, reason = null) {
     console.error('[DeepScan] Isolated scan failed:', job.url, reason || 'UNKNOWN_ERROR');
 }
 
-async function finishIsolatedDeepScan(job, status, reason = null) {
+async function finishIsolatedDeepScan(job, status, reason = null, performance = null) {
     if (!job || activeIsolatedDeepScan !== job) return;
 
     if (activeHiddenDeepScan?.scanId === job.scanId) {
@@ -683,7 +702,8 @@ async function finishIsolatedDeepScan(job, status, reason = null) {
         scanId: job.scanId,
         url: job.url,
         status,
-        ...(typeof reason === 'string' ? {reason} : {})
+        ...(typeof reason === 'string' ? {reason} : {}),
+        ...(performance && typeof performance === 'object' ? {performance} : {})
     });
     console.info(
         '[DeepScan COMPLETE TRACE] background-forward',
