@@ -121,7 +121,8 @@ export async function scanImages(
         return roots;
     };
 
-    const getDeepElements = (selector) => getOpenRoots().flatMap((root) =>
+    const openRootsSnapshot = mutationObserverOptions?.enabled === true ? null : getOpenRoots();
+    const getDeepElements = (selector) => (openRootsSnapshot ?? getOpenRoots()).flatMap((root) =>
         Array.from(root.querySelectorAll?.(selector) ?? [])
     );
 

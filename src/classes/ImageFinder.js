@@ -170,6 +170,7 @@ export class ImageFinder {
         this.#scanController = null;
         this.#resetScanActivities();
         this.#setSearchButtonActive(false);
+        this.info = 'Image preview';
         await this.cancelDeepScan({endReason});
         return true;
     }
@@ -607,6 +608,7 @@ export class ImageFinder {
         let scanCompleted = false;
         let scannerActivityActive = false;
         let deepScanActivityActive = false;
+        let deepScanStarted = false;
 
         this.#resetScanActivities();
         this.startActivity('scanner', scanGeneration);
@@ -648,6 +650,7 @@ export class ImageFinder {
             if (canDeepScan) {
                 const deepScanTabId = this.scanContext.tabId;
 
+                deepScanStarted = true;
                 this.stopActivity('scanner', scanGeneration);
                 scannerActivityActive = false;
                 this.info = 'Image preview';
@@ -767,7 +770,9 @@ export class ImageFinder {
             if (scannerActivityActive) this.stopActivity('scanner', scanGeneration);
             if (deepScanActivityActive) this.stopActivity('deepScan', scanGeneration);
             if (scanCompleted && this.#isCurrentScan(scanGeneration)) {
-                this.info = this.images.size === 0 ? 'No images found!' : 'Image preview';
+                this.info = deepScanStarted || this.images.size > 0
+                    ? 'Image preview'
+                    : 'No images found!';
             }
             this.#finalizeDeepScanUI(scanGeneration);
             if (this.#isCurrentScan(scanGeneration)) {
@@ -1534,7 +1539,7 @@ export class ImageFinder {
         if (activity === 'scanner') {
             this.info = 'Scanning...';
         } else if (activity === 'blurScanner' || activity === 'matcher') {
-            this.info = 'Filtering list...';
+            this.info = 'Applying filters...';
         }
     }
 
@@ -1566,7 +1571,9 @@ export class ImageFinder {
         const elapsed = elapsedSeconds < 60
             ? `${elapsedSeconds}s`
             : `${Math.floor(elapsedSeconds / 60)}:${String(elapsedSeconds % 60).padStart(2, '0')}`;
-        this.DOM.divLED.title = `Deep scan running ${elapsed} ...`;
+        const title = `Deep scan running ${elapsed} ...`;
+        this.DOM.divLED.title = title;
+        this.info = title;
     }
 
 }
