@@ -16,6 +16,7 @@ const SORT_DIRECTION_TITLES = Object.freeze({
     asc: 'ascending',
     desc: 'descending'
 });
+const REOPEN_POPUP_AFTER_RESTART_STORAGE_KEY = 'reopenPopupAfterRestart';
 const SCAN_PROGRESS_COLOR = '#32CD32';
 const FILTER_PROGRESS_COLOR = '#FF6347';
 const RESULT_MARKER_PRIORITIES = Object.freeze({
@@ -441,13 +442,25 @@ export class ImageFinder {
                 break;
 
             case 'restart':
-                window.chrome.runtime.reload();
+                await this.#restartExtension();
                 break;
 
             default:
                 console.log(`Unhandled button: [${btnName}]`);
                 break;
         }
+    }
+
+    async #restartExtension() {
+        try {
+            await window.chrome.storage.local.set({
+                [REOPEN_POPUP_AFTER_RESTART_STORAGE_KEY]: Date.now()
+            });
+        } catch (error) {
+            console.warn('[Restart] Cannot schedule popup reopening after restart:', error);
+        }
+
+        window.chrome.runtime.reload();
     }
 
     async toggleSettingsPanel() {
@@ -973,6 +986,14 @@ export class ImageFinder {
         if (nextPriority >= currentPriority) image.markerState = markerState;
     }
 
+    #getVisibleResultMarkerState(imageId, image, savedImageIds) {
+        if (this.#downloadStates.get(imageId)?.completed === true || savedImageIds.has(imageId)) {
+            return 'downloaded';
+        }
+
+        return image.markerState ?? 'normal';
+    }
+
     #isCurrentScan(scanGeneration) {
         return scanGeneration === this.#scanGeneration;
     }
@@ -1086,7 +1107,11 @@ export class ImageFinder {
             item.dataset.imageId = imageId;
             item.dataset.url = image.url;
             marker.className = 'result-marker';
-            marker.dataset.state = image.markerState ?? 'normal';
+            marker.dataset.state = this.#getVisibleResultMarkerState(
+                imageId,
+                image,
+                renderState.savedImageIds
+            );
             marker.setAttribute('aria-hidden', 'true');
             label.className = 'result-label';
             label.textContent = image.fileName;
@@ -1437,7 +1462,11 @@ export class ImageFinder {
         });
 
         const item = this.listItems.find(li => li.dataset.imageId === imageId);
-        if (completed) item?.classList.add('saved');
+        if (completed) {
+            item?.classList.add('saved');
+            const marker = item?.querySelector('.result-marker');
+            if (marker) marker.dataset.state = 'downloaded';
+        }
         if (this.selectedItem === item) {
             this.DOM.btnDownload.disabled = this.downloadButtonState && completed;
         }

@@ -293,6 +293,13 @@ html[data-mode="dark"] .toolbar-button.scanner-led.flash-led {
     display: none;
 }
 
+.theme label {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 0;
+}
+
 #chkTheme:checked ~ .theme-icon .theme-light {
     display: none;
 }
@@ -339,6 +346,14 @@ html[data-mode="dark"] .toolbar-button.scanner-led.flash-led {
     content: '★';
     color: var(--adn-marker-new);
     font-size: var(--adn-marker-size);
+    line-height: 1;
+}
+
+.result-marker[data-state="downloaded"]::before {
+    content: '✓';
+    color: var(--adn-marker-upgrade);
+    font-size: var(--adn-marker-size);
+    font-weight: bold;
     line-height: 1;
 }
 

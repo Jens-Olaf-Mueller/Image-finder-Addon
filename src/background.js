@@ -8,6 +8,8 @@ const HIDDEN_DEEP_SCAN_FRAME_RULE_ID = 10002;
 const HIDDEN_DEEP_SCAN_HOST_FRAME_ID = 0;
 const EMBED_BLOCKED_OR_LOAD_FAILED = 'EMBED_BLOCKED_OR_LOAD_FAILED';
 const POPUP_DEEP_SCAN_PORT_NAME = 'image-finder-popup-deepscan';
+const REOPEN_POPUP_AFTER_RESTART_STORAGE_KEY = 'reopenPopupAfterRestart';
+const REOPEN_POPUP_AFTER_RESTART_MAX_AGE_MS = 60 * 1000;
 
 if (typeof importScripts === 'function') {
     importScripts('isolated-deepscan-host.js');
@@ -24,6 +26,39 @@ let protectedDeepScanFrameRuleOwner = null;
 let hiddenDeepScanFrameRuleOwner = null;
 let protectedDeepScanFrameRuleUpdate = Promise.resolve();
 const popupDeepScanPorts = new Map();
+
+async function reopenPopupAfterExtensionRestart() {
+    let restartRequestedAt = null;
+    try {
+        const stored = await chrome.storage.local.get(REOPEN_POPUP_AFTER_RESTART_STORAGE_KEY);
+        restartRequestedAt = stored[REOPEN_POPUP_AFTER_RESTART_STORAGE_KEY];
+    } catch (error) {
+        console.warn('[Restart] Cannot read popup reopening request:', error);
+        return;
+    }
+
+    if (!Number.isFinite(restartRequestedAt)) return;
+
+    try {
+        await chrome.storage.local.remove(REOPEN_POPUP_AFTER_RESTART_STORAGE_KEY);
+    } catch (error) {
+        console.warn('[Restart] Cannot consume popup reopening request:', error);
+        return;
+    }
+
+    if (Date.now() - restartRequestedAt > REOPEN_POPUP_AFTER_RESTART_MAX_AGE_MS) return;
+
+    if (typeof chrome.action?.openPopup !== 'function') {
+        console.warn('[Restart] Automatic popup reopening after restart is not supported by this Chrome version.');
+        return;
+    }
+
+    try {
+        await chrome.action.openPopup();
+    } catch (error) {
+        console.warn('[Restart] Cannot reopen popup after restart:', error);
+    }
+}
 
 function getErrorMessage(error) {
     return error instanceof Error ? error.message : String(error);
@@ -1115,6 +1150,10 @@ chrome.tabs.onRemoved.addListener((tabId) => {
     if (activeIsolatedDeepScan?.tabId === tabId) {
         void cancelIsolatedDeepScan(activeIsolatedDeepScan.scanId);
     }
+});
+
+chrome.runtime.onInstalled.addListener(() => {
+    void reopenPopupAfterExtensionRestart();
 });
 
 chrome.runtime.onConnect.addListener((port) => {

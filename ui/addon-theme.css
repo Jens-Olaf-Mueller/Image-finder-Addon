@@ -24,6 +24,7 @@
     --adn-progressbar-border: silver;
     --adn-progressbar-text: whitesmoke;
     --adn-control-accent: #32CD32;
+    --adn-control-accent: #006000;
 
     --adn-led-bg: #cccccc;
     --adn-led-text: #000000;
@@ -46,7 +47,8 @@ html[data-mode="dark"] {
     --adn-icon-color: #d4d4d4;
 
     --adn-page-bg: #1e1e1e;
-    --adn-surface-bg: #191A1B;
+    /* --adn-surface-bg: #191A1B; */
+    --adn-surface-bg: #2A2A2A;
     --adn-preview-bg: #252526;
     --adn-toolbar-bg: #1A1A1E;
     --adn-text: #d4d4d4;
