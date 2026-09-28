@@ -2500,6 +2500,7 @@ export async function runHiddenFrameDeepScan({
         mutationStart: null
     });
     const scanPerformanceMetrics = createPerformanceMetrics();
+    const edgeRangeWaits = [];
     const passPerformanceRecords = [];
     let currentPassRecord = null;
     const addMetric = (metrics, name, value) => {
@@ -2512,7 +2513,65 @@ export async function runHiddenFrameDeepScan({
         scanPerformanceMetrics[name] = (scanPerformanceMetrics[name] ?? 0) + value;
     };
     const recordCollectionMetric = (metrics, name, value) => addMetric(metrics, name, value);
+    const recordEdgeRangeWait = ({scope, direction, container = null, durationMs, result}) => {
+        edgeRangeWaits.push({
+            scope,
+            direction,
+            ...(container ? {container} : {}),
+            durationMs,
+            endReason: result.endReason,
+            rangeBefore: result.rangeBefore,
+            rangeAfter: result.rangeAfter,
+            rangeDelta: Number.isFinite(result.rangeBefore) && Number.isFinite(result.rangeAfter)
+                ? result.rangeAfter - result.rangeBefore
+                : null,
+            relevantMutationCountBefore: result.relevantMutationCountBefore,
+            relevantMutationCountAfter: result.relevantMutationCountAfter,
+            lastRelevantMutationAgeMs: result.lastRelevantMutationAgeMs
+        });
+    };
     const createPerformanceSummary = (status) => {
+        const createEdgeRangeGrowthSummary = () => ({
+            totalMs: 0,
+            waits: 0,
+            growths: 0,
+            quietExits: 0,
+            timeouts: 0,
+            aborts: 0,
+            unusable: 0,
+            errors: 0
+        });
+        const addEdgeRangeWaitToSummary = (summary, wait) => {
+            summary.totalMs += wait.durationMs;
+            summary.waits += 1;
+            const counter = {
+                growth: 'growths',
+                quiet: 'quietExits',
+                timeout: 'timeouts',
+                abort: 'aborts',
+                unusable: 'unusable',
+                error: 'errors'
+            }[wait.endReason];
+            if (counter) summary[counter] += 1;
+        };
+        const edgeRangeGrowth = createEdgeRangeGrowthSummary();
+        const edgeRangeGrowthByScope = {
+            document: createEdgeRangeGrowthSummary(),
+            container: createEdgeRangeGrowthSummary()
+        };
+        const edgeRangeGrowthByDirection = {
+            up: createEdgeRangeGrowthSummary(),
+            down: createEdgeRangeGrowthSummary()
+        };
+        edgeRangeWaits.forEach((wait) => {
+            addEdgeRangeWaitToSummary(edgeRangeGrowth, wait);
+            addEdgeRangeWaitToSummary(edgeRangeGrowthByScope[wait.scope], wait);
+            addEdgeRangeWaitToSummary(edgeRangeGrowthByDirection[wait.direction], wait);
+        });
+        const roundEdgeRangeGrowthSummary = (summary) => ({
+            ...summary,
+            totalMs: Math.round(summary.totalMs)
+        });
         const totalMs = Math.max(0, performance.now() - startedAtPerformance);
         const documentTraversalMs = scanPerformanceMetrics.documentUpMs +
             scanPerformanceMetrics.documentDownMs;
@@ -2577,6 +2636,20 @@ export async function runHiddenFrameDeepScan({
                 candidatePipelineMs: Math.round(scanPerformanceMetrics.candidatePipelineMs),
                 batchDispatchMs: Math.round(scanPerformanceMetrics.batchDispatchMs)
             },
+            edgeRangeGrowth: {
+                ...roundEdgeRangeGrowthSummary(edgeRangeGrowth),
+                byScope: Object.fromEntries(Object.entries(edgeRangeGrowthByScope).map(
+                    ([scope, summary]) => [scope, roundEdgeRangeGrowthSummary(summary)]
+                )),
+                byDirection: Object.fromEntries(Object.entries(edgeRangeGrowthByDirection).map(
+                    ([direction, summary]) => [direction, roundEdgeRangeGrowthSummary(summary)]
+                ))
+            },
+            edgeRangeWaits: edgeRangeWaits.map((wait) => ({
+                ...wait,
+                durationMs: Math.round(wait.durationMs),
+                lastRelevantMutationAgeMs: Math.round(wait.lastRelevantMutationAgeMs)
+            })),
             counters: {
                 collectSourcesCalls: scanPerformanceMetrics.collectSourcesCalls,
                 rawCandidates: scanPerformanceMetrics.rawCandidates,
@@ -2844,25 +2917,65 @@ export async function runHiddenFrameDeepScan({
         return isActive();
     };
     const waitForEdgeRangeGrowth = async (getRange, isUsable = () => true) => {
+        const waitStartedAt = Date.now();
+        const relevantMutationCountBefore = relevantMutationCount;
+        const wasQuietAtStart = waitStartedAt - lastRelevantMutationAt >= quietSettleMs;
+        const createResult = (grew, endReason, rangeBefore, rangeAfter) => ({
+            grew,
+            endReason,
+            rangeBefore,
+            rangeAfter,
+            relevantMutationCountBefore,
+            relevantMutationCountAfter: relevantMutationCount,
+            lastRelevantMutationAgeMs: Math.max(0, Date.now() - lastRelevantMutationAt)
+        });
         let rangeBefore;
+        let rangeAfter = null;
         try {
             rangeBefore = getRange();
+            rangeAfter = rangeBefore;
         } catch {
-            return false;
+            return createResult(false, 'error', null, null);
         }
 
         const deadline = Date.now() + edgeLoadWaitMs;
+        const quietConfirmationDeadline = wasQuietAtStart
+            ? Math.min(deadline, waitStartedAt + maximumSettleMs)
+            : null;
         while (isActive() && isUsable() && Date.now() < deadline) {
-            if (!(await wait(Math.min(edgeLoadPollMs, deadline - Date.now())))) return false;
+            const nextWaitMs = Math.min(
+                edgeLoadPollMs,
+                deadline - Date.now(),
+                quietConfirmationDeadline === null
+                    ? Infinity
+                    : quietConfirmationDeadline - Date.now()
+            );
+            if (!(await wait(nextWaitMs))) {
+                return createResult(false, 'abort', rangeBefore, rangeAfter);
+            }
 
             try {
-                if (getRange() > rangeBefore) return true;
+                rangeAfter = getRange();
+                if (rangeAfter > rangeBefore) {
+                    return createResult(true, 'growth', rangeBefore, rangeAfter);
+                }
             } catch {
-                return false;
+                return createResult(false, 'error', rangeBefore, null);
+            }
+
+            if (quietConfirmationDeadline !== null &&
+                relevantMutationCount === relevantMutationCountBefore &&
+                Date.now() >= quietConfirmationDeadline) {
+                return createResult(false, 'quiet', rangeBefore, rangeAfter);
             }
         }
 
-        return false;
+        const endReason = !isActive()
+            ? 'abort'
+            : Date.now() < deadline
+                ? 'unusable'
+                : 'timeout';
+        return createResult(false, endReason, rangeBefore, rangeAfter);
     };
     const reportActiveScrollContainer = (container = null, colorIndex = 0) => {
         if (typeof onActiveScrollContainer !== 'function') return;
@@ -3301,7 +3414,8 @@ export async function runHiddenFrameDeepScan({
         const mutations = getMutationDelta(metrics.mutationStart ?? getMutationSnapshot());
         const otherMs = Math.max(
             0,
-            durationMs - metrics.scrollActionMs - metrics.settleMs - metrics.collectSourcesMs
+            durationMs - metrics.scrollActionMs - metrics.settleMs - metrics.edgeRangeGrowthMs -
+                metrics.collectSourcesMs
         );
         console.info(
             '[DeepScan CONTAINER PERF]',
@@ -3312,6 +3426,7 @@ export async function runHiddenFrameDeepScan({
             `steps=${metrics.steps}`,
             `scrollActionMs=${Math.round(metrics.scrollActionMs)}`,
             `settleMs=${Math.round(metrics.settleMs)}`,
+            `edgeRangeGrowthMs=${Math.round(metrics.edgeRangeGrowthMs)}`,
             `collectSourcesMs=${Math.round(metrics.collectSourcesMs)}`,
             `scanImagesMs=${Math.round(metrics.scanImagesMs)}`,
             `carouselPhotoSwipeMs=${Math.round(metrics.carouselPhotoSwipeMs)}`,
@@ -3454,18 +3569,26 @@ export async function runHiddenFrameDeepScan({
             if ((atEdge || reachedEdge) && !edgeLoadWaited) {
                 edgeLoadWaited = true;
                 const edgeRangeGrowthStartedAt = performance.now();
-                const rangeGrewAfterEdgeWait = await waitForEdgeRangeGrowth(
+                const edgeRangeGrowthResult = await waitForEdgeRangeGrowth(
                     () => getScrollRange(getContainerMetrics(container)),
                     () => container.isConnected && isRelevantScrollableContainer(container)
                 );
+                const edgeRangeGrowthDurationMs = performance.now() - edgeRangeGrowthStartedAt;
+                recordEdgeRangeWait({
+                    scope: 'container',
+                    direction,
+                    container: containerLabel,
+                    durationMs: edgeRangeGrowthDurationMs,
+                    result: edgeRangeGrowthResult
+                });
                 addMetric(
                     directionMetrics,
                     'edgeRangeGrowthMs',
-                    performance.now() - edgeRangeGrowthStartedAt
+                    edgeRangeGrowthDurationMs
                 );
                 if (!isActive()) return finishContainerScan('aborted');
 
-                if (rangeGrewAfterEdgeWait) {
+                if (edgeRangeGrowthResult.grew) {
                     newCandidates += await collectSources({
                         metrics: directionMetrics,
                         context: {
@@ -3699,17 +3822,24 @@ export async function runHiddenFrameDeepScan({
             if ((atEdge || reachedEdge) && !edgeLoadWaited) {
                 edgeLoadWaited = true;
                 const edgeRangeGrowthStartedAt = performance.now();
-                const rangeGrewAfterEdgeWait = await waitForEdgeRangeGrowth(
+                const edgeRangeGrowthResult = await waitForEdgeRangeGrowth(
                     () => getScrollRange(getMetrics())
                 );
+                const edgeRangeGrowthDurationMs = performance.now() - edgeRangeGrowthStartedAt;
+                recordEdgeRangeWait({
+                    scope: 'document',
+                    direction,
+                    durationMs: edgeRangeGrowthDurationMs,
+                    result: edgeRangeGrowthResult
+                });
                 addMetric(
                     currentPassMetrics,
                     'edgeRangeGrowthMs',
-                    performance.now() - edgeRangeGrowthStartedAt
+                    edgeRangeGrowthDurationMs
                 );
                 if (!isActive()) return finishDocumentScan('aborted');
 
-                if (rangeGrewAfterEdgeWait) {
+                if (edgeRangeGrowthResult.grew) {
                     newCandidates += await collectSources({
                         diagnosticPhase: direction === 'down' && !progressDiagnosticLogged
                             ? 'document-down'
