@@ -1,5 +1,6 @@
 import CarouselScanner from './classes/CarouselScanner.js';
 import ContainerAnalyser from './classes/ContainerAnalyser.js';
+import PhotoSwipeScanner from './classes/PhotoSwipeScanner.js';
 
 export async function scanImages(
     ignoreHiddenImages = false,
@@ -742,6 +743,7 @@ export async function scanPhotoSwipeImages({
     processedTargetSources = new Set(),
     processedCarouselRoots = new WeakSet(),
     carouselScanner = null,
+    photoSwipeScanner = null,
     signal = null,
     onDiagnostic = null,
     onCarouselDiagnostic = null,
@@ -1169,6 +1171,16 @@ export async function scanPhotoSwipeImages({
     };
 
     const candidates = [];
+    const activePhotoSwipeScanner = photoSwipeScanner ?? new PhotoSwipeScanner({
+        processedTargets,
+        processedTargetSources
+    });
+    const photoSwipeCarouselContext = activePhotoSwipeScanner.getCarouselContext();
+    /*
+     * Beta 0.0.08 legacy direct PhotoSwipe session-state implementation.
+     * Replaced by PhotoSwipeScanner; retained inactive for direct behaviour
+     * comparison during the extraction phase.
+     *
     const getSlideStateIdentity = (readySlide) => {
         const {slide, image} = readySlide ?? {};
         const getAttributeValue = (element, attributeName) => {
@@ -1215,12 +1227,19 @@ export async function scanPhotoSwipeImages({
             key: getCanonicalCarouselStateKey(carousel, rawKey)
         };
     };
+    */
+    // Shared with CarouselScanner's optional PhotoSwipe enrichment.
     const getCarouselStateLabel = (carousel, key) => {
         if (!carousel.stateLabels.has(key)) {
             carousel.stateLabels.set(key, 'state#' + carousel.stateLabels.size);
         }
         return carousel.stateLabels.get(key);
     };
+    /*
+     * Beta 0.0.08 legacy direct PhotoSwipe controls and session traversal.
+     * Replaced by PhotoSwipeScanner; retained inactive for direct behaviour
+     * comparison during the extraction phase.
+     *
     const isCarouselControlUsable = (control) => {
         const phaseStartedAt = getPhaseStartedAt();
         if (!control || !control.isConnected ||
@@ -1510,6 +1529,7 @@ export async function scanPhotoSwipeImages({
             'states=' + carousel.visitedStates.size
         );
     };
+    */
     const activeCarouselScanner = carouselScanner ?? new CarouselScanner({processedCarouselRoots});
     if (traverseCarousel) {
         const carouselScanResult = await activeCarouselScanner.scan({
@@ -1529,8 +1549,8 @@ export async function scanPhotoSwipeImages({
             createTemporaryStyle,
             closePhotoSwipe,
             getTargetSourceKey,
-            processedTargets,
-            processedTargetSources,
+            processedTargets: photoSwipeCarouselContext.processedTargets,
+            processedTargetSources: photoSwipeCarouselContext.processedTargetSources,
             collectPerformance,
             performanceDetail,
             performanceState,
@@ -2138,6 +2158,42 @@ export async function scanPhotoSwipeImages({
     if (traverseCarousel) await traverseGenericCarousels();
     */
 
+    const photoSwipeScanResult = await activePhotoSwipeScanner.scan({
+        document,
+        queryDeep,
+        findOpenPhotoSwipe,
+        getReadyActiveSlideImage,
+        collectPhotoSwipeCandidates,
+        getImageSnapshot,
+        didZoomStateChange,
+        imageDimensions,
+        isAborted,
+        waitFor,
+        createTemporaryStyle,
+        closePhotoSwipe,
+        getTargetSourceKey,
+        getCarouselStateLabel,
+        reportActivity,
+        reportCarousel,
+        reportZoom,
+        collectPerformance,
+        performanceDetail,
+        performanceState,
+        getPhaseStartedAt,
+        recordPhase,
+        recordQuery,
+        addCandidates: (...newCandidates) => candidates.push(...newCandidates),
+        getCandidateCount: () => candidates.length,
+        traverseCarousel
+    });
+    directPhotoSwipeMs += photoSwipeScanResult.directPhotoSwipeMs;
+    directPhotoSwipeCalls += photoSwipeScanResult.directPhotoSwipeCalls;
+
+    /*
+     * Beta 0.0.08 legacy direct PhotoSwipe target scan.
+     * Replaced by PhotoSwipeScanner; retained inactive for direct behaviour
+     * comparison during the extraction phase.
+     *
     const directDiscoveryStartedAt = getPhaseStartedAt();
     const targets = queryDeep(document, '[at-attr="media_locator"]');
     if (collectPerformance) performanceDetail.direct.targetCount = targets.length;
@@ -2269,6 +2325,7 @@ export async function scanPhotoSwipeImages({
         }
     }
 
+    */
     const scanPhotoSwipeMs = performance.now() - performanceStartedAt;
     try {
         const detail = collectPerformance ? {
@@ -2818,8 +2875,7 @@ export async function runHiddenFrameDeepScan({
     const knownTargets = new Set();
     const attemptedUpwardTargets = new WeakSet();
     const attemptedDownwardTargets = new WeakSet();
-    const processedPhotoSwipeTargets = new WeakSet();
-    const processedPhotoSwipeTargetSources = new Set();
+    const photoSwipeScanner = new PhotoSwipeScanner();
     const carouselScanner = new CarouselScanner();
     // Diagnostic-only state: it records what the current run sees, but never
     // participates in discovery, filtering, traversal, or result selection.
@@ -3722,9 +3778,8 @@ export async function runHiddenFrameDeepScan({
         recordCollectionMetric(metrics, 'scanImagesCalls', 1);
         const carouselStartedAt = performance.now();
         const photoSwipeCandidates = await scanPhotoSwipeImages({
-            processedTargets: processedPhotoSwipeTargets,
-            processedTargetSources: processedPhotoSwipeTargetSources,
             carouselScanner,
+            photoSwipeScanner,
             performanceState: photoSwipePerformanceState,
             signal,
             onDiagnostic: (message) => console.info('[DeepScan ZOOM]', message),

@@ -311,8 +311,7 @@ html[data-mode="dark"] .toolbar-button.scanner-led.flash-led {
 #btnSearch[value="true"],
 #btnSettings[value="true"],
 .sorted {
-    border-style: inset !important;
-    border: 2px solid var(--adn-button-inset-border);
+    border: 1px inset var(--adn-button-inset-border);
     background: var(--adn-button-active-bg);
 }
 
