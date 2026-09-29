@@ -16,34 +16,14 @@
     <!-- Top toolbar -->
     <div id="divTopToolbar" class="toolbar toolbar__top" role="toolbar" aria-label="Image sorting and preview controls">
         <div id="divToolbarTopLeft" class="toolbar-section" role="group" aria-label="Image list sorting">
-            <button type="button" id="btnSortFilename" class="toolbar-button tbr-btn__small"
-                title="Sort by filename"
-                aria-label="Sort by filename"
-                data-sort="filename"
+            <button type="button" id="btnSortChronologic" class="toolbar-button tbr-btn__small"
+                title="Sort chronologically"
+                aria-label="Sort chronologically"
+                data-sort="cronologic"
                 value="asc">
                 <svg class="tbr-btn__icon" aria-hidden="true">
-                    <use class="icon-sort-asc" href="../assets/icons/button-icons.svg#svgSortAlphabeticalAsc"></use>
-                    <use class="icon-sort-desc" href="../assets/icons/button-icons.svg#svgSortAlphabeticalDesc"></use>
-                </svg>
-            </button>
-            <button type="button" id="btnSortType" class="toolbar-button tbr-btn__small"
-                title="Sort by image type"
-                aria-label="Sort by image type"
-                data-sort="type"
-                value="asc">
-                <svg class="tbr-btn__icon" aria-hidden="true">
-                    <use class="icon-sort-asc" href="../assets/icons/button-icons.svg#svgSortTypeAsc"></use>
-                    <use class="icon-sort-desc" href="../assets/icons/button-icons.svg#svgSortTypeDesc"></use>
-                </svg>
-            </button>
-            <button type="button" id="btnSortFileSize" class="toolbar-button tbr-btn__small"
-                title="Sort by file size"
-                aria-label="Sort by file size"
-                data-sort="size"
-                value="asc">
-                <svg class="tbr-btn__icon" aria-hidden="true">
-                    <use class="icon-sort-asc" href="../assets/icons/button-icons.svg#svgSortSizeAsc"></use>
-                    <use class="icon-sort-desc" href="../assets/icons/button-icons.svg#svgSortSizeDesc"></use>
+                    <use class="icon-sort-asc" href="../assets/icons/button-icons.svg#svgSortCronoAsc"></use>
+                    <use class="icon-sort-desc" href="../assets/icons/button-icons.svg#svgSortCronoDesc"></use>
                 </svg>
             </button>
             <button type="button" id="btnSortDimensions" class="toolbar-button tbr-btn__small"
@@ -56,14 +36,34 @@
                     <use class="icon-sort-desc" href="../assets/icons/button-icons.svg#svgSortDimsDesc"></use>
                 </svg>
             </button>
-            <button type="button" id="btnSortChronologic" class="toolbar-button tbr-btn__small"
-                title="Sort chronologically"
-                aria-label="Sort chronologically"
-                data-sort="cronologic"
+            <button type="button" id="btnSortFilename" class="toolbar-button tbr-btn__small"
+                title="Sort by filename"
+                aria-label="Sort by filename"
+                data-sort="filename"
                 value="asc">
                 <svg class="tbr-btn__icon" aria-hidden="true">
-                    <use class="icon-sort-asc" href="../assets/icons/button-icons.svg#svgSortCronoAsc"></use>
-                    <use class="icon-sort-desc" href="../assets/icons/button-icons.svg#svgSortCronoDesc"></use>
+                    <use class="icon-sort-asc" href="../assets/icons/button-icons.svg#svgSortAlphabeticalAsc"></use>
+                    <use class="icon-sort-desc" href="../assets/icons/button-icons.svg#svgSortAlphabeticalDesc"></use>
+                </svg>
+            </button>
+            <button type="button" id="btnSortFileSize" class="toolbar-button tbr-btn__small"
+                title="Sort by file size"
+                aria-label="Sort by file size"
+                data-sort="size"
+                value="asc">
+                <svg class="tbr-btn__icon" aria-hidden="true">
+                    <use class="icon-sort-asc" href="../assets/icons/button-icons.svg#svgSortSizeAsc"></use>
+                    <use class="icon-sort-desc" href="../assets/icons/button-icons.svg#svgSortSizeDesc"></use>
+                </svg>
+            </button>
+            <button type="button" id="btnSortType" class="toolbar-button tbr-btn__small"
+                title="Sort by image type"
+                aria-label="Sort by image type"
+                data-sort="type"
+                value="asc">
+                <svg class="tbr-btn__icon" aria-hidden="true">
+                    <use class="icon-sort-asc" href="../assets/icons/button-icons.svg#svgSortTypeAsc"></use>
+                    <use class="icon-sort-desc" href="../assets/icons/button-icons.svg#svgSortTypeDesc"></use>
                 </svg>
             </button>
             <div id="divLED" class="toolbar-button scanner-led" style="margin-left: auto;">0</div>

@@ -1,3 +1,4 @@
+import CarouselScanner from './classes/CarouselScanner.js';
 import ContainerAnalyser from './classes/ContainerAnalyser.js';
 
 export async function scanImages(
@@ -740,25 +741,124 @@ export async function scanPhotoSwipeImages({
     processedTargets = new WeakSet(),
     processedTargetSources = new Set(),
     processedCarouselRoots = new WeakSet(),
+    carouselScanner = null,
     signal = null,
     onDiagnostic = null,
     onCarouselDiagnostic = null,
     onActivity = null,
     onPerformance = null,
+    performanceState = null,
     traverseCarousel = false
 } = {}) {
     const performanceStartedAt = performance.now();
+    const collectPerformance = typeof onPerformance === 'function';
+    const performanceDetail = collectPerformance ? {
+        callIndex: (performanceState?.callIndex ?? 0) + 1,
+        phases: {
+            rootDiscoveryMs: 0,
+            domQueriesMs: 0,
+            candidateIterationMs: 0,
+            candidateClassificationMs: 0,
+            styleAttributeGeometryMs: 0,
+            ancestorDescendantChecksMs: 0,
+            dedupeResultHandlingMs: 0,
+            genericCarouselDiscoveryMs: 0,
+            directPhotoSwipeDiscoveryMs: 0,
+            waitForMs: 0
+        },
+        queries: {
+            calls: 0,
+            allElementsCalls: 0,
+            results: 0,
+            allElementsResults: 0,
+            maxResultSize: 0,
+            bySelector: {}
+        },
+        generic: {
+            candidateCount: 0,
+            previouslySeenCandidates: 0,
+            newCandidates: 0,
+            rootsConsidered: 0,
+            rootsPreviouslySeen: 0,
+            rootsNew: 0,
+            rootsRechecked: 0,
+            rootsChangedSincePreviousCall: 0,
+            rootsUnchangedSincePreviousCall: 0,
+            rootsAlreadyProcessed: 0,
+            documentElementsScanned: 0,
+            rootSlideElements: 0,
+            rootMediaElements: 0,
+            maxSlidesPerRoot: 0,
+            maxMediaElementsPerRoot: 0,
+            resultCount: 0
+        },
+        direct: {
+            targetCount: 0,
+            previouslySeenTargets: 0,
+            newTargets: 0,
+            processedTargetsSkipped: 0,
+            sourceDuplicatesSkipped: 0,
+            invisibleTargetsSkipped: 0,
+            openModalChecks: 0,
+            openModalSkips: 0,
+            resultCount: 0
+        },
+        waits: {
+            calls: 0,
+            totalMs: 0,
+            timeoutCount: 0,
+            maxTimeoutOverrunMs: 0
+        }
+    } : null;
+    if (performanceState && collectPerformance) {
+        performanceState.callIndex = performanceDetail.callIndex;
+    }
+    const getPhaseStartedAt = () => collectPerformance ? performance.now() : 0;
+    const recordPhase = (name, startedAt) => {
+        if (!collectPerformance) return;
+
+        performanceDetail.phases[name] += Math.max(0, performance.now() - startedAt);
+    };
+    const recordQuery = (selector, resultSize) => {
+        if (!collectPerformance) return;
+
+        const size = Math.max(0, Number(resultSize) || 0);
+        performanceDetail.queries.calls += 1;
+        performanceDetail.queries.results += size;
+        performanceDetail.queries.maxResultSize = Math.max(
+            performanceDetail.queries.maxResultSize,
+            size
+        );
+        const selectorSummary = performanceDetail.queries.bySelector[selector] ?? {
+            calls: 0,
+            results: 0,
+            maxResultSize: 0
+        };
+        selectorSummary.calls += 1;
+        selectorSummary.results += size;
+        selectorSummary.maxResultSize = Math.max(selectorSummary.maxResultSize, size);
+        performanceDetail.queries.bySelector[selector] = selectorSummary;
+        if (selector === '*') {
+            performanceDetail.queries.allElementsCalls += 1;
+            performanceDetail.queries.allElementsResults += size;
+        }
+    };
     let genericCarouselMs = 0;
     let genericCarouselCalls = 0;
     let directPhotoSwipeMs = 0;
     let directPhotoSwipeCalls = 0;
     const isAborted = () => signal?.aborted === true;
     const getOpenRoots = (initialRoot = document) => {
+        const phaseStartedAt = getPhaseStartedAt();
         const roots = [initialRoot];
         const seenRoots = new Set(roots);
 
         for (let index = 0; index < roots.length; index += 1) {
-            roots[index].querySelectorAll?.('*').forEach((element) => {
+            const queryStartedAt = getPhaseStartedAt();
+            const elements = roots[index].querySelectorAll?.('*') ?? [];
+            recordQuery('*', elements.length);
+            recordPhase('domQueriesMs', queryStartedAt);
+            elements.forEach((element) => {
                 if (element.shadowRoot && !seenRoots.has(element.shadowRoot)) {
                     seenRoots.add(element.shadowRoot);
                     roots.push(element.shadowRoot);
@@ -766,28 +866,62 @@ export async function scanPhotoSwipeImages({
             });
         }
 
+        recordPhase('rootDiscoveryMs', phaseStartedAt);
         return roots;
     };
-    const queryDeep = (root, selector) => getOpenRoots(root).flatMap((queryRoot) =>
-        Array.from(queryRoot.querySelectorAll?.(selector) ?? [])
-    );
-    const findDeep = (selector) => getOpenRoots().map((root) => root.querySelector?.(selector))
-        .find(Boolean) ?? null;
+    const queryDeep = (root, selector) => getOpenRoots(root).flatMap((queryRoot) => {
+        const queryStartedAt = getPhaseStartedAt();
+        const result = Array.from(queryRoot.querySelectorAll?.(selector) ?? []);
+        recordQuery(selector, result.length);
+        recordPhase('domQueriesMs', queryStartedAt);
+        return result;
+    });
+    const findDeep = (selector) => getOpenRoots().map((root) => {
+        const queryStartedAt = getPhaseStartedAt();
+        const result = root.querySelector?.(selector) ?? null;
+        recordQuery(selector, Number(Boolean(result)));
+        recordPhase('domQueriesMs', queryStartedAt);
+        return result;
+    }).find(Boolean) ?? null;
     const findOpenPhotoSwipe = () => findDeep('.pswp.pswp--open');
-    const getActiveSlide = (photoSwipe) => photoSwipe?.querySelector(
-        '.pswp__item[aria-hidden="false"]'
-    ) ?? photoSwipe?.querySelector('.pswp__item:not([aria-hidden="true"])') ?? null;
-    const getPhotoSwipeImages = (photoSwipe) => Array.from(
-        photoSwipe?.querySelectorAll?.('.pswp__item .pswp__img, .pswp__item img') ?? []
-    ).flatMap((element) => {
-        if (element instanceof HTMLImageElement) return [element];
-        return Array.from(element.querySelectorAll('img'));
-    }).filter((image, index, images) => images.indexOf(image) === index);
+    const getActiveSlide = (photoSwipe) => {
+        const firstQueryStartedAt = getPhaseStartedAt();
+        const visibleSlide = photoSwipe?.querySelector('.pswp__item[aria-hidden="false"]') ?? null;
+        recordQuery('.pswp__item[aria-hidden="false"]', Number(Boolean(visibleSlide)));
+        recordPhase('domQueriesMs', firstQueryStartedAt);
+        if (visibleSlide) return visibleSlide;
+
+        const fallbackQueryStartedAt = getPhaseStartedAt();
+        const fallbackSlide = photoSwipe?.querySelector('.pswp__item:not([aria-hidden="true"])') ?? null;
+        recordQuery('.pswp__item:not([aria-hidden="true"])', Number(Boolean(fallbackSlide)));
+        recordPhase('domQueriesMs', fallbackQueryStartedAt);
+        return fallbackSlide;
+    };
+    const getPhotoSwipeImages = (photoSwipe) => {
+        const queryStartedAt = getPhaseStartedAt();
+        const elements = Array.from(
+            photoSwipe?.querySelectorAll?.('.pswp__item .pswp__img, .pswp__item img') ?? []
+        );
+        recordQuery('.pswp__item .pswp__img, .pswp__item img', elements.length);
+        recordPhase('domQueriesMs', queryStartedAt);
+        return elements.flatMap((element) => {
+            if (element instanceof HTMLImageElement) return [element];
+
+            const nestedQueryStartedAt = getPhaseStartedAt();
+            const images = Array.from(element.querySelectorAll('img'));
+            recordQuery('img', images.length);
+            recordPhase('domQueriesMs', nestedQueryStartedAt);
+            return images;
+        }).filter((image, index, images) => images.indexOf(image) === index);
+    };
     const getSlideImages = (photoSwipe) => {
         const slide = getActiveSlide(photoSwipe);
         if (!slide) return [];
 
-        return getPhotoSwipeImages(photoSwipe).filter((image) => slide.contains(image));
+        const phaseStartedAt = getPhaseStartedAt();
+        const images = getPhotoSwipeImages(photoSwipe).filter((image) => slide.contains(image));
+        recordPhase('ancestorDescendantChecksMs', phaseStartedAt);
+        return images;
     };
     const getReadyActiveSlideImage = (photoSwipe) => {
         if (!photoSwipe?.matches('.pswp.pswp--open')) return null;
@@ -801,11 +935,12 @@ export async function scanPhotoSwipeImages({
         return image ? {photoSwipe, slide, image} : null;
     };
     const waitFor = (predicate, timeoutMs = 2000) => new Promise((resolve) => {
+        const waitStartedAt = getPhaseStartedAt();
         let observer = null;
         let interval = null;
         let timeout = null;
         let settled = false;
-        const finish = (value) => {
+        const finish = (value, endReason = 'predicate') => {
             if (settled) return;
 
             settled = true;
@@ -813,17 +948,30 @@ export async function scanPhotoSwipeImages({
             clearInterval(interval);
             clearTimeout(timeout);
             signal?.removeEventListener?.('abort', onAbort);
+            if (collectPerformance) {
+                const durationMs = Math.max(0, performance.now() - waitStartedAt);
+                performanceDetail.phases.waitForMs += durationMs;
+                performanceDetail.waits.calls += 1;
+                performanceDetail.waits.totalMs += durationMs;
+                if (endReason === 'timeout') {
+                    performanceDetail.waits.timeoutCount += 1;
+                    performanceDetail.waits.maxTimeoutOverrunMs = Math.max(
+                        performanceDetail.waits.maxTimeoutOverrunMs,
+                        Math.max(0, durationMs - timeoutMs)
+                    );
+                }
+            }
             resolve(value);
         };
-        const onAbort = () => finish(null);
+        const onAbort = () => finish(null, 'abort');
         const check = () => {
             if (isAborted()) {
-                finish(null);
+                finish(null, 'abort');
                 return;
             }
             try {
                 const result = predicate();
-                if (result) finish(result);
+                if (result) finish(result, 'predicate');
             } catch {
                 // A failed inspection is treated like a state that has not appeared yet.
             }
@@ -832,7 +980,7 @@ export async function scanPhotoSwipeImages({
         check();
         if (settled) return;
         if (isAborted()) {
-            finish(null);
+            finish(null, 'abort');
             return;
         }
         if (typeof MutationObserver === 'function' && document.documentElement) {
@@ -847,7 +995,7 @@ export async function scanPhotoSwipeImages({
             });
         }
         interval = setInterval(check, 50);
-        timeout = setTimeout(() => finish(null), timeoutMs);
+        timeout = setTimeout(() => finish(null, 'timeout'), timeoutMs);
         signal?.addEventListener?.('abort', onAbort, {once: true});
     });
     const closePhotoSwipe = async () => {
@@ -887,37 +1035,53 @@ export async function scanPhotoSwipeImages({
         ? srcset.split(',').map((entry) => getURL(entry.trim().split(/\s+/, 1)[0], baseURI))
             .filter(Boolean)
         : [];
-    const collectPhotoSwipeCandidates = (photoSwipe, {includePreloaded = false} = {}) => (
-        includePreloaded ? getPhotoSwipeImages(photoSwipe) : getSlideImages(photoSwipe)
-    ).flatMap((image) => {
-        const currentSrc = getURL(image.currentSrc);
-        const sourceURLs = [
-            currentSrc,
-            getURL(image.getAttribute('src')),
-            ...getSrcsetURLs(image.getAttribute('srcset'))
-        ].filter(Boolean);
+    const collectPhotoSwipeCandidates = (photoSwipe, {includePreloaded = false} = {}) => {
+        const phaseStartedAt = getPhaseStartedAt();
+        const candidates = (includePreloaded ? getPhotoSwipeImages(photoSwipe) : getSlideImages(photoSwipe))
+            .flatMap((image) => {
+                const currentSrc = getURL(image.currentSrc);
+                const sourceURLs = [
+                    currentSrc,
+                    getURL(image.getAttribute('src')),
+                    ...getSrcsetURLs(image.getAttribute('srcset'))
+                ].filter(Boolean);
 
-        return sourceURLs.map((url) => ({
-            url,
-            width: url === currentSrc ? image.naturalWidth : 0,
-            height: url === currentSrc ? image.naturalHeight : 0,
-            source: 'imageelements',
-            visuallyBlurred: false
-        }));
-    });
+                return sourceURLs.map((url) => ({
+                    url,
+                    width: url === currentSrc ? image.naturalWidth : 0,
+                    height: url === currentSrc ? image.naturalHeight : 0,
+                    source: 'imageelements',
+                    visuallyBlurred: false
+                }));
+            });
+        recordPhase('candidateClassificationMs', phaseStartedAt);
+        return candidates;
+    };
     const isVisibleMediaTarget = (target) => {
-        if (!target?.querySelector('img')) return false;
+        const phaseStartedAt = getPhaseStartedAt();
+        const imageQueryStartedAt = getPhaseStartedAt();
+        const image = target?.querySelector('img') ?? null;
+        recordQuery('img', Number(Boolean(image)));
+        recordPhase('domQueriesMs', imageQueryStartedAt);
+        if (!image) {
+            recordPhase('styleAttributeGeometryMs', phaseStartedAt);
+            return false;
+        }
 
         try {
             const style = getComputedStyle(target);
             const rect = target.getBoundingClientRect();
-            return style.display !== 'none' && style.visibility !== 'hidden' &&
+            const visible = style.display !== 'none' && style.visibility !== 'hidden' &&
                 style.visibility !== 'collapse' && rect.width > 0 && rect.height > 0;
+            recordPhase('styleAttributeGeometryMs', phaseStartedAt);
+            return visible;
         } catch {
+            recordPhase('styleAttributeGeometryMs', phaseStartedAt);
             return false;
         }
     };
     const getTargetSourceKey = (target) => {
+        const phaseStartedAt = getPhaseStartedAt();
         const sourceAttributes = [
             'src',
             'srcset',
@@ -932,24 +1096,37 @@ export async function scanPhotoSwipeImages({
         ];
         const sourceElements = [
             target,
-            ...(target?.querySelectorAll?.('img, source') ?? [])
+            ...(() => {
+                const queryStartedAt = getPhaseStartedAt();
+                const elements = target?.querySelectorAll?.('img, source') ?? [];
+                recordQuery('img, source', elements.length);
+                recordPhase('domQueriesMs', queryStartedAt);
+                return elements;
+            })()
         ];
 
         for (const element of sourceElements) {
             const currentSrc = element instanceof HTMLImageElement
                 ? getURL(element.currentSrc)
                 : null;
-            if (currentSrc) return currentSrc;
+            if (currentSrc) {
+                recordPhase('styleAttributeGeometryMs', phaseStartedAt);
+                return currentSrc;
+            }
 
             for (const attributeName of sourceAttributes) {
                 const value = element?.getAttribute?.(attributeName);
                 const source = attributeName.endsWith('srcset')
                     ? getSrcsetURLs(value)[0]
                     : getURL(value);
-                if (source) return source;
+                if (source) {
+                    recordPhase('styleAttributeGeometryMs', phaseStartedAt);
+                    return source;
+                }
             }
         }
 
+        recordPhase('styleAttributeGeometryMs', phaseStartedAt);
         return null;
     };
     const createTemporaryStyle = () => {
@@ -1045,21 +1222,27 @@ export async function scanPhotoSwipeImages({
         return carousel.stateLabels.get(key);
     };
     const isCarouselControlUsable = (control) => {
+        const phaseStartedAt = getPhaseStartedAt();
         if (!control || !control.isConnected ||
             control.hasAttribute?.('disabled') ||
             control.getAttribute?.('aria-disabled') === 'true' ||
             control.hasAttribute?.('hidden') ||
             /(?:^|\s)disabled(?:\s|$)/i.test(control.className ?? '')) {
+            recordPhase('styleAttributeGeometryMs', phaseStartedAt);
             return false;
         }
 
         try {
-            return getComputedStyle(control).display !== 'none';
+            const usable = getComputedStyle(control).display !== 'none';
+            recordPhase('styleAttributeGeometryMs', phaseStartedAt);
+            return usable;
         } catch {
+            recordPhase('styleAttributeGeometryMs', phaseStartedAt);
             return false;
         }
     };
     const getCarouselControl = (photoSwipe, direction) => {
+        const phaseStartedAt = getPhaseStartedAt();
         const explicitSelector = direction === 'forward'
             ? [
                 '.pswp__button--arrow--next',
@@ -1085,20 +1268,34 @@ export async function scanPhotoSwipeImages({
         const semanticPattern = direction === 'forward'
             ? /\b(?:next|forward)\b/i
             : /\b(?:previous|prev|back)\b/i;
-        const explicitControl = explicitSelector.map((selector) =>
-            photoSwipe.querySelector(selector)
-        ).find(isCarouselControlUsable);
-        if (explicitControl) return explicitControl;
+        const explicitControl = explicitSelector.map((selector) => {
+            const queryStartedAt = getPhaseStartedAt();
+            const control = photoSwipe.querySelector(selector);
+            recordQuery(selector, Number(Boolean(control)));
+            recordPhase('domQueriesMs', queryStartedAt);
+            return control;
+        }).find(isCarouselControlUsable);
+        if (explicitControl) {
+            recordPhase('candidateClassificationMs', phaseStartedAt);
+            return explicitControl;
+        }
 
-        return Array.from(photoSwipe.querySelectorAll('button, [role="button"], a')).find(
+        const queryStartedAt = getPhaseStartedAt();
+        const controls = Array.from(photoSwipe.querySelectorAll('button, [role="button"], a'));
+        recordQuery('button, [role="button"], a', controls.length);
+        recordPhase('domQueriesMs', queryStartedAt);
+        const semanticControl = controls.find(
             (control) => isCarouselControlUsable(control) && semanticPattern.test([
                 control.getAttribute('aria-label'),
                 control.getAttribute('title'),
                 control.textContent
             ].filter(Boolean).join(' '))
         ) ?? null;
+        recordPhase('candidateClassificationMs', phaseStartedAt);
+        return semanticControl;
     };
     const collectCarouselSources = (photoSwipe, carousel, stateLabel) => {
+        const phaseStartedAt = getPhaseStartedAt();
         const availableCandidates = collectPhotoSwipeCandidates(photoSwipe, {
             includePreloaded: true
         });
@@ -1119,6 +1316,7 @@ export async function scanPhotoSwipeImages({
             'preloadSources=' + sourceURLs.size,
             'preloadNew=' + newSources
         );
+        recordPhase('dedupeResultHandlingMs', phaseStartedAt);
         return newSources;
     };
     const processCarouselState = async (photoSwipe, carousel, state, direction) => {
@@ -1312,6 +1510,44 @@ export async function scanPhotoSwipeImages({
             'states=' + carousel.visitedStates.size
         );
     };
+    const activeCarouselScanner = carouselScanner ?? new CarouselScanner({processedCarouselRoots});
+    if (traverseCarousel) {
+        const carouselScanResult = await activeCarouselScanner.scan({
+            document,
+            queryDeep,
+            getURL,
+            getSrcsetURLs,
+            waitFor,
+            isAborted,
+            reportCarousel,
+            reportActivity,
+            findOpenPhotoSwipe,
+            getReadyActiveSlideImage,
+            collectPhotoSwipeCandidates,
+            getImageSnapshot,
+            didZoomStateChange,
+            createTemporaryStyle,
+            closePhotoSwipe,
+            getTargetSourceKey,
+            processedTargets,
+            processedTargetSources,
+            collectPerformance,
+            performanceDetail,
+            performanceState,
+            getPhaseStartedAt,
+            recordPhase,
+            addCandidates: (...newCandidates) => candidates.push(...newCandidates),
+            getCarouselStateLabel
+        });
+        genericCarouselMs += carouselScanResult.genericCarouselMs;
+        genericCarouselCalls += carouselScanResult.genericCarouselCalls;
+    }
+
+    /*
+     * Beta 0.0.07 legacy Generic-Carousel implementation.
+     * Replaced by CarouselScanner above; retained here, inactive, for direct
+     * behaviour comparison during the extraction phase.
+     *
     const genericSourceAttributes = [
         'src',
         'srcset',
@@ -1376,6 +1612,7 @@ export async function scanPhotoSwipeImages({
         );
     };
     const getGenericSlideElements = (root) => {
+        const phaseStartedAt = getPhaseStartedAt();
         const selector = [
             '[data-swiper-slide-index]',
             '[data-slide-index]',
@@ -1389,12 +1626,14 @@ export async function scanPhotoSwipeImages({
             '[class*="item"]'
         ].join(',');
 
-        return queryDeep(root, selector).filter((element) => genericSlideTokens.test([
+        const slides = queryDeep(root, selector).filter((element) => genericSlideTokens.test([
             getElementClassText(element),
             element.getAttribute?.('role'),
             element.getAttribute?.('data-slide-index'),
             element.getAttribute?.('data-swiper-slide-index')
         ].filter(Boolean).join(' ')) && getGenericGalleryMediaElements(element).length > 0);
+        recordPhase('candidateClassificationMs', phaseStartedAt);
+        return slides;
     };
     const getGenericControlDirection = (element) => {
         const rel = element.getAttribute?.('rel')?.toLowerCase().split(/\s+/) ?? [];
@@ -1422,44 +1661,55 @@ export async function scanPhotoSwipeImages({
         control.getAttribute?.('title') ? 'semantic' : 'structural'
     );
     const getGenericControlAvailability = (control) => {
+        const phaseStartedAt = getPhaseStartedAt();
         if (!control || !control.isConnected) return {usable: false, reason: 'control-unavailable'};
         if (control.hasAttribute('disabled') || control.hasAttribute('hidden') ||
             control.hasAttribute('inert') || control.getAttribute('aria-disabled') === 'true' ||
             /(?:^|\s)(?:disabled|swiper-button-disabled)(?:\s|$)/i.test(
                 getElementClassText(control)
             )) {
+            recordPhase('styleAttributeGeometryMs', phaseStartedAt);
             return {usable: false, reason: 'control-disabled'};
         }
         try {
             const style = getComputedStyle(control);
             if (style.display === 'none' || style.visibility === 'hidden' ||
                 style.visibility === 'collapse' || style.pointerEvents === 'none') {
+                recordPhase('styleAttributeGeometryMs', phaseStartedAt);
                 return {usable: false, reason: 'control-unavailable'};
             }
         } catch {
+            recordPhase('styleAttributeGeometryMs', phaseStartedAt);
             return {usable: false, reason: 'control-unavailable'};
         }
+        recordPhase('styleAttributeGeometryMs', phaseStartedAt);
         return {usable: true, reason: null};
     };
     const getGenericCarouselControl = (root, direction) => {
+        const phaseStartedAt = getPhaseStartedAt();
         const controls = queryDeep(root, '*').filter((element) =>
             getGenericControlDirection(element) === direction
         );
         const control = controls.find((candidate) => getGenericControlAvailability(candidate).usable);
-        if (control) return {
-            control,
-            kind: getGenericControlKind(control),
-            reason: null
-        };
+        if (control) {
+            recordPhase('candidateClassificationMs', phaseStartedAt);
+            return {
+                control,
+                kind: getGenericControlKind(control),
+                reason: null
+            };
+        }
 
         const disabled = controls.find((candidate) =>
             getGenericControlAvailability(candidate).reason === 'control-disabled'
         );
-        return {
+        const result = {
             control: null,
             kind: disabled ? getGenericControlKind(disabled) : null,
             reason: disabled ? 'control-disabled' : 'control-unavailable'
         };
+        recordPhase('candidateClassificationMs', phaseStartedAt);
+        return result;
     };
     const getGenericTotalHint = (root) => {
         const attributeNames = ['data-slide-count', 'data-total', 'aria-setsize'];
@@ -1477,6 +1727,7 @@ export async function scanPhotoSwipeImages({
         return counter ?? null;
     };
     const getGenericCarouselState = (root, gallery) => {
+        const phaseStartedAt = getPhaseStartedAt();
         if (!root?.isConnected) return null;
 
         const slides = getGenericSlideElements(root);
@@ -1504,16 +1755,22 @@ export async function scanPhotoSwipeImages({
         const source = getGenericGalleryMediaElements(active).flatMap(getGenericElementSources)[0] ?? null;
         const rawKey = index ? 'index:' + index : pagination ? 'pagination:' + pagination :
             source ? 'source:' + source : null;
-        if (!rawKey) return null;
+        if (!rawKey) {
+            recordPhase('candidateClassificationMs', phaseStartedAt);
+            return null;
+        }
 
-        return {
+        const state = {
             active,
             key: rawKey,
             mountedSlides: slides.length,
             totalHint: getGenericTotalHint(root)
         };
+        recordPhase('candidateClassificationMs', phaseStartedAt);
+        return state;
     };
     const collectGenericCarouselSources = (root, gallery, stateLabel) => {
+        const phaseStartedAt = getPhaseStartedAt();
         const elements = getGenericGalleryMediaElements(root);
         const sourceURLs = new Set();
         let lazySources = 0;
@@ -1552,7 +1809,10 @@ export async function scanPhotoSwipeImages({
             'lazySources=' + lazySources,
             'preloadNew=' + preloadNew
         );
-        return {newSources: preloadNew, lazySources, preloadSources: sourceURLs.size};
+        const result = {newSources: preloadNew, lazySources, preloadSources: sourceURLs.size};
+        if (collectPerformance) performanceDetail.generic.resultCount += sourceURLs.size;
+        recordPhase('dedupeResultHandlingMs', phaseStartedAt);
+        return result;
     };
     const enrichGenericCarouselState = async (state) => {
         const activeTarget = state.active.matches?.('[at-attr="media_locator"]')
@@ -1631,6 +1891,7 @@ export async function scanPhotoSwipeImages({
         };
     };
     const isGenericGalleryRoot = (root) => {
+        const phaseStartedAt = getPhaseStartedAt();
         const rootLabel = [
             root.id,
             getElementClassText(root),
@@ -1645,16 +1906,33 @@ export async function scanPhotoSwipeImages({
         const hasGallerySignal = !rootAppearsSlide && (genericGalleryTokens.test(rootLabel) ||
             root.hasAttribute?.('data-carousel-id') || root.hasAttribute?.('data-gallery-id')
         );
-        if (!hasGallerySignal) return false;
+        if (!hasGallerySignal) {
+            recordPhase('candidateClassificationMs', phaseStartedAt);
+            return false;
+        }
 
         const slides = getGenericSlideElements(root);
         const mediaCount = getGenericGalleryMediaElements(root).length;
+        if (collectPerformance) {
+            performanceDetail.generic.rootSlideElements += slides.length;
+            performanceDetail.generic.rootMediaElements += mediaCount;
+            performanceDetail.generic.maxSlidesPerRoot = Math.max(
+                performanceDetail.generic.maxSlidesPerRoot,
+                slides.length
+            );
+            performanceDetail.generic.maxMediaElementsPerRoot = Math.max(
+                performanceDetail.generic.maxMediaElementsPerRoot,
+                mediaCount
+            );
+        }
         const hasControls = getGenericCarouselControl(root, 'forward').control ||
             getGenericCarouselControl(root, 'backward').control;
         const totalHint = getGenericTotalHint(root);
         const score = Number(hasGallerySignal) + Number(slides.length > 1) +
             Number(mediaCount > 0) + Number(Boolean(hasControls)) + Number(Boolean(totalHint));
-        return hasGallerySignal && score >= 2;
+        const isGalleryRoot = hasGallerySignal && score >= 2;
+        recordPhase('candidateClassificationMs', phaseStartedAt);
+        return isGalleryRoot;
     };
     const traverseGenericCarousel = async (root) => {
         const gallery = {
@@ -1777,25 +2055,77 @@ export async function scanPhotoSwipeImages({
         );
     };
     const traverseGenericCarousels = async () => {
-        const roots = queryDeep(document, '*').filter(isGenericGalleryRoot);
+        const discoveryStartedAt = getPhaseStartedAt();
+        const elements = queryDeep(document, '*');
+        const roots = elements.filter(isGenericGalleryRoot);
+        const candidateIterationStartedAt = getPhaseStartedAt();
+        if (collectPerformance) {
+            performanceDetail.generic.candidateCount = elements.length;
+            performanceDetail.generic.documentElementsScanned = elements.length;
+            elements.forEach((root) => {
+                if (performanceState?.genericCandidates?.has(root)) {
+                    performanceDetail.generic.previouslySeenCandidates += 1;
+                } else {
+                    performanceDetail.generic.newCandidates += 1;
+                    performanceState?.genericCandidates?.add(root);
+                }
+            });
+        }
+        recordPhase('candidateIterationMs', candidateIterationStartedAt);
         const isExplicitGalleryRoot = (root) => Boolean(
             root.id || root.getAttribute?.('data-carousel-id') || root.getAttribute?.('data-gallery-id')
         );
         const containsComposed = (ancestor, element) => {
+            const phaseStartedAt = getPhaseStartedAt();
             for (let current = element; current;) {
-                if (current === ancestor) return true;
+                if (current === ancestor) {
+                    recordPhase('ancestorDescendantChecksMs', phaseStartedAt);
+                    return true;
+                }
                 current = current.parentElement ?? current.getRootNode?.().host ?? null;
             }
+            recordPhase('ancestorDescendantChecksMs', phaseStartedAt);
             return false;
         };
         const uniqueRoots = roots.filter((root) => !roots.some((other) => other !== root &&
             !isExplicitGalleryRoot(root) && isExplicitGalleryRoot(other) &&
             (containsComposed(root, other) || containsComposed(other, root))
         ));
+        recordPhase('genericCarouselDiscoveryMs', discoveryStartedAt);
         for (const root of uniqueRoots) {
+            const rootIterationStartedAt = getPhaseStartedAt();
             if (isAborted()) return;
-            if (processedCarouselRoots.has(root)) continue;
+            if (collectPerformance) {
+                performanceDetail.generic.rootsConsidered += 1;
+                const rootState = performanceState?.genericRoots?.get(root);
+                if (rootState) {
+                    performanceDetail.generic.rootsPreviouslySeen += 1;
+                    performanceDetail.generic.rootsRechecked += 1;
+                    if (rootState.lastMutationVersion > rootState.lastCheckedMutationVersion) {
+                        performanceDetail.generic.rootsChangedSincePreviousCall += 1;
+                    } else {
+                        performanceDetail.generic.rootsUnchangedSincePreviousCall += 1;
+                    }
+                    rootState.lastCheckedMutationVersion = performanceState?.mutationVersion ??
+                        rootState.lastCheckedMutationVersion;
+                    rootState.lastSeenCall = performanceDetail.callIndex;
+                } else {
+                    performanceDetail.generic.rootsNew += 1;
+                    performanceState?.genericRoots?.set(root, {
+                        firstSeenCall: performanceDetail.callIndex,
+                        lastSeenCall: performanceDetail.callIndex,
+                        lastMutationVersion: performanceState?.mutationVersion ?? 0,
+                        lastCheckedMutationVersion: performanceState?.mutationVersion ?? 0
+                    });
+                }
+            }
+            if (processedCarouselRoots.has(root)) {
+                if (collectPerformance) performanceDetail.generic.rootsAlreadyProcessed += 1;
+                recordPhase('candidateIterationMs', rootIterationStartedAt);
+                continue;
+            }
             processedCarouselRoots.add(root);
+            recordPhase('candidateIterationMs', rootIterationStartedAt);
             const carouselStartedAt = performance.now();
             genericCarouselCalls += 1;
             try {
@@ -1806,19 +2136,65 @@ export async function scanPhotoSwipeImages({
         }
     };
     if (traverseCarousel) await traverseGenericCarousels();
+    */
 
+    const directDiscoveryStartedAt = getPhaseStartedAt();
     const targets = queryDeep(document, '[at-attr="media_locator"]');
+    if (collectPerformance) performanceDetail.direct.targetCount = targets.length;
+    recordPhase('directPhotoSwipeDiscoveryMs', directDiscoveryStartedAt);
     for (const target of targets) {
+        const targetIterationStartedAt = getPhaseStartedAt();
+        const candidateStartedAt = getPhaseStartedAt();
+        const finishTargetIteration = () => recordPhase(
+            'candidateIterationMs',
+            targetIterationStartedAt
+        );
+        if (collectPerformance) {
+            if (performanceState?.directTargets?.has(target)) {
+                performanceDetail.direct.previouslySeenTargets += 1;
+            } else {
+                performanceDetail.direct.newTargets += 1;
+                performanceState?.directTargets?.add(target);
+            }
+        }
         const targetSource = getTargetSourceKey(target);
-        if (isAborted() || processedTargets.has(target) ||
-            (targetSource && processedTargetSources.has(targetSource)) || !isVisibleMediaTarget(target) ||
-            findOpenPhotoSwipe()) {
+        if (isAborted()) {
+            recordPhase('candidateClassificationMs', candidateStartedAt);
+            finishTargetIteration();
             continue;
         }
+        if (processedTargets.has(target)) {
+            if (collectPerformance) performanceDetail.direct.processedTargetsSkipped += 1;
+            recordPhase('candidateClassificationMs', candidateStartedAt);
+            finishTargetIteration();
+            continue;
+        }
+        if (targetSource && processedTargetSources.has(targetSource)) {
+            if (collectPerformance) performanceDetail.direct.sourceDuplicatesSkipped += 1;
+            recordPhase('candidateClassificationMs', candidateStartedAt);
+            finishTargetIteration();
+            continue;
+        }
+        if (!isVisibleMediaTarget(target)) {
+            if (collectPerformance) performanceDetail.direct.invisibleTargetsSkipped += 1;
+            recordPhase('candidateClassificationMs', candidateStartedAt);
+            finishTargetIteration();
+            continue;
+        }
+        if (collectPerformance) performanceDetail.direct.openModalChecks += 1;
+        if (findOpenPhotoSwipe()) {
+            if (collectPerformance) performanceDetail.direct.openModalSkips += 1;
+            recordPhase('candidateClassificationMs', candidateStartedAt);
+            finishTargetIteration();
+            continue;
+        }
+        recordPhase('candidateClassificationMs', candidateStartedAt);
+        finishTargetIteration();
         processedTargets.add(target);
         if (targetSource) processedTargetSources.add(targetSource);
 
         const photoSwipeStartedAt = performance.now();
+        const directCandidatesBefore = candidates.length;
         directPhotoSwipeCalls += 1;
         let temporaryStyle = null;
         try {
@@ -1883,19 +2259,41 @@ export async function scanPhotoSwipeImages({
             } finally {
                 temporaryStyle?.remove();
                 directPhotoSwipeMs += performance.now() - photoSwipeStartedAt;
+                if (collectPerformance) {
+                    performanceDetail.direct.resultCount += Math.max(
+                        0,
+                        candidates.length - directCandidatesBefore
+                    );
+                }
             }
         }
     }
 
     const scanPhotoSwipeMs = performance.now() - performanceStartedAt;
     try {
+        const detail = collectPerformance ? {
+            ...performanceDetail,
+            totalDurationMs: scanPhotoSwipeMs,
+            nonWaitDurationMs: Math.max(0, scanPhotoSwipeMs - performanceDetail.waits.totalMs),
+            generic: {
+                ...performanceDetail.generic,
+                durationMs: genericCarouselMs,
+                discoveryMs: performanceDetail.phases.genericCarouselDiscoveryMs
+            },
+            direct: {
+                ...performanceDetail.direct,
+                durationMs: directPhotoSwipeMs,
+                discoveryMs: performanceDetail.phases.directPhotoSwipeDiscoveryMs
+            }
+        } : null;
         onPerformance?.({
             scanPhotoSwipeMs,
             genericCarouselMs,
             genericCarouselCalls,
             directPhotoSwipeMs,
             directPhotoSwipeCalls,
-            otherMs: Math.max(0, scanPhotoSwipeMs - genericCarouselMs - directPhotoSwipeMs)
+            otherMs: Math.max(0, scanPhotoSwipeMs - genericCarouselMs - directPhotoSwipeMs),
+            detail
         });
     } catch {
         // Performance instrumentation must never affect the scanner.
@@ -2422,7 +2820,16 @@ export async function runHiddenFrameDeepScan({
     const attemptedDownwardTargets = new WeakSet();
     const processedPhotoSwipeTargets = new WeakSet();
     const processedPhotoSwipeTargetSources = new Set();
-    const processedCarouselRoots = new WeakSet();
+    const carouselScanner = new CarouselScanner();
+    // Diagnostic-only state: it records what the current run sees, but never
+    // participates in discovery, filtering, traversal, or result selection.
+    const photoSwipePerformanceState = {
+        callIndex: 0,
+        mutationVersion: 0,
+        genericCandidates: new WeakSet(),
+        genericRoots: new Map(),
+        directTargets: new WeakSet()
+    };
     const knownScrollContainerIndices = new Map();
     const completedScrollContainerStates = new Map();
     const handledStructureContainers = new WeakSet();
@@ -2501,7 +2908,50 @@ export async function runHiddenFrameDeepScan({
     });
     const scanPerformanceMetrics = createPerformanceMetrics();
     const edgeRangeWaits = [];
+    const settleWaits = [];
     const passPerformanceRecords = [];
+    const PHOTO_SWIPE_SLOW_CALL_THRESHOLD_MS = 250;
+    const MAX_PHOTO_SWIPE_SLOW_CALLS = 12;
+    const photoSwipeSlowCalls = [];
+    const photoSwipeDetail = {
+        totalCalls: 0,
+        totalMs: 0,
+        slowCalls: 0,
+        maxCallMs: 0,
+        direct: {calls: 0, totalMs: 0, maxCallMs: 0, discoveryMs: 0},
+        generic: {calls: 0, totalMs: 0, maxCallMs: 0, discoveryMs: 0},
+        rootReuse: {
+            rootsSeen: 0,
+            newRoots: 0,
+            repeatedRootChecks: 0,
+            changedRootChecks: 0,
+            unchangedRootChecks: 0,
+            alreadyProcessedRoots: 0
+        },
+        rootSizes: {
+            slideElements: 0,
+            mediaElements: 0,
+            maxSlidesPerRoot: 0,
+            maxMediaElementsPerRoot: 0
+        },
+        candidates: {
+            total: 0,
+            previouslySeen: 0,
+            new: 0,
+            directTargets: 0,
+            previouslySeenTargets: 0,
+            newTargets: 0
+        },
+        queries: {
+            calls: 0,
+            results: 0,
+            allElementsCalls: 0,
+            allElementsResults: 0,
+            maxResultSize: 0
+        },
+        waits: {calls: 0, totalMs: 0, timeouts: 0, maxTimeoutOverrunMs: 0},
+        phases: {}
+    };
     let currentPassRecord = null;
     const addMetric = (metrics, name, value) => {
         if (!Number.isFinite(value)) return;
@@ -2513,6 +2963,139 @@ export async function runHiddenFrameDeepScan({
         scanPerformanceMetrics[name] = (scanPerformanceMetrics[name] ?? 0) + value;
     };
     const recordCollectionMetric = (metrics, name, value) => addMetric(metrics, name, value);
+    const roundPhotoSwipeValue = (value) => Number.isFinite(value) ? Math.round(value) : value;
+    const createSlowPhotoSwipeRecord = (detail, performanceMetrics) => ({
+        callIndex: detail.callIndex,
+        totalDurationMs: roundPhotoSwipeValue(performanceMetrics.scanPhotoSwipeMs),
+        nonWaitDurationMs: roundPhotoSwipeValue(detail.nonWaitDurationMs),
+        directPhotoSwipeMs: roundPhotoSwipeValue(performanceMetrics.directPhotoSwipeMs),
+        genericCarouselMs: roundPhotoSwipeValue(performanceMetrics.genericCarouselMs),
+        phases: Object.fromEntries(Object.entries(detail.phases).map(([name, durationMs]) => [
+            name,
+            roundPhotoSwipeValue(durationMs)
+        ])),
+        generic: {
+            rootsConsidered: detail.generic.rootsConsidered,
+            rootsPreviouslySeen: detail.generic.rootsPreviouslySeen,
+            rootsNew: detail.generic.rootsNew,
+            rootsRechecked: detail.generic.rootsRechecked,
+            rootsChangedSincePreviousCall: detail.generic.rootsChangedSincePreviousCall,
+            rootsUnchangedSincePreviousCall: detail.generic.rootsUnchangedSincePreviousCall,
+            rootsAlreadyProcessed: detail.generic.rootsAlreadyProcessed,
+            candidateCount: detail.generic.candidateCount,
+            previouslySeenCandidates: detail.generic.previouslySeenCandidates,
+            newCandidates: detail.generic.newCandidates,
+            documentElementsScanned: detail.generic.documentElementsScanned,
+            rootSlideElements: detail.generic.rootSlideElements,
+            rootMediaElements: detail.generic.rootMediaElements,
+            maxSlidesPerRoot: detail.generic.maxSlidesPerRoot,
+            maxMediaElementsPerRoot: detail.generic.maxMediaElementsPerRoot,
+            resultCount: detail.generic.resultCount
+        },
+        direct: {
+            targetCount: detail.direct.targetCount,
+            previouslySeenTargets: detail.direct.previouslySeenTargets,
+            newTargets: detail.direct.newTargets,
+            processedTargetsSkipped: detail.direct.processedTargetsSkipped,
+            sourceDuplicatesSkipped: detail.direct.sourceDuplicatesSkipped,
+            invisibleTargetsSkipped: detail.direct.invisibleTargetsSkipped,
+            openModalChecks: detail.direct.openModalChecks,
+            openModalSkips: detail.direct.openModalSkips,
+            resultCount: detail.direct.resultCount
+        },
+        queries: {
+            calls: detail.queries.calls,
+            results: detail.queries.results,
+            allElementsCalls: detail.queries.allElementsCalls,
+            allElementsResults: detail.queries.allElementsResults,
+            maxResultSize: detail.queries.maxResultSize,
+            bySelector: Object.fromEntries(Object.entries(detail.queries.bySelector).map(
+                ([selector, summary]) => [selector, {...summary}]
+            ))
+        },
+        waits: {
+            calls: detail.waits.calls,
+            totalMs: roundPhotoSwipeValue(detail.waits.totalMs),
+            timeoutCount: detail.waits.timeoutCount,
+            maxTimeoutOverrunMs: roundPhotoSwipeValue(detail.waits.maxTimeoutOverrunMs)
+        },
+        resultsFound: detail.generic.resultCount + detail.direct.resultCount
+    });
+    const recordPhotoSwipePerformance = (performanceMetrics) => {
+        const detail = performanceMetrics?.detail;
+        if (!detail) return;
+
+        photoSwipeDetail.totalCalls += 1;
+        photoSwipeDetail.totalMs += performanceMetrics.scanPhotoSwipeMs;
+        photoSwipeDetail.maxCallMs = Math.max(
+            photoSwipeDetail.maxCallMs,
+            performanceMetrics.scanPhotoSwipeMs
+        );
+        photoSwipeDetail.direct.calls += performanceMetrics.directPhotoSwipeCalls;
+        photoSwipeDetail.direct.totalMs += performanceMetrics.directPhotoSwipeMs;
+        photoSwipeDetail.direct.maxCallMs = Math.max(
+            photoSwipeDetail.direct.maxCallMs,
+            performanceMetrics.directPhotoSwipeMs
+        );
+        photoSwipeDetail.direct.discoveryMs += detail.direct.discoveryMs;
+        photoSwipeDetail.generic.calls += performanceMetrics.genericCarouselCalls;
+        photoSwipeDetail.generic.totalMs += performanceMetrics.genericCarouselMs;
+        photoSwipeDetail.generic.maxCallMs = Math.max(
+            photoSwipeDetail.generic.maxCallMs,
+            performanceMetrics.genericCarouselMs
+        );
+        photoSwipeDetail.generic.discoveryMs += detail.generic.discoveryMs;
+        photoSwipeDetail.rootReuse.newRoots += detail.generic.rootsNew;
+        photoSwipeDetail.rootReuse.repeatedRootChecks += detail.generic.rootsRechecked;
+        photoSwipeDetail.rootReuse.changedRootChecks += detail.generic.rootsChangedSincePreviousCall;
+        photoSwipeDetail.rootReuse.unchangedRootChecks +=
+            detail.generic.rootsUnchangedSincePreviousCall;
+        photoSwipeDetail.rootReuse.alreadyProcessedRoots += detail.generic.rootsAlreadyProcessed;
+        photoSwipeDetail.rootSizes.slideElements += detail.generic.rootSlideElements;
+        photoSwipeDetail.rootSizes.mediaElements += detail.generic.rootMediaElements;
+        photoSwipeDetail.rootSizes.maxSlidesPerRoot = Math.max(
+            photoSwipeDetail.rootSizes.maxSlidesPerRoot,
+            detail.generic.maxSlidesPerRoot
+        );
+        photoSwipeDetail.rootSizes.maxMediaElementsPerRoot = Math.max(
+            photoSwipeDetail.rootSizes.maxMediaElementsPerRoot,
+            detail.generic.maxMediaElementsPerRoot
+        );
+        photoSwipeDetail.candidates.total += detail.generic.candidateCount;
+        photoSwipeDetail.candidates.previouslySeen += detail.generic.previouslySeenCandidates;
+        photoSwipeDetail.candidates.new += detail.generic.newCandidates;
+        photoSwipeDetail.candidates.directTargets += detail.direct.targetCount;
+        photoSwipeDetail.candidates.previouslySeenTargets += detail.direct.previouslySeenTargets;
+        photoSwipeDetail.candidates.newTargets += detail.direct.newTargets;
+        photoSwipeDetail.queries.calls += detail.queries.calls;
+        photoSwipeDetail.queries.results += detail.queries.results;
+        photoSwipeDetail.queries.allElementsCalls += detail.queries.allElementsCalls;
+        photoSwipeDetail.queries.allElementsResults += detail.queries.allElementsResults;
+        photoSwipeDetail.queries.maxResultSize = Math.max(
+            photoSwipeDetail.queries.maxResultSize,
+            detail.queries.maxResultSize
+        );
+        photoSwipeDetail.waits.calls += detail.waits.calls;
+        photoSwipeDetail.waits.totalMs += detail.waits.totalMs;
+        photoSwipeDetail.waits.timeouts += detail.waits.timeoutCount;
+        photoSwipeDetail.waits.maxTimeoutOverrunMs = Math.max(
+            photoSwipeDetail.waits.maxTimeoutOverrunMs,
+            detail.waits.maxTimeoutOverrunMs
+        );
+        Object.entries(detail.phases).forEach(([name, durationMs]) => {
+            const phase = photoSwipeDetail.phases[name] ?? {totalMs: 0, maxCallMs: 0};
+            phase.totalMs += durationMs;
+            phase.maxCallMs = Math.max(phase.maxCallMs, durationMs);
+            photoSwipeDetail.phases[name] = phase;
+        });
+
+        if (performanceMetrics.scanPhotoSwipeMs < PHOTO_SWIPE_SLOW_CALL_THRESHOLD_MS) return;
+
+        photoSwipeDetail.slowCalls += 1;
+        photoSwipeSlowCalls.push(createSlowPhotoSwipeRecord(detail, performanceMetrics));
+        photoSwipeSlowCalls.sort((first, second) => second.totalDurationMs - first.totalDurationMs);
+        if (photoSwipeSlowCalls.length > MAX_PHOTO_SWIPE_SLOW_CALLS) photoSwipeSlowCalls.pop();
+    };
     const recordEdgeRangeWait = ({scope, direction, container = null, durationMs, result}) => {
         edgeRangeWaits.push({
             scope,
@@ -2572,6 +3155,61 @@ export async function runHiddenFrameDeepScan({
             ...summary,
             totalMs: Math.round(summary.totalMs)
         });
+        const createSettleSummary = () => ({
+            totalMs: 0,
+            waits: 0,
+            quietExits: 0,
+            maxTimeouts: 0,
+            aborts: 0
+        });
+        const addSettleWaitToSummary = (summary, wait) => {
+            summary.totalMs += wait.durationMs;
+            summary.waits += 1;
+            const counter = {
+                quiet: 'quietExits',
+                'max-timeout': 'maxTimeouts',
+                abort: 'aborts'
+            }[wait.endReason];
+            if (counter) summary[counter] += 1;
+        };
+        const settle = createSettleSummary();
+        const settleByScope = {
+            document: createSettleSummary(),
+            container: createSettleSummary(),
+            final: createSettleSummary()
+        };
+        const settleByDirection = {
+            up: createSettleSummary(),
+            down: createSettleSummary()
+        };
+        const settleDurationBuckets = {
+            '<250': 0,
+            '250-499': 0,
+            '500-749': 0,
+            '750-999': 0,
+            '1000-1249': 0,
+            '1250-1499': 0,
+            '>=1500': 0
+        };
+        const getSettleDurationBucket = (durationMs) => {
+            if (durationMs < 250) return '<250';
+            if (durationMs < 500) return '250-499';
+            if (durationMs < 750) return '500-749';
+            if (durationMs < 1000) return '750-999';
+            if (durationMs < 1250) return '1000-1249';
+            if (durationMs < 1500) return '1250-1499';
+            return '>=1500';
+        };
+        settleWaits.forEach((wait) => {
+            addSettleWaitToSummary(settle, wait);
+            addSettleWaitToSummary(settleByScope[wait.scope], wait);
+            if (wait.direction) addSettleWaitToSummary(settleByDirection[wait.direction], wait);
+            settleDurationBuckets[getSettleDurationBucket(wait.durationMs)] += 1;
+        });
+        const roundSettleSummary = (summary) => ({
+            ...summary,
+            totalMs: Math.round(summary.totalMs)
+        });
         const totalMs = Math.max(0, performance.now() - startedAtPerformance);
         const documentTraversalMs = scanPerformanceMetrics.documentUpMs +
             scanPerformanceMetrics.documentDownMs;
@@ -2604,6 +3242,41 @@ export async function runHiddenFrameDeepScan({
             finalCollectionMs: Math.round(record.metrics.finalCollectionMs),
             repeatReason: record.repeatReason
         }));
+        const photoSwipeSummary = {
+            ...photoSwipeDetail,
+            totalMs: roundPhotoSwipeValue(photoSwipeDetail.totalMs),
+            maxCallMs: roundPhotoSwipeValue(photoSwipeDetail.maxCallMs),
+            direct: {
+                ...photoSwipeDetail.direct,
+                totalMs: roundPhotoSwipeValue(photoSwipeDetail.direct.totalMs),
+                maxCallMs: roundPhotoSwipeValue(photoSwipeDetail.direct.maxCallMs),
+                discoveryMs: roundPhotoSwipeValue(photoSwipeDetail.direct.discoveryMs)
+            },
+            generic: {
+                ...photoSwipeDetail.generic,
+                totalMs: roundPhotoSwipeValue(photoSwipeDetail.generic.totalMs),
+                maxCallMs: roundPhotoSwipeValue(photoSwipeDetail.generic.maxCallMs),
+                discoveryMs: roundPhotoSwipeValue(photoSwipeDetail.generic.discoveryMs)
+            },
+            rootReuse: {
+                ...photoSwipeDetail.rootReuse,
+                rootsSeen: photoSwipePerformanceState.genericRoots.size
+            },
+            waits: {
+                ...photoSwipeDetail.waits,
+                totalMs: roundPhotoSwipeValue(photoSwipeDetail.waits.totalMs),
+                maxTimeoutOverrunMs: roundPhotoSwipeValue(
+                    photoSwipeDetail.waits.maxTimeoutOverrunMs
+                )
+            },
+            phases: Object.fromEntries(Object.entries(photoSwipeDetail.phases).map(
+                ([name, phase]) => [name, {
+                    totalMs: roundPhotoSwipeValue(phase.totalMs),
+                    maxCallMs: roundPhotoSwipeValue(phase.maxCallMs)
+                }]
+            )),
+            rootChangeTracking: 'Only relevant mutations observed by the existing light-DOM observer; class/style and closed shadow-root changes are intentionally not inferred.'
+        };
 
         return {
             status,
@@ -2636,6 +3309,8 @@ export async function runHiddenFrameDeepScan({
                 candidatePipelineMs: Math.round(scanPerformanceMetrics.candidatePipelineMs),
                 batchDispatchMs: Math.round(scanPerformanceMetrics.batchDispatchMs)
             },
+            photoSwipeDetail: photoSwipeSummary,
+            photoSwipeSlowCalls,
             edgeRangeGrowth: {
                 ...roundEdgeRangeGrowthSummary(edgeRangeGrowth),
                 byScope: Object.fromEntries(Object.entries(edgeRangeGrowthByScope).map(
@@ -2646,6 +3321,21 @@ export async function runHiddenFrameDeepScan({
                 ))
             },
             edgeRangeWaits: edgeRangeWaits.map((wait) => ({
+                ...wait,
+                durationMs: Math.round(wait.durationMs),
+                lastRelevantMutationAgeMs: Math.round(wait.lastRelevantMutationAgeMs)
+            })),
+            settle: {
+                ...roundSettleSummary(settle),
+                byScope: Object.fromEntries(Object.entries(settleByScope).map(
+                    ([scope, summary]) => [scope, roundSettleSummary(summary)]
+                )),
+                byDirection: Object.fromEntries(Object.entries(settleByDirection).map(
+                    ([direction, summary]) => [direction, roundSettleSummary(summary)]
+                )),
+                durationBuckets: settleDurationBuckets
+            },
+            settleWaits: settleWaits.map((wait) => ({
                 ...wait,
                 durationMs: Math.round(wait.durationMs),
                 lastRelevantMutationAgeMs: Math.round(wait.lastRelevantMutationAgeMs)
@@ -2898,23 +3588,52 @@ export async function runHiddenFrameDeepScan({
             anchor.remove();
         }
     };
-    const waitForSettle = async ({minimumMs = minimumSettleMs} = {}) => {
+    const waitForSettle = async ({
+        minimumMs = minimumSettleMs,
+        scope = 'document',
+        direction = null,
+        phase = scope
+    } = {}) => {
         const settleStartedAt = Date.now();
+        const relevantMutationCountBefore = relevantMutationCount;
         const effectiveMinimumMs = Math.max(0, Math.min(minimumMs, maximumSettleMs));
-        const settleDeadline = settleStartedAt + Math.max(effectiveMinimumMs, maximumSettleMs);
+        const maximumWaitMs = Math.max(effectiveMinimumMs, maximumSettleMs);
+        const settleDeadline = settleStartedAt + maximumWaitMs;
+        const finishSettleWait = (settled, endReason) => {
+            const lastRelevantMutationAgeMs = Math.max(0, Date.now() - lastRelevantMutationAt);
+            settleWaits.push({
+                scope,
+                ...(direction ? {direction} : {}),
+                phase,
+                durationMs: Date.now() - settleStartedAt,
+                minimumWaitMs: effectiveMinimumMs,
+                quietTargetMs: quietSettleMs,
+                maximumWaitMs,
+                endReason,
+                relevantMutationCountBefore,
+                relevantMutationCountAfter: relevantMutationCount,
+                mutationDelta: relevantMutationCount - relevantMutationCountBefore,
+                lastRelevantMutationAt,
+                lastRelevantMutationAgeMs
+            });
+            return settled;
+        };
 
         if (!(await wait(effectiveMinimumMs))) {
-            return false;
+            return finishSettleWait(false, 'abort');
         }
         while (isActive() && Date.now() < settleDeadline) {
             const quietForMs = Date.now() - lastRelevantMutationAt;
-            if (quietForMs >= quietSettleMs) return true;
+            if (quietForMs >= quietSettleMs) return finishSettleWait(true, 'quiet');
 
             const remainingQuietMs = quietSettleMs - quietForMs;
             const remainingTotalMs = settleDeadline - Date.now();
-            if (!(await wait(Math.min(50, remainingQuietMs, remainingTotalMs)))) return false;
+            if (!(await wait(Math.min(50, remainingQuietMs, remainingTotalMs)))) {
+                return finishSettleWait(false, 'abort');
+            }
         }
-        return isActive();
+        const stillActive = isActive();
+        return finishSettleWait(stillActive, stillActive ? 'max-timeout' : 'abort');
     };
     const waitForEdgeRangeGrowth = async (getRange, isUsable = () => true) => {
         const waitStartedAt = Date.now();
@@ -3005,7 +3724,8 @@ export async function runHiddenFrameDeepScan({
         const photoSwipeCandidates = await scanPhotoSwipeImages({
             processedTargets: processedPhotoSwipeTargets,
             processedTargetSources: processedPhotoSwipeTargetSources,
-            processedCarouselRoots,
+            carouselScanner,
+            performanceState: photoSwipePerformanceState,
             signal,
             onDiagnostic: (message) => console.info('[DeepScan ZOOM]', message),
             onCarouselDiagnostic: (event, ...details) => {
@@ -3018,6 +3738,7 @@ export async function runHiddenFrameDeepScan({
                 photoSwipeActivityCount += 1;
             },
             onPerformance: (performanceMetrics) => {
+                recordPhotoSwipePerformance(performanceMetrics);
                 recordCollectionMetric(metrics, 'scanPhotoSwipeMs', performanceMetrics.scanPhotoSwipeMs);
                 recordCollectionMetric(metrics, 'genericCarouselMs', performanceMetrics.genericCarouselMs);
                 recordCollectionMetric(metrics, 'genericCarouselCalls', performanceMetrics.genericCarouselCalls);
@@ -3167,6 +3888,28 @@ export async function runHiddenFrameDeepScan({
 
         return Array.from(record.addedNodes ?? []).some(containsRealElement) ||
             Array.from(record.removedNodes ?? []).some(containsRealElement);
+    };
+    const markKnownGenericRootsChanged = (record) => {
+        photoSwipePerformanceState.mutationVersion += 1;
+        const mutationVersion = photoSwipePerformanceState.mutationVersion;
+        const markAncestors = (node) => {
+            let current = node?.nodeType === Node.ELEMENT_NODE
+                ? node
+                : node?.parentElement ?? null;
+            while (current) {
+                const rootState = photoSwipePerformanceState.genericRoots.get(current);
+                if (rootState) rootState.lastMutationVersion = mutationVersion;
+                current = current.parentElement ?? current.getRootNode?.().host ?? null;
+            }
+        };
+
+        markAncestors(record.target);
+        if (record.type !== 'childList') return;
+
+        [...record.addedNodes ?? [], ...record.removedNodes ?? []].forEach((node) => {
+            const rootState = photoSwipePerformanceState.genericRoots.get(node);
+            if (rootState) rootState.lastMutationVersion = mutationVersion;
+        });
     };
     const isRelevantScrollableContainer = (element) => {
         if (!element || element === document.documentElement || element === document.body) return false;
@@ -3535,7 +4278,12 @@ export async function runHiddenFrameDeepScan({
             addMetric(directionMetrics, 'scrollActionMs', performance.now() - scrollActionStartedAt);
 
             const settleStartedAt = performance.now();
-            const settled = await waitForSettle({minimumMs: atEdge ? 400 : minimumSettleMs});
+            const settled = await waitForSettle({
+                minimumMs: atEdge ? 400 : minimumSettleMs,
+                scope: 'container',
+                direction,
+                phase: `container-${direction}`
+            });
             addMetric(directionMetrics, 'settleMs', performance.now() - settleStartedAt);
             if (!settled) {
                 return finishContainerScan('aborted');
@@ -3788,7 +4536,12 @@ export async function runHiddenFrameDeepScan({
             );
 
             const settleStartedAt = performance.now();
-            if (!(await waitForSettle({minimumMs: atEdge ? 400 : minimumSettleMs}))) {
+            if (!(await waitForSettle({
+                minimumMs: atEdge ? 400 : minimumSettleMs,
+                scope: 'document',
+                direction,
+                phase: `document-${direction}`
+            }))) {
                 addMetric(currentPassMetrics, 'settleMs', performance.now() - settleStartedAt);
                 return finishDocumentScan('aborted');
             }
@@ -3940,6 +4693,7 @@ export async function runHiddenFrameDeepScan({
                 const relevantMutations = records.filter(isRelevantMutation);
                 if (relevantMutations.length === 0) return;
 
+                relevantMutations.forEach(markKnownGenericRootsChanged);
                 lastRelevantMutationAt = Date.now();
                 relevantMutationCount += relevantMutations.length;
                 relevantMutations.forEach((record) => {
@@ -4028,7 +4782,11 @@ export async function runHiddenFrameDeepScan({
             if (!isActive()) break;
 
             const finalSettleStartedAt = performance.now();
-            if (!(await waitForSettle({minimumMs: 400}))) {
+            if (!(await waitForSettle({
+                minimumMs: 400,
+                scope: 'final',
+                phase: 'final'
+            }))) {
                 addMetric(passMetrics, 'settleMs', performance.now() - finalSettleStartedAt);
                 addMetric(passMetrics, 'finalSettleMs', performance.now() - finalSettleStartedAt);
                 break;

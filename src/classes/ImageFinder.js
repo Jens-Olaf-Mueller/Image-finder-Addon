@@ -379,6 +379,7 @@ export class ImageFinder {
         const item = e.target.closest('li');
         if (!item) return;
 
+        this.info = 'Image preview';
         this.selectedItem?.classList.remove('selected');
         item.classList.add('selected');
         this.DOM.lstImages.focus();
@@ -609,6 +610,7 @@ export class ImageFinder {
         let scannerActivityActive = false;
         let deepScanActivityActive = false;
         let deepScanStarted = false;
+        let deepScanCompletionInfo = null;
 
         this.#resetScanActivities();
         this.startActivity('scanner', scanGeneration);
@@ -744,6 +746,7 @@ export class ImageFinder {
                         console.warn('Cannot deep scan this page:', error);
                     }
                 } finally {
+                    deepScanCompletionInfo = this.#getDeepScanCompletionInfo();
                     console.info(
                         '[DeepScan COMPLETE TRACE] stopActivity-before',
                         `scanGeneration=${scanGeneration}`,
@@ -770,9 +773,11 @@ export class ImageFinder {
             if (scannerActivityActive) this.stopActivity('scanner', scanGeneration);
             if (deepScanActivityActive) this.stopActivity('deepScan', scanGeneration);
             if (scanCompleted && this.#isCurrentScan(scanGeneration)) {
-                this.info = deepScanStarted || this.images.size > 0
-                    ? 'Image preview'
-                    : 'No images found!';
+                this.info = deepScanStarted
+                    ? deepScanCompletionInfo ?? 'Image preview'
+                    : this.images.size > 0
+                        ? 'Image preview'
+                        : 'No images found!';
             }
             this.#finalizeDeepScanUI(scanGeneration);
             if (this.#isCurrentScan(scanGeneration)) {
@@ -1161,7 +1166,7 @@ export class ImageFinder {
         if (!this.#isCurrentScan(scanGeneration)) return false;
 
         if (initialSort && !this.sortState.criterion) {
-            this.sort('dimensions', 'desc');
+            this.sort('cronologic', 'asc');
         } else if (this.sortState.criterion) {
             this.sort(this.sortState.criterion, this.sortState.direction);
         }
@@ -1566,14 +1571,33 @@ export class ImageFinder {
     #updateDeepScanTitle() {
         if (this.#deepScanStartedAt === null) return;
 
-        const elapsedMilliseconds = Date.now() - this.#deepScanStartedAt;
-        const elapsedSeconds = Math.max(0, Math.floor(elapsedMilliseconds / 1000));
-        const elapsed = elapsedSeconds < 60
-            ? `${elapsedSeconds}s`
-            : `${Math.floor(elapsedSeconds / 60)}:${String(elapsedSeconds % 60).padStart(2, '0')}`;
+        const elapsedSeconds = this.#getDeepScanElapsedSeconds();
+        const elapsed = this.#formatDeepScanElapsed(elapsedSeconds);
         const title = `Deep scan running ${elapsed} ...`;
         this.DOM.divLED.title = title;
         this.info = title;
+    }
+
+    #getDeepScanCompletionInfo() {
+        if (this.#deepScanStartedAt === null) return null;
+
+        return `Deep scan completed after ${this.#formatDeepScanElapsed(
+            this.#getDeepScanElapsedSeconds()
+        )}`;
+    }
+
+    #getDeepScanElapsedSeconds() {
+        if (this.#deepScanStartedAt === null) return 0;
+
+        const elapsedMilliseconds = Date.now() - this.#deepScanStartedAt;
+        return Math.max(0, Math.floor(elapsedMilliseconds / 1000));
+    }
+
+    #formatDeepScanElapsed(elapsedSeconds) {
+        const elapsed = elapsedSeconds < 60
+            ? `${elapsedSeconds}s`
+            : `${Math.floor(elapsedSeconds / 60)}:${String(elapsedSeconds % 60).padStart(2, '0')}`;
+        return elapsed;
     }
 
 }

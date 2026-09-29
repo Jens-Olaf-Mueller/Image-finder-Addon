@@ -1148,9 +1148,36 @@
             if (!new URLSearchParams(location.search).has('runDeepScanCarousel')) return;
 
             const {scanImages, scanPhotoSwipeImages} = await import('../src/content.js');
+            const photoSwipePerformance = [];
+            const photoSwipePerformanceState = {
+                callIndex: 0,
+                mutationVersion: 0,
+                genericCandidates: new WeakSet(),
+                genericRoots: new Map(),
+                directTargets: new WeakSet()
+            };
+            const processedTargets = new WeakSet();
+            const processedTargetSources = new Set();
+            const processedCarouselRoots = new WeakSet();
+            const carouselCandidates = await scanPhotoSwipeImages({
+                traverseCarousel: true,
+                performanceState: photoSwipePerformanceState,
+                processedTargets,
+                processedTargetSources,
+                processedCarouselRoots,
+                onPerformance: (metrics) => photoSwipePerformance.push(metrics)
+            });
+            await scanPhotoSwipeImages({
+                traverseCarousel: true,
+                performanceState: photoSwipePerformanceState,
+                processedTargets,
+                processedTargetSources,
+                processedCarouselRoots,
+                onPerformance: (metrics) => photoSwipePerformance.push(metrics)
+            });
             const candidates = [
                 ...await scanImages(false, true, true),
-                ...await scanPhotoSwipeImages({traverseCarousel: true})
+                ...carouselCandidates
             ];
             const foundURLs = new Set(candidates.map((candidate) => candidate.url));
             const expectedURLs = [
@@ -1167,6 +1194,17 @@
             document.documentElement.dataset.deepScanCarouselFound = String(
                 expectedURLs.length - missing.length
             );
+            const detail = photoSwipePerformance[0]?.detail;
+            const reuseDetail = photoSwipePerformance[1]?.detail;
+            document.documentElement.dataset.deepScanCarouselInstrumentation = detail &&
+                detail.queries.calls > 0 && detail.generic.candidateCount > 0 &&
+                Number.isFinite(detail.phases.genericCarouselDiscoveryMs) &&
+                Number.isFinite(detail.phases.candidateClassificationMs) &&
+                reuseDetail?.generic.rootsPreviouslySeen > 0 &&
+                reuseDetail.generic.rootsAlreadyProcessed > 0 &&
+                reuseDetail.generic.rootsUnchangedSincePreviousCall > 0
+                ? 'passed'
+                : 'failed';
         };
         void runDeepScanCarouselFixture().catch(() => {
             document.documentElement.dataset.deepScanCarouselResult = 'failed';
