@@ -34,7 +34,7 @@ const ratio = (part, total) => total > 0 ? part / total : 0;
  * The returned observations are intentionally explicit so that callers can apply
  * their own priority policy while keeping the structural evidence inspectable.
  */
-export class ContainerAnalyser {
+export default class ContainerAnalyser {
     static analyze(container, {
         minimumImageWidth = DEFAULT_MINIMUM_IMAGE_WIDTH,
         minimumImageHeight = DEFAULT_MINIMUM_IMAGE_HEIGHT,
@@ -795,5 +795,3 @@ export class ContainerAnalyser {
         };
     }
 }
-
-export default ContainerAnalyser;

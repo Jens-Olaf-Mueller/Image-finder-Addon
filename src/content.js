@@ -1,5 +1,6 @@
 import CarouselScanner from './classes/CarouselScanner.js';
 import ContainerAnalyser from './classes/ContainerAnalyser.js';
+import DeepScanController from './classes/DeepScanController.js';
 import PhotoSwipeScanner from './classes/PhotoSwipeScanner.js';
 
 export async function scanImages(
@@ -2899,7 +2900,6 @@ export async function runHiddenFrameDeepScan({
     let relevantRemovedElementCount = 0;
     let photoSwipeActivityCount = 0;
     let progressDiagnosticBatchSequence = 0;
-    let completedNaturally = false;
     let deepScanPass = 0;
     let currentPassMetrics = null;
     let lastNewSourceAt = null;
@@ -2910,7 +2910,6 @@ export async function runHiddenFrameDeepScan({
     let observedAttributeMutationCount = 0;
     let observedAddedElementCount = 0;
     let observedRemovedElementCount = 0;
-    let deepScanMutationStart = null;
     // Kept central so a future setting can switch LOW traversal back on without
     // changing the planner or any discovery code.
     const skipLowPriorityContainers = true;
@@ -4731,6 +4730,138 @@ export async function runHiddenFrameDeepScan({
         return finishDocumentScan('aborted');
     };
 
+    const startMutationObservation = () => {
+        if (typeof MutationObserver !== 'function' || !document.documentElement) return;
+
+        observer = new MutationObserver((records) => {
+            records.forEach((record) => {
+                observedMutationCount += 1;
+                if (record.type === 'attributes') {
+                    observedAttributeMutationCount += 1;
+                    return;
+                }
+
+                observedChildListMutationCount += 1;
+                observedAddedElementCount += countMutationElements(record.addedNodes);
+                observedRemovedElementCount += countMutationElements(record.removedNodes);
+            });
+            const relevantMutations = records.filter(isRelevantMutation);
+            if (relevantMutations.length === 0) return;
+
+            relevantMutations.forEach(markKnownGenericRootsChanged);
+            lastRelevantMutationAt = Date.now();
+            relevantMutationCount += relevantMutations.length;
+            relevantMutations.forEach((record) => {
+                if (record.type === 'attributes') {
+                    relevantAttributeMutationCount += 1;
+                    return;
+                }
+
+                relevantChildListMutationCount += 1;
+                relevantAddedElementCount += Array.from(record.addedNodes ?? []).filter(
+                    containsRealElement
+                ).length;
+                relevantRemovedElementCount += Array.from(record.removedNodes ?? []).filter(
+                    containsRealElement
+                ).length;
+            });
+        });
+        observer.observe(document.documentElement, {
+            subtree: true,
+            childList: true,
+            attributes: true,
+            attributeFilter: [
+                'src',
+                'srcset',
+                'data-src',
+                'data-srcset',
+                'data-lazy-src',
+                'data-lazy-srcset',
+                'data-image',
+                'data-image-src',
+                'data-full',
+                'data-full-src',
+                'data-fullsize',
+                'data-large',
+                'data-original',
+                'data-original-src',
+                'data-lightbox-src'
+            ]
+        });
+    };
+    const stopMutationObservation = () => observer?.disconnect();
+    const waitForHiddenFrameReadiness = async () => {
+        const readinessDeadline = Date.now() + DEEP_SCAN_READINESS_MAX_WAIT_MS;
+        while (isActive() && (window.innerWidth <= 0 || window.innerHeight <= 0 ||
+            document.readyState === 'loading') && Date.now() < readinessDeadline) {
+            if (!(await wait(DEEP_SCAN_READINESS_POLL_INTERVAL_MS))) break;
+        }
+    };
+    const setCurrentPass = (metrics, record) => {
+        currentPassMetrics = metrics;
+        currentPassRecord = record;
+    };
+    const clearCurrentPass = () => {
+        currentPassMetrics = null;
+        currentPassRecord = null;
+    };
+    const finalizeCurrentPass = (record, endReason) => {
+        if (record?.endPosition === null) {
+            record.endPosition = getMetrics().scrollY;
+            record.durationMs = performance.now() - record.startedAt;
+            record.repeatReason = endReason;
+        }
+    };
+    const controller = new DeepScanController({
+        lifecycle: {
+            isActive,
+            isAborted: () => signal?.aborted === true,
+            startMutationObservation,
+            stopMutationObservation,
+            waitForReadiness: waitForHiddenFrameReadiness,
+            getMetrics,
+            getPhotoSwipeActivityCount: () => photoSwipeActivityCount,
+            getRelevantMutationCount: () => relevantMutationCount,
+            getKnownScrollContainerCount: () => knownScrollContainerIndices.size,
+            getCompletedScrollContainerStates: () => completedScrollContainerStates,
+            getHandledStructureContainers: () => handledStructureContainers,
+            reportActiveScrollContainer,
+            setDeepScanPass: (pass) => {
+                deepScanPass = pass;
+            }
+        },
+        collection: {
+            registerTargets,
+            collectSources
+        },
+        traversal: {
+            scanRelevantScrollContainers,
+            scanDocumentDirection,
+            waitForSettle,
+            getDocumentTraversalState,
+            synchronizeCompletedScrollContainerStates,
+            getPendingRelevantContainerCandidates
+        },
+        diagnostics: {
+            createPerformanceMetrics,
+            getMutationSnapshot,
+            getMutationDelta,
+            addMetric,
+            setCurrentPass,
+            clearCurrentPass,
+            finalizeCurrentPass,
+            addPassRecord: (record) => passPerformanceRecords.push(record),
+            logPassSummary,
+            createPerformanceSummary
+        }
+    });
+    return controller.run();
+
+    /*
+     * Beta 0.0.09 legacy Hidden-DeepScan orchestration.
+     * Replaced by DeepScanController above; retained inactive for direct
+     * behaviour comparison during the extraction phase.
+     *
     try {
         if (typeof MutationObserver === 'function' && document.documentElement) {
             observer = new MutationObserver((records) => {
@@ -4983,6 +5114,7 @@ export async function runHiddenFrameDeepScan({
         endReason: status === 'cancelled' ? 'aborted' : 'stable',
         performance: performanceSummary
     };
+    */
 }
 
 export function getPageURL() {

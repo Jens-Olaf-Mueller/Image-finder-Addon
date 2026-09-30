@@ -5,6 +5,7 @@ import Progressbar from './Progressbar.js';
 import BlurScanner from './BlurScanner.js';
 import ImageMatcher from './ImageMatcher.js';
 import { ScanContext } from './ScanContext.js';
+
 const SORT_BUTTON_TITLES = Object.freeze({
     filename: 'Sort by filename',
     type: 'Sort by image type',

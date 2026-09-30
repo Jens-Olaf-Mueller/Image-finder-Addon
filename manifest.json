@@ -43,6 +43,7 @@
             "resources": [
                 "src/content.js",
                 "src/classes/CarouselScanner.js",
+                "src/classes/DeepScanController.js",
                 "src/classes/PhotoSwipeScanner.js",
                 "src/classes/ContainerAnalyser.js"
             ],

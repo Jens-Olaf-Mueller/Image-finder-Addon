@@ -72,11 +72,7 @@ export default class ImageScanner {
         return this.createCandidates(filesFound, tab.id, {onStart, onProgress, signal});
     }
 
-    async createCandidates(
-        filesFound,
-        tabId,
-        {onStart = null, onProgress = null, signal = null} = {}
-    ) {
+    async createCandidates(filesFound, tabId, {onStart = null, onProgress = null, signal = null} = {}) {
         if (!Array.isArray(filesFound) || !Number.isInteger(tabId)) return [];
 
         const isActive = () => signal?.aborted !== true;
@@ -188,11 +184,6 @@ export default class ImageScanner {
         return images;
     }
 
-    async deepScan(image = null) {
-        // Future API: image scans one image; null scans the whole document in the background.
-        return null;
-    }
-
     async cancelDeepScan({endReason = 'cancelled'} = {}) {
         const session = this.#activeDeepScan;
         if (!session) return false;
@@ -244,17 +235,13 @@ export default class ImageScanner {
             popupPipelineMs: 0,
             endToEndMs: 0
         };
+
         const addTransportDuration = (name, value) => {
             if (!Number.isFinite(value)) return;
-
             transportMetrics[name] = (transportMetrics[name] ?? 0) + Math.max(0, value);
         };
-        const recordTransportBatch = (
-            diagnostic,
-            popupReceivedAt,
-            popupProcessingStartedAt,
-            popupProcessingFinishedAt
-        ) => {
+
+        const recordTransportBatch = (diagnostic, popupReceivedAt, popupProcessingStartedAt, popupProcessingFinishedAt ) => {
             transportMetrics.batches += 1;
             addTransportDuration(
                 'popupQueueMs',
@@ -289,9 +276,9 @@ export default class ImageScanner {
         let batchQueue = Promise.resolve();
         let resolveCompletion = null;
         let completionResult = null;
-        const completion = new Promise((resolve) => {
-            resolveCompletion = resolve;
-        });
+
+        const completion = new Promise((resolve) => {resolveCompletion = resolve;});
+
         const session = {
             scanId,
             controller: new AbortController(),
@@ -306,6 +293,7 @@ export default class ImageScanner {
                 resolveCompletion(result);
             }
         };
+
         const sendPipelineDiagnostic = (diagnostic, result) => {
             if (!diagnostic) return;
 
@@ -330,6 +318,7 @@ export default class ImageScanner {
                 }
             }).catch(() => undefined);
         };
+
         const processCandidates = async (
             foundCandidates,
             diagnostic = null,
@@ -389,16 +378,11 @@ export default class ImageScanner {
                 );
             }
         };
+
         const onMessage = (message, _sender, sendResponse) => {
-            if (message?.target !== ISOLATED_DEEP_SCAN_TARGET || message.source !== 'background') {
-                return;
-            }
-            if (message.scanId !== scanId) {
-                return;
-            }
-            if (message.popupClientId && message.popupClientId !== this.#deepScanClientId) {
-                return;
-            }
+            if (message?.target !== ISOLATED_DEEP_SCAN_TARGET || message.source !== 'background') return;
+            if (message.scanId !== scanId) return;
+            if (message.popupClientId && message.popupClientId !== this.#deepScanClientId) return;
 
             if (message.action === 'batch' && Array.isArray(message.candidates)) {
                 const popupReceivedAt = Date.now();
@@ -418,6 +402,7 @@ export default class ImageScanner {
                 });
                 return;
             }
+
             if (message.action === 'complete') {
                 console.info(
                     '[DeepScan COMPLETE TRACE] scanner-received',

@@ -1,43 +1,34 @@
-function isScannableURL(url) {
-    try {
-        return ['http:', 'https:'].includes(new URL(url).protocol);
-    } catch {
-        return false;
-    }
-}
-
-function isValidURL(url) {
-    try {
-        new URL(url);
-        return true;
-    } catch {
-        return false;
-    }
-}
-
 export class ScanContext {
     #tabId = null;
+    get tabId() { return this.#tabId; }
+
     #url = null;
+    get url() { return this.#url; }
+
+    get isScannable() {
+        try {
+            return ['http:', 'https:'].includes(new URL(this.#url).protocol);
+        } catch {
+            return false;
+        }
+    }
 
     constructor(tab = null) {
         this.setTab(tab);
     }
 
-    get tabId() {
-        return this.#tabId;
-    }
-
-    get url() {
-        return this.#url;
-    }
-
-    get isScannable() {
-        return isScannableURL(this.#url);
+    static #isValidURL(url) {
+        try {
+            new URL(url);
+            return true;
+        } catch {
+            return false;
+        }
     }
 
     setTab(tab) {
         if (!Number.isInteger(tab?.id) || typeof tab.url !== 'string' || !tab.url ||
-            !isValidURL(tab.url)) {
+            !ScanContext.#isValidURL(tab.url)) {
             return this.clear();
         }
 
