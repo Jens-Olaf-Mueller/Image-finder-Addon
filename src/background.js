@@ -216,6 +216,18 @@ function createHiddenDeepScanFrameRule(url, tabId) {
     };
 }
 
+function logHiddenDeepScanFallback(job, phase, details = {}) {
+    console.info('[DeepScan HIDDEN FALLBACK]', {
+        scanId: job?.scanId ?? null,
+        url: job?.url ?? null,
+        token: job?.token ?? null,
+        allowProtectedDeepScan: job?.allowProtectedDeepScan === true,
+        protectedFrameRuleAttempted: job?.protectedFrameRuleAttempted === true,
+        phase,
+        ...details
+    });
+}
+
 async function installHiddenDeepScanFrameRule(job) {
     if (!canUseProtectedDeepScanFrameRule()) {
         throw new Error('Temporary frame rules are unavailable');
@@ -565,12 +577,30 @@ async function startHiddenDeepScanHost(job) {
 
 async function retryHiddenDeepScanWithProtectedFrameRule(job) {
     try {
-        await installHiddenDeepScanFrameRule(job);
+        logHiddenDeepScanFallback(job, 'rule-install-start');
+        try {
+            await installHiddenDeepScanFrameRule(job);
+        } catch (error) {
+            logHiddenDeepScanFallback(job, 'rule-install-error', {
+                error: getErrorMessage(error)
+            });
+            throw error;
+        }
+        logHiddenDeepScanFallback(job, 'rule-install-success');
         if (job.cancelled || activeHiddenDeepScan !== job) {
             await removeHiddenDeepScanFrameRule(job.scanId);
             return;
         }
-        await startHiddenDeepScanHost(job);
+        logHiddenDeepScanFallback(job, 'retry-start');
+        try {
+            await startHiddenDeepScanHost(job);
+        } catch (error) {
+            logHiddenDeepScanFallback(job, 'retry-start-error', {
+                error: getErrorMessage(error)
+            });
+            throw error;
+        }
+        logHiddenDeepScanFallback(job, 'retry-start-success');
     } catch (error) {
         if (job.cancelled || activeHiddenDeepScan !== job) return;
         await completeHiddenDeepScanJob(job, 'unavailable', getErrorMessage(error));
@@ -651,8 +681,18 @@ function handleHiddenDeepScanEvent(event) {
         `clientId=${isolatedJob.popupClientId ?? 'none'}`
     );
 
-    if (event.status === 'unavailable' && isHiddenDeepScanFrameUnavailableReason(event.reason) &&
-        job.allowProtectedDeepScan && !job.protectedFrameRuleAttempted) {
+    const isHiddenFrameUnavailable = event.status === 'unavailable' &&
+        isHiddenDeepScanFrameUnavailableReason(event.reason);
+    const retryConditionMatched = isHiddenFrameUnavailable &&
+        job.allowProtectedDeepScan && !job.protectedFrameRuleAttempted;
+    if (isHiddenFrameUnavailable) {
+        logHiddenDeepScanFallback(job, 'decision', {
+            status: event.status,
+            reason: event.reason ?? null,
+            retryConditionMatched
+        });
+    }
+    if (retryConditionMatched) {
         job.protectedFrameRuleAttempted = true;
         void retryHiddenDeepScanWithProtectedFrameRule(job);
         return;

@@ -48,9 +48,18 @@ export default class ImageScanner {
             : null;
     }
 
-    async scan({onStart = null, onProgress = null, signal = null} = {}) {
+    async scan({onStart = null, onProgress = null, signal = null, onTrace = null} = {}) {
         if (signal?.aborted) return [];
 
+        const scanStartedAt = performance.now();
+        const trace = (phase, phaseStartedAt = scanStartedAt, details = {}) => {
+            try {
+                onTrace?.(phase, phaseStartedAt, details);
+            } catch {
+                // Temporary diagnostics must never affect a scan.
+            }
+        };
+        trace('image-scanner-scan-start');
         this.currentTab = null;
         this.#imageDimensionsByURL.clear();
         const [tab] = await window.chrome.tabs.query({
@@ -61,6 +70,7 @@ export default class ImageScanner {
         this.currentTab = tab ?? null;
 
         const filters = this.settings.get('filters') ?? {};
+        const normalDOMScanStartedAt = performance.now();
         const result = await window.chrome.scripting.executeScript({
             target: {tabId: tab.id},
             func: scanImages,
@@ -68,8 +78,23 @@ export default class ImageScanner {
         });
         if (signal?.aborted) return [];
         const filesFound = result[0]?.result ?? [];
+        trace('normal-dom-scan-resolved', normalDOMScanStartedAt, {
+            rawResultCount: filesFound.length
+        });
 
-        return this.createCandidates(filesFound, tab.id, {onStart, onProgress, signal});
+        const candidateProcessingStartedAt = performance.now();
+        trace('candidate-filter-processing-start', candidateProcessingStartedAt, {
+            rawResultCount: filesFound.length
+        });
+        const candidates = await this.createCandidates(filesFound, tab.id, {onStart, onProgress, signal});
+        trace('candidate-filter-processing-end', candidateProcessingStartedAt, {
+            candidateCount: candidates.length
+        });
+        trace('image-scanner-scan-resolved', scanStartedAt, {
+            rawResultCount: filesFound.length,
+            candidateCount: candidates.length
+        });
+        return candidates;
     }
 
     async createCandidates(filesFound, tabId, {onStart = null, onProgress = null, signal = null} = {}) {
@@ -209,11 +234,20 @@ export default class ImageScanner {
         return true;
     }
 
-    async scanDeepImages(scanContext, onCandidates = null) {
+    async scanDeepImages(scanContext, onCandidates = null, {onTrace = null} = {}) {
         if (!scanContext?.isScannable || !Number.isInteger(scanContext.tabId)) {
             return [];
         }
 
+        const deepScanStartedAt = performance.now();
+        const trace = (phase, phaseStartedAt = deepScanStartedAt, details = {}) => {
+            try {
+                onTrace?.(phase, phaseStartedAt, details);
+            } catch {
+                // Temporary diagnostics must never affect a scan.
+            }
+        };
+        trace('scan-deep-images-call');
         const filters = this.settings.get('filters') ?? {};
         const imageFilter = this.filter;
         const allowProtectedDeepScan = this.settings.get(
@@ -452,6 +486,10 @@ export default class ImageScanner {
                 }
 
                 completionResult = await completion;
+                trace('hidden-deep-scan-result', deepScanStartedAt, {
+                    status: completionResult?.status ?? 'unknown',
+                    endReason: completionResult?.endReason ?? 'none'
+                });
                 console.info(
                     '[DeepScan COMPLETE TRACE] scanDeepImages-resolved',
                     `scanId=${scanId}`,

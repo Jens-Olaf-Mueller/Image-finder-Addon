@@ -606,6 +606,22 @@ export class ImageFinder {
         this.#scanController = scanController;
         const scanGeneration = this.#scanGeneration + 1;
         this.#scanGeneration = scanGeneration;
+        const normalScanStartedAt = performance.now();
+        const traceNormalScan = (phase, phaseStartedAt = normalScanStartedAt, details = {}) => {
+            try {
+                console.info(
+                    '[OF REGRESSION TRACE] NORMAL_SCAN',
+                    `phase=${phase}`,
+                    `elapsedSinceNormalScanStartMs=${Math.round(
+                        performance.now() - normalScanStartedAt
+                    )}`,
+                    `phaseDurationMs=${Math.round(performance.now() - phaseStartedAt)}`,
+                    ...Object.entries(details).map(([name, value]) => `${name}=${value}`)
+                );
+            } catch {
+                // Temporary diagnostics must never affect a scan.
+            }
+        };
         this.#setSearchButtonActive(true);
         let scanCompleted = false;
         let scannerActivityActive = false;
@@ -616,6 +632,7 @@ export class ImageFinder {
         this.#resetScanActivities();
         this.startActivity('scanner', scanGeneration);
         scannerActivityActive = true;
+        traceNormalScan('start');
         try {
             this.clear({invalidateScan: false});
             this.sortState = {criterion: null, direction: 'asc'};
@@ -624,10 +641,15 @@ export class ImageFinder {
             this.progressbar.backgroundColor = SCAN_PROGRESS_COLOR;
             this.progressbar.reset();
 
+            const normalScannerStartedAt = performance.now();
             const scanResults = await this.scanner.scan({
                 onStart: count => this.progressbar.show(count),
                 onProgress: () => this.progressbar.update(),
-                signal: scanController.signal
+                signal: scanController.signal,
+                onTrace: traceNormalScan
+            });
+            traceNormalScan('image-finder-normal-results-received', normalScannerStartedAt, {
+                candidateCount: scanResults.length
             });
             if (!this.#isCurrentScan(scanGeneration)) return;
 
@@ -635,6 +657,7 @@ export class ImageFinder {
 
             this.#setScanResults(scanResults);
             let visibleImagesUpdated = false;
+            const refreshVisibleImagesStartedAt = performance.now();
             try {
                 visibleImagesUpdated = await this.#refreshVisibleImages(scanGeneration, {
                     initialSort: true,
@@ -642,6 +665,10 @@ export class ImageFinder {
                 });
             } finally {
                 this.#finishFilteringProgress();
+                traceNormalScan('refresh-visible-images-end', refreshVisibleImagesStartedAt, {
+                    visibleImageCount: this.images.size,
+                    updated: visibleImagesUpdated
+                });
             }
             if (!visibleImagesUpdated) return;
             scanCompleted = true;
@@ -661,6 +688,9 @@ export class ImageFinder {
                 deepScanActivityActive = true;
 
                 try {
+                    traceNormalScan('normal-to-deep-transition', performance.now(), {
+                        visibleImageCount: this.images.size
+                    });
                     await this.scanner.scanDeepImages(this.scanContext, async (
                         rawCandidates,
                         signal,
@@ -741,7 +771,7 @@ export class ImageFinder {
                             notVisibleAfterFiltering: candidates.length - visibleWinnersFromBatch,
                             visibleImages: this.images.size
                         };
-                    });
+                    }, {onTrace: traceNormalScan});
                 } catch (error) {
                     if (this.#isCurrentScan(scanGeneration)) {
                         console.warn('Cannot deep scan this page:', error);

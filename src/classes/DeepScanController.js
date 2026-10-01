@@ -1,22 +1,24 @@
 /**
- * Coordinates one hidden DeepScan run. Concrete document and container
- * traversal stay supplied by the caller so they can be extracted separately as
- * DocumentTraverser without changing this controller's planning semantics.
+ * Coordinates one hidden DeepScan run. It owns pass planning and delegates
+ * document traversal to DocumentTraverser while container traversal remains
+ * supplied by the caller.
  */
 export default class DeepScanController {
     #lifecycle;
     #collection;
     #traversal;
+    #documentTraverser;
     #diagnostics;
     #deepScanPass = 0;
     #completedNaturally = false;
     #currentPassRecord = null;
     #deepScanMutationStart = null;
 
-    constructor({lifecycle, collection, traversal, diagnostics} = {}) {
+    constructor({lifecycle, collection, traversal, documentTraverser, diagnostics} = {}) {
         this.#lifecycle = lifecycle;
         this.#collection = collection;
         this.#traversal = traversal;
+        this.#documentTraverser = documentTraverser;
         this.#diagnostics = diagnostics;
     }
 
@@ -37,9 +39,7 @@ export default class DeepScanController {
         const {registerTargets, collectSources} = this.#collection;
         const {
             scanRelevantScrollContainers,
-            scanDocumentDirection,
             waitForSettle,
-            getDocumentTraversalState,
             synchronizeCompletedScrollContainerStates,
             getPendingRelevantContainerCandidates
         } = this.#traversal;
@@ -52,7 +52,10 @@ export default class DeepScanController {
             clearCurrentPass,
             finalizeCurrentPass,
             logPassSummary,
-            createPerformanceSummary
+            createPerformanceSummary,
+            traceAfterDocumentTraversal,
+            tracePassDecision,
+            logRegressionTraceSummary
         } = this.#diagnostics;
 
         try {
@@ -76,7 +79,7 @@ export default class DeepScanController {
                 this.#currentPassRecord = {
                     pass,
                     startedAt: passStartedAt,
-                    startPosition: this.#lifecycle.getMetrics().scrollY,
+                    startPosition: this.#documentTraverser.getMetrics().scrollY,
                     endPosition: null,
                     durationMs: 0,
                     metrics: passMetrics,
@@ -90,13 +93,15 @@ export default class DeepScanController {
                 await scanRelevantScrollContainers();
                 if (!isActive()) break;
 
-                await scanDocumentDirection('up');
+                await this.#documentTraverser.traverse('up', {metrics: passMetrics, pass});
+                traceAfterDocumentTraversal?.('up');
                 if (!isActive()) break;
 
-                await scanDocumentDirection('down');
+                await this.#documentTraverser.traverse('down', {metrics: passMetrics, pass});
+                traceAfterDocumentTraversal?.('down');
                 if (!isActive()) break;
 
-                const documentStateAfterDirections = getDocumentTraversalState();
+                const documentStateAfterDirections = this.#documentTraverser.getTraversalState();
                 const mutationCountAfterDirections = this.#lifecycle.getRelevantMutationCount();
                 await scanRelevantScrollContainers();
                 if (!isActive()) break;
@@ -124,7 +129,7 @@ export default class DeepScanController {
                 addMetric(passMetrics, 'finalCollectionMs', performance.now() - finalCollectionStartedAt);
                 const newTargets = registerTargets();
                 addMetric(passMetrics, 'newTargets', newTargets);
-                const documentStateAfterFinalSettle = getDocumentTraversalState();
+                const documentStateAfterFinalSettle = this.#documentTraverser.getTraversalState();
                 const mutationCountAfterFinalSettle = this.#lifecycle.getRelevantMutationCount();
                 const documentChangedAfterDirections = documentStateAfterDirections !==
                     documentStateAfterFinalSettle;
@@ -169,9 +174,10 @@ export default class DeepScanController {
                         : pendingContainers.length > 0
                             ? 'container-pending'
                             : 'none';
-                this.#currentPassRecord.endPosition = this.#lifecycle.getMetrics().scrollY;
+                this.#currentPassRecord.endPosition = this.#documentTraverser.getMetrics().scrollY;
                 this.#currentPassRecord.durationMs = performance.now() - passStartedAt;
                 this.#currentPassRecord.repeatReason = repeatReason;
+                tracePassDecision?.({repeatReason, pendingContainers});
 
                 logPassSummary(
                     pass,
@@ -239,6 +245,7 @@ export default class DeepScanController {
         }
 
         const performanceSummary = createPerformanceSummary(status);
+        logRegressionTraceSummary?.({status, performance: performanceSummary});
         console.info('[DeepScan Performance Hidden]', performanceSummary);
 
         return {

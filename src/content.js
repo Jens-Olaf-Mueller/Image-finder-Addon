@@ -1,6 +1,7 @@
 import CarouselScanner from './classes/CarouselScanner.js';
 import ContainerAnalyser from './classes/ContainerAnalyser.js';
 import DeepScanController from './classes/DeepScanController.js';
+import DocumentTraverser from './classes/DocumentTraverser.js';
 import PhotoSwipeScanner from './classes/PhotoSwipeScanner.js';
 
 export async function scanImages(
@@ -2874,8 +2875,6 @@ export async function runHiddenFrameDeepScan({
     const seenCandidatesByURL = new Map();
     const seenCandidateURLsByBase = new Map();
     const knownTargets = new Set();
-    const attemptedUpwardTargets = new WeakSet();
-    const attemptedDownwardTargets = new WeakSet();
     const photoSwipeScanner = new PhotoSwipeScanner();
     const carouselScanner = new CarouselScanner();
     // Diagnostic-only state: it records what the current run sees, but never
@@ -2913,6 +2912,31 @@ export async function runHiddenFrameDeepScan({
     // Kept central so a future setting can switch LOW traversal back on without
     // changing the planner or any discovery code.
     const skipLowPriorityContainers = true;
+    const ofRegressionTrace = {
+        container: null,
+        containerId: 0,
+        firstScrollTraced: false,
+        firstScrollSettlePending: false,
+        firstEdgeWaitTraced: false,
+        edgeMutationTracking: false,
+        relevantMutationsInsideContainer: 0,
+        relevantMutationsOutsideContainer: 0,
+        documentDownObserved: false,
+        secondContainerDecisionTraced: false,
+        snapshots: {},
+        secondContainerDecision: 'not-observed'
+    };
+    const logOFRegressionTrace = (event, details = {}) => {
+        try {
+            console.info(
+                '[OF REGRESSION TRACE]',
+                `event=${event}`,
+                ...Object.entries(details).map(([name, value]) => `${name}=${value}`)
+            );
+        } catch {
+            // Temporary diagnostics must never affect a hidden scan.
+        }
+    };
     const edgeLoadWaitMs = Math.max(5000, maximumSettleMs);
     const edgeLoadPollMs = 100;
     const isActive = () => signal?.aborted !== true;
@@ -3427,7 +3451,6 @@ export async function runHiddenFrameDeepScan({
         timeout = setTimeout(() => finish(true), Math.max(0, milliseconds));
         signal?.addEventListener?.('abort', onAbort, {once: true});
     });
-    const getScrollElement = () => document.scrollingElement ?? document.documentElement;
     const getTargetElements = () => Array.from(document.querySelectorAll([
         'img',
         'video',
@@ -3455,26 +3478,6 @@ export async function runHiddenFrameDeepScan({
             added += 1;
         });
         return added;
-    };
-    const getMetrics = () => {
-        const scrollElement = getScrollElement();
-        const effectiveScrollTop = Number(scrollElement?.scrollTop ?? window.scrollY ?? 0);
-
-        return {
-            scrollY: Math.round(effectiveScrollTop),
-            effectiveScrollTop,
-            scrollHeight: Math.max(
-                scrollElement?.scrollHeight ?? 0,
-                document.documentElement?.scrollHeight ?? 0,
-                document.body?.scrollHeight ?? 0
-            ),
-            clientHeight: Math.max(
-                scrollElement?.clientHeight ?? 0,
-                window.innerHeight ?? 0
-            ),
-            images: document.images?.length ?? 0,
-            targets: knownTargets.size
-        };
     };
     const getMutationSnapshot = () => ({
         total: observedMutationCount,
@@ -3537,110 +3540,6 @@ export async function runHiddenFrameDeepScan({
                 dataURL: false,
                 blobURL: false
             };
-        }
-    };
-    const getNextScrollTarget = (direction) => {
-        const viewportHeight = Math.max(window.innerHeight, 1);
-        const minimumTargetTop = Math.ceil(viewportHeight * scrollStepFactor);
-        const attemptedTargets = direction === 'up'
-            ? attemptedUpwardTargets
-            : attemptedDownwardTargets;
-        const targets = getTargetElements().flatMap((element) => {
-            if (attemptedTargets.has(element) || isInsideLowPriorityStructureContainer(element)) {
-                return [];
-            }
-
-            try {
-                const rect = element.getBoundingClientRect();
-                if (rect.width <= 0 || rect.height <= 0 || rect.bottom <= 0) return [];
-
-                return [{element, rect}];
-            } catch {
-                return [];
-            }
-        }).sort((first, second) => first.rect.top - second.rect.top);
-
-        if (direction === 'up') {
-            const upperTargetTop = Math.max(0, viewportHeight - minimumTargetTop);
-            return targets.filter(({rect}) => rect.top < upperTargetTop)
-                .sort((first, second) => second.rect.top - first.rect.top)[0] ?? null;
-        }
-
-        return targets.find(({rect}) => rect.top >= minimumTargetTop) ??
-            targets.find(({rect}) => rect.bottom > viewportHeight) ?? null;
-    };
-    const getBottomDwellTarget = () => {
-        let target = null;
-
-        Array.from(document.body?.querySelectorAll('*') ?? []).forEach((element) => {
-            if (element.hasAttribute('data-image-finder-scroll-anchor')) return;
-
-            try {
-                if (getComputedStyle(element).position === 'fixed') return;
-                const rect = element.getBoundingClientRect();
-                if (rect.width <= 0 || rect.height <= 0) return;
-
-                const bottom = window.scrollY + rect.bottom;
-                if (!target || bottom >= target.bottom) {
-                    target = {element, bottom};
-                }
-            } catch {
-                // One page-owned element must not prevent the bottom dwell.
-            }
-        });
-
-        return target?.element ?? null;
-    };
-    const scrollElementIntoView = (element, block = 'start') => {
-        if (!element?.scrollIntoView) return {scrolled: false, targetMovement: 0};
-
-        let beforeTop = 0;
-        try {
-            beforeTop = element.getBoundingClientRect().top;
-            try {
-                element.scrollIntoView({behavior: 'instant', block});
-            } catch {
-                element.scrollIntoView({behavior: 'auto', block});
-            }
-            const afterTop = element.getBoundingClientRect().top;
-            return {scrolled: true, targetMovement: afterTop - beforeTop};
-        } catch {
-            return {scrolled: false, targetMovement: 0};
-        }
-    };
-    const scrollFurtherWithAnchor = (before, direction) => {
-        const parent = document.body ?? document.documentElement;
-        const viewportHeight = Math.max(window.innerHeight, 1);
-        const maximumPosition = Math.max(0, before.scrollHeight - viewportHeight);
-        const offset = Math.ceil(viewportHeight * scrollStepFactor);
-        const nextPosition = direction === 'up'
-            ? Math.max(0, before.scrollY - offset)
-            : Math.min(maximumPosition, before.scrollY + offset);
-        if (!parent || nextPosition === before.scrollY) {
-            return {scrolled: false, targetMovement: 0};
-        }
-
-        const anchor = document.createElement('div');
-        anchor.setAttribute('aria-hidden', 'true');
-        anchor.setAttribute('data-image-finder-scroll-anchor', '');
-        anchor.style.cssText = [
-            'position:absolute!important',
-            'display:block!important',
-            'left:0!important',
-            `top:${nextPosition}px!important`,
-            'width:1px!important',
-            'height:1px!important',
-            'margin:0!important',
-            'padding:0!important',
-            'border:0!important',
-            'pointer-events:none!important',
-            'opacity:0!important'
-        ].join(';');
-        try {
-            parent.append(anchor);
-            return scrollElementIntoView(anchor);
-        } finally {
-            anchor.remove();
         }
     };
     const waitForSettle = async ({
@@ -4023,6 +3922,152 @@ export async function runHiddenFrameDeepScan({
         const metrics = getContainerMetrics(container);
         return [metrics.scrollHeight, metrics.clientHeight].join(':');
     };
+    const getOFRegressionTraceIdentity = (container) => {
+        const className = typeof container?.className === 'string'
+            ? container.className.trim()
+            : container?.getAttribute?.('class')?.trim() ?? '';
+        return {
+            tagName: container?.tagName?.toLowerCase?.() ?? 'unknown',
+            id: container?.id?.trim?.() || 'none',
+            className: className.length > 96 ? `${className.slice(0, 93)}...` : className || 'none'
+        };
+    };
+    const getOFRegressionTraceSnapshot = (container) => {
+        if (!container) {
+            return {
+                isConnected: false,
+                scrollTop: 'unavailable',
+                scrollHeight: 'unavailable',
+                clientHeight: 'unavailable',
+                scrollRange: 'unavailable'
+            };
+        }
+
+        const geometry = ContainerAnalyser.getGeometry(container);
+        return {
+            isConnected: container.isConnected,
+            scrollTop: geometry.scrollTop,
+            scrollHeight: geometry.scrollHeight,
+            clientHeight: geometry.clientHeight,
+            scrollRange: Math.max(0, geometry.scrollHeight - geometry.clientHeight)
+        };
+    };
+    const captureOFRegressionTraceSnapshot = (phase, details = {}) => {
+        const container = ofRegressionTrace.container;
+        if (!container) return null;
+
+        const snapshot = {
+            ...getOFRegressionTraceSnapshot(container),
+            completedScrollContainerState: completedScrollContainerStates.get(container) ?? 'none',
+            ...details
+        };
+        ofRegressionTrace.snapshots[phase] = snapshot;
+        logOFRegressionTrace('container-snapshot', {
+            traceContainerId: ofRegressionTrace.containerId,
+            phase,
+            ...snapshot
+        });
+        return snapshot;
+    };
+    const trackOFRegressionContainer = (container) => {
+        if (ofRegressionTrace.container || !container) return;
+
+        ofRegressionTrace.container = container;
+        ofRegressionTrace.containerId = 1;
+        logOFRegressionTrace('container-selected', {
+            traceContainerId: ofRegressionTrace.containerId,
+            ...getOFRegressionTraceIdentity(container)
+        });
+        captureOFRegressionTraceSnapshot('first-container-before');
+    };
+    const isOFRegressionTraceContainer = (container) => ofRegressionTrace.container === container;
+    const recordOFRegressionTraceMutations = (records) => {
+        if (!ofRegressionTrace.edgeMutationTracking || !ofRegressionTrace.container) return;
+
+        records.forEach((record) => {
+            let inside = false;
+            try {
+                inside = record.target === ofRegressionTrace.container ||
+                    ofRegressionTrace.container.contains(record.target);
+            } catch {
+                inside = false;
+            }
+            if (inside) ofRegressionTrace.relevantMutationsInsideContainer += 1;
+            else ofRegressionTrace.relevantMutationsOutsideContainer += 1;
+        });
+    };
+    const traceOFRegressionSecondContainerDecision = (plan = null) => {
+        if (!ofRegressionTrace.documentDownObserved ||
+            ofRegressionTrace.secondContainerDecisionTraced || !ofRegressionTrace.container) {
+            return;
+        }
+
+        const entry = plan?.entries.find(({container}) => container === ofRegressionTrace.container);
+        const snapshot = getOFRegressionTraceSnapshot(ofRegressionTrace.container);
+        const storedState = completedScrollContainerStates.get(ofRegressionTrace.container) ?? 'none';
+        const currentState = snapshot.isConnected
+            ? [snapshot.scrollHeight, snapshot.clientHeight].join(':')
+            : 'unavailable';
+        const decision = entry
+            ? !entry.isScrollable
+                ? 'structural-pending'
+                : entry.priority === 'low' && skipLowPriorityContainers
+                    ? 'low-priority'
+                    : 'pending'
+            : !snapshot.isConnected
+                ? 'disconnected'
+                : storedState !== 'none' && storedState === currentState
+                    ? 'completed-unchanged'
+                    : 'not-pending';
+        ofRegressionTrace.secondContainerDecisionTraced = true;
+        ofRegressionTrace.secondContainerDecision = decision;
+        captureOFRegressionTraceSnapshot('second-container-decision', {
+            decision,
+            currentTraversalState: currentState,
+            planEntry: Boolean(entry),
+            priority: entry?.priority ?? 'none'
+        });
+    };
+    const traceOFRegressionAfterDocumentTraversal = (direction) => {
+        if (!ofRegressionTrace.container) return;
+
+        captureOFRegressionTraceSnapshot(`after-document-${direction}`);
+        if (direction === 'down') ofRegressionTrace.documentDownObserved = true;
+    };
+    const traceOFRegressionPassDecision = ({repeatReason, pendingContainers} = {}) => {
+        if (repeatReason !== 'container-pending' || !ofRegressionTrace.container) return;
+
+        const trackedContainerPending = pendingContainers?.some(
+            ({container}) => container === ofRegressionTrace.container
+        ) === true;
+        logOFRegressionTrace('repeat-container-pending', {
+            traceContainerId: ofRegressionTrace.containerId,
+            trackedContainerPending,
+            reason: trackedContainerPending ? 'tracked-container' : 'other-pending-container',
+            pendingContainerCount: pendingContainers?.length ?? 0
+        });
+    };
+    const logOFRegressionTraceSummary = ({status, performance} = {}) => {
+        const getSnapshotSummary = (phase) => {
+            const snapshot = ofRegressionTrace.snapshots[phase];
+            return snapshot
+                ? `scrollTop:${snapshot.scrollTop},range:${snapshot.scrollRange}`
+                : 'not-recorded';
+        };
+        logOFRegressionTrace('summary', {
+            hiddenStatus: status ?? 'unknown',
+            passes: performance?.passes?.length ?? 0,
+            totalDurationMs: performance?.totalMs ?? 'unavailable',
+            trackedContainer: ofRegressionTrace.container ? ofRegressionTrace.containerId : 'none',
+            initial: getSnapshotSummary('first-container-before'),
+            afterFirstContainer: getSnapshotSummary('after-first-container'),
+            afterDocumentUp: getSnapshotSummary('after-document-up'),
+            afterDocumentDown: getSnapshotSummary('after-document-down'),
+            secondContainerDecision: ofRegressionTrace.secondContainerDecision,
+            firstEdgeWaitMutationsInside: ofRegressionTrace.relevantMutationsInsideContainer,
+            firstEdgeWaitMutationsOutside: ofRegressionTrace.relevantMutationsOutsideContainer
+        });
+    };
     const getPendingRelevantContainerCandidates = () => {
         completedScrollContainerStates.forEach((_state, container) => {
             if (!container.isConnected) completedScrollContainerStates.delete(container);
@@ -4194,19 +4239,6 @@ export async function runHiddenFrameDeepScan({
             `flexDirection=${state.flexDirection}`
         );
     };
-    const logDocumentDirection = (label, {reason = null, durationMs = null} = {}) => {
-        const metrics = getMetrics();
-        console.info(
-            `[DeepScan ${label}]`,
-            `time=${getLogTimestamp()}`,
-            ...(Number.isFinite(durationMs) ? [`durationMs=${Math.round(durationMs)}`] : []),
-            'document',
-            ...(reason ? [`reason=${reason}`] : []),
-            `scrollY=${metrics.scrollY}`,
-            `scrollHeight=${metrics.scrollHeight}`,
-            `clientHeight=${metrics.clientHeight}`
-        );
-    };
     const logContainerPerformance = (container, index, direction, result, metrics, durationMs) => {
         const mutations = getMutationDelta(metrics.mutationStart ?? getMutationSnapshot());
         const otherMs = Math.max(
@@ -4270,14 +4302,6 @@ export async function runHiddenFrameDeepScan({
     const isAtContainerBottom = (metrics) => metrics.scrollTop + metrics.clientHeight >=
         metrics.scrollHeight - 4;
     const getScrollRange = (metrics) => Math.max(0, metrics.scrollHeight - metrics.clientHeight);
-    const isAtCurrentDocumentBottom = (metrics) => metrics.scrollY + metrics.clientHeight >=
-        metrics.scrollHeight - 4;
-    const isAtCurrentDocumentTop = (metrics) => metrics.scrollY <= 4;
-
-    const getDocumentTraversalState = () => {
-        const metrics = getMetrics();
-        return [metrics.scrollHeight, metrics.clientHeight].join(':');
-    };
     const scanScrollableContainer = async (container, direction, index) => {
         let edgeStableCycles = 0;
         let edgeLoadWaited = false;
@@ -4322,12 +4346,22 @@ export async function runHiddenFrameDeepScan({
 
             const scrollActionStartedAt = performance.now();
             if (!atEdge) {
+                const traceFirstScroll = isOFRegressionTraceContainer(container) &&
+                    !ofRegressionTrace.firstScrollTraced;
+                if (traceFirstScroll) {
+                    ofRegressionTrace.firstScrollTraced = true;
+                    ofRegressionTrace.firstScrollSettlePending = true;
+                    captureOFRegressionTraceSnapshot('first-container-scroll-before', {direction});
+                }
                 const offset = Math.ceil(before.clientHeight * scrollStepFactor);
                 const maximumScrollTop = Math.max(0, before.scrollHeight - before.clientHeight);
                 const nextScrollTop = direction === 'up'
                     ? Math.max(0, before.scrollTop - offset)
                     : Math.min(maximumScrollTop, before.scrollTop + offset);
                 container.scrollTop = nextScrollTop;
+                if (traceFirstScroll) {
+                    captureOFRegressionTraceSnapshot('first-container-scroll-after', {direction});
+                }
             }
             addMetric(directionMetrics, 'scrollActionMs', performance.now() - scrollActionStartedAt);
 
@@ -4339,6 +4373,14 @@ export async function runHiddenFrameDeepScan({
                 phase: `container-${direction}`
             });
             addMetric(directionMetrics, 'settleMs', performance.now() - settleStartedAt);
+            if (isOFRegressionTraceContainer(container) &&
+                ofRegressionTrace.firstScrollSettlePending) {
+                ofRegressionTrace.firstScrollSettlePending = false;
+                captureOFRegressionTraceSnapshot('first-container-scroll-after-settle', {
+                    direction,
+                    settled
+                });
+            }
             if (!settled) {
                 return finishContainerScan('aborted');
             }
@@ -4371,10 +4413,33 @@ export async function runHiddenFrameDeepScan({
             if ((atEdge || reachedEdge) && !edgeLoadWaited) {
                 edgeLoadWaited = true;
                 const edgeRangeGrowthStartedAt = performance.now();
-                const edgeRangeGrowthResult = await waitForEdgeRangeGrowth(
-                    () => getScrollRange(getContainerMetrics(container)),
-                    () => container.isConnected && isRelevantScrollableContainer(container)
-                );
+                const traceEdgeWait = isOFRegressionTraceContainer(container) &&
+                    !ofRegressionTrace.firstEdgeWaitTraced;
+                if (traceEdgeWait) {
+                    ofRegressionTrace.firstEdgeWaitTraced = true;
+                    ofRegressionTrace.edgeMutationTracking = true;
+                    ofRegressionTrace.relevantMutationsInsideContainer = 0;
+                    ofRegressionTrace.relevantMutationsOutsideContainer = 0;
+                }
+                let edgeRangeGrowthResult;
+                try {
+                    edgeRangeGrowthResult = await waitForEdgeRangeGrowth(
+                        () => getScrollRange(getContainerMetrics(container)),
+                        () => container.isConnected && isRelevantScrollableContainer(container)
+                    );
+                } finally {
+                    if (traceEdgeWait) ofRegressionTrace.edgeMutationTracking = false;
+                }
+                if (traceEdgeWait) {
+                    captureOFRegressionTraceSnapshot('first-container-edge-wait-after', {
+                        direction,
+                        edgeWaitEndReason: edgeRangeGrowthResult?.endReason ?? 'error',
+                        relevantMutationsInsideContainer:
+                            ofRegressionTrace.relevantMutationsInsideContainer,
+                        relevantMutationsOutsideContainer:
+                            ofRegressionTrace.relevantMutationsOutsideContainer
+                    });
+                }
                 const edgeRangeGrowthDurationMs = performance.now() - edgeRangeGrowthStartedAt;
                 recordEdgeRangeWait({
                     scope: 'container',
@@ -4466,10 +4531,14 @@ export async function runHiddenFrameDeepScan({
     const scanRelevantScrollContainers = async () => {
         while (isActive()) {
             const candidates = getPendingRelevantContainerCandidates();
-            if (candidates.length === 0) return;
+            if (candidates.length === 0) {
+                traceOFRegressionSecondContainerDecision();
+                return;
+            }
 
             const plan = createContainerPlan(candidates);
             if (!isActive()) return;
+            traceOFRegressionSecondContainerDecision(plan);
             for (const entry of plan.entries) {
                 const {container, index} = entry;
                 addMetric(null, 'containersHandled', 1);
@@ -4517,6 +4586,7 @@ export async function runHiddenFrameDeepScan({
             for (const {container, index} of plan.scanEntries) {
                 if (!container.isConnected || !isRelevantScrollableContainer(container)) continue;
 
+                trackOFRegressionContainer(container);
                 addMetric(null, 'containersScanned', 1);
                 reportActiveScrollContainer(container, index);
                 try {
@@ -4525,6 +4595,10 @@ export async function runHiddenFrameDeepScan({
 
                     await scanScrollableContainer(container, 'down', index);
                     if (!isActive()) return;
+                    if (isOFRegressionTraceContainer(container) &&
+                        !ofRegressionTrace.snapshots['after-first-container']) {
+                        captureOFRegressionTraceSnapshot('after-first-container');
+                    }
                     if (container.isConnected && isRelevantScrollableContainer(container)) {
                         completedScrollContainerStates.set(
                             container,
@@ -4537,6 +4611,11 @@ export async function runHiddenFrameDeepScan({
             }
         }
     };
+    /*
+     * Beta 0.0.10 legacy document traversal implementation.
+     * Replaced by DocumentTraverser below; retained inactive for direct
+     * behaviour comparison and rollback during the extraction phase.
+     *
     const scanDocumentDirection = async (direction) => {
         const label = direction === 'up' ? 'UP' : 'DOWN';
         let edgeStableCycles = 0;
@@ -4729,6 +4808,7 @@ export async function runHiddenFrameDeepScan({
 
         return finishDocumentScan('aborted');
     };
+    */
 
     const startMutationObservation = () => {
         if (typeof MutationObserver !== 'function' || !document.documentElement) return;
@@ -4748,6 +4828,7 @@ export async function runHiddenFrameDeepScan({
             const relevantMutations = records.filter(isRelevantMutation);
             if (relevantMutations.length === 0) return;
 
+            recordOFRegressionTraceMutations(relevantMutations);
             relevantMutations.forEach(markKnownGenericRootsChanged);
             lastRelevantMutationAt = Date.now();
             relevantMutationCount += relevantMutations.length;
@@ -4805,9 +4886,30 @@ export async function runHiddenFrameDeepScan({
         currentPassMetrics = null;
         currentPassRecord = null;
     };
+    const documentTraverser = new DocumentTraverser({
+        scrollStepFactor,
+        minimumSettleMs,
+        stableCycleLimit,
+        getKnownTargetCount: () => knownTargets.size,
+        getTargetElements,
+        isInsideLowPriorityStructureContainer,
+        isActive,
+        getLogTimestamp,
+        registerTargets,
+        collectSources,
+        waitForSettle,
+        waitForEdgeRangeGrowth,
+        recordEdgeRangeWait,
+        getMutationSnapshot,
+        getMutationDelta,
+        getPhotoSwipeActivityCount: () => photoSwipeActivityCount,
+        reportActiveScrollContainer,
+        addMetric,
+        getScrollRange
+    });
     const finalizeCurrentPass = (record, endReason) => {
         if (record?.endPosition === null) {
-            record.endPosition = getMetrics().scrollY;
+            record.endPosition = documentTraverser.getMetrics().scrollY;
             record.durationMs = performance.now() - record.startedAt;
             record.repeatReason = endReason;
         }
@@ -4819,7 +4921,6 @@ export async function runHiddenFrameDeepScan({
             startMutationObservation,
             stopMutationObservation,
             waitForReadiness: waitForHiddenFrameReadiness,
-            getMetrics,
             getPhotoSwipeActivityCount: () => photoSwipeActivityCount,
             getRelevantMutationCount: () => relevantMutationCount,
             getKnownScrollContainerCount: () => knownScrollContainerIndices.size,
@@ -4836,12 +4937,11 @@ export async function runHiddenFrameDeepScan({
         },
         traversal: {
             scanRelevantScrollContainers,
-            scanDocumentDirection,
             waitForSettle,
-            getDocumentTraversalState,
             synchronizeCompletedScrollContainerStates,
             getPendingRelevantContainerCandidates
         },
+        documentTraverser,
         diagnostics: {
             createPerformanceMetrics,
             getMutationSnapshot,
@@ -4852,7 +4952,10 @@ export async function runHiddenFrameDeepScan({
             finalizeCurrentPass,
             addPassRecord: (record) => passPerformanceRecords.push(record),
             logPassSummary,
-            createPerformanceSummary
+            createPerformanceSummary,
+            traceAfterDocumentTraversal: traceOFRegressionAfterDocumentTraversal,
+            tracePassDecision: traceOFRegressionPassDecision,
+            logRegressionTraceSummary: logOFRegressionTraceSummary
         }
     });
     return controller.run();
