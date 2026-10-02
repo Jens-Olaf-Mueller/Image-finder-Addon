@@ -1,0 +1,880 @@
+diff --git a/assets/icons/button-icons.svg b/assets/icons/button-icons.svg
+index ca732d283cf87f7b59b7adcf5ac4a781a5d758d4..20721d86b3d84932f7f0e9d9bf267bb396c69e6a 100644
+--- a/assets/icons/button-icons.svg
++++ b/assets/icons/button-icons.svg
+@@ -80,7 +80,7 @@
+ 
+ 
+ <!-- Icon: SORT-CRONO-ASC -->
+-<symbol id="svgSortCronoAsc" viewBox="0 0 512 512" fill="currentColor">
++<symbol id="svgSortCronoAsc" viewBox="0 0 480 480" fill="currentColor">
+     <circle cx="256" cy="256" r="192" style="fill:none;stroke:currentColor;stroke-miterlimit:10;stroke-width:32px"/>
+     <circle cx="416" cy="256" r="16" fill="currentColor"/>
+     <circle cx="256" cy="416" r="16" fill="currentColor"/>
+@@ -90,7 +90,7 @@
+ </symbol>
+ 
+ <!-- Icon: SORT-CRONO-DESC -->
+-<symbol id="svgSortCronoDesc" viewBox="0 0 512 512" fill="currentColor">
++<symbol id="svgSortCronoDesc" viewBox="0 0 480 480" fill="currentColor">
+     <circle cx="256" cy="256" r="192" style="fill:none;stroke:currentColor;stroke-miterlimit:10;stroke-width:32px"/>
+     <circle cx="256" cy="96" r="16" fill="currentColor"/>
+     <circle cx="416" cy="256" r="16" fill="currentColor"/>
+diff --git a/manifest.json b/manifest.json
+index b57059ed0a80182272ce3a3c9a6eb319cc8db297..2be30e2a2a27199cf1253a2cb2174b7c8d65b192 100644
+--- a/manifest.json
++++ b/manifest.json
+@@ -32,6 +32,7 @@
+                 "https://*/*"
+             ],
+             "js": [
++                "src/debug-logger.js",
+                 "src/deepscan-frame.js"
+             ],
+             "all_frames": true,
+diff --git a/src/background.js b/src/background.js
+index 58a7d6c0dec2640c41ecb05a53a4ddfddf76fb97..540f32580cc61d438cc9e2840c36275b702053f2 100644
+--- a/src/background.js
++++ b/src/background.js
+@@ -10,8 +10,17 @@ const EMBED_BLOCKED_OR_LOAD_FAILED = 'EMBED_BLOCKED_OR_LOAD_FAILED';
+ const POPUP_DEEP_SCAN_PORT_NAME = 'image-finder-popup-deepscan';
+ const REOPEN_POPUP_AFTER_RESTART_STORAGE_KEY = 'reopenPopupAfterRestart';
+ const REOPEN_POPUP_AFTER_RESTART_MAX_AGE_MS = 60 * 1000;
++const DEBUG_LOG_TARGET = 'image-finder-debug-log';
++const DEBUG_LOG_EXPORT_DELAY_MS = 5000;
++const DEBUG_LOG_POPUP_FINAL_DELAY_MS = 250;
++const DEBUG_LOG_SETTINGS_BY_SOURCE = Object.freeze({
++    popup: 'logpopup',
++    tab: 'logtab',
++    'service-worker': 'logserviceworker'
++});
+ 
+ if (typeof importScripts === 'function') {
++    importScripts('debug-logger.js');
+     importScripts('isolated-deepscan-host.js');
+     if (typeof JSZip === 'undefined') importScripts('../vendor/jszip.min.js');
+ }
+@@ -26,6 +35,12 @@ let protectedDeepScanFrameRuleOwner = null;
+ let hiddenDeepScanFrameRuleOwner = null;
+ let protectedDeepScanFrameRuleUpdate = Promise.resolve();
+ const popupDeepScanPorts = new Map();
++const debugCollectorsByScanId = new Map();
++let activeDebugLogContext = null;
++const debugBackgroundLogger = globalThis.ImageFinderDebugLogger?.createLogger({
++    source: 'service-worker',
++    sendRecords: (records) => collectDebugRecords(records)
++})?.install();
+ 
+ async function reopenPopupAfterExtensionRestart() {
+     let restartRequestedAt = null;
+@@ -64,6 +79,165 @@ function getErrorMessage(error) {
+     return error instanceof Error ? error.message : String(error);
+ }
+ 
++function getDebugManifestMeta() {
++    try {
++        const manifest = chrome.runtime.getManifest();
++        return {
++            version: manifest?.version ?? null,
++            versionName: manifest?.version_name ?? null
++        };
++    } catch {
++        return {version: null, versionName: null};
++    }
++}
++
++function getEnabledDebugLogSources(debugSettings) {
++    const debugModeEnabled = debugSettings?.debugmode === true;
++
++    return Object.fromEntries(Object.entries(DEBUG_LOG_SETTINGS_BY_SOURCE).map(
++        ([source, setting]) => [source, debugModeEnabled && debugSettings?.[setting] === true]
++    ));
++}
++
++function hasEnabledDebugLogSource(enabledSources) {
++    return Object.values(enabledSources ?? {}).some((enabled) => enabled === true);
++}
++
++function createDebugCollector(job) {
++    if (!job?.scanId || debugCollectorsByScanId.has(job.scanId)) return;
++    activeDebugLogContext = null;
++    debugBackgroundLogger?.clearContext();
++
++    if (!hasEnabledDebugLogSource(job.enabledDebugLogSources)) return;
++
++    debugCollectorsByScanId.set(job.scanId, {
++        meta: {
++            ...getDebugManifestMeta(),
++            scanId: job.scanId,
++            url: job.url ?? null,
++            startedAt: new Date().toISOString(),
++            endedAt: null,
++            status: null,
++            enabledSources: {...job.enabledDebugLogSources}
++        },
++        enabledSources: {...job.enabledDebugLogSources},
++        records: [],
++        collectorSequence: 0,
++        exportTimer: null,
++        exported: false,
++        popupComplete: false
++    });
++    activeDebugLogContext = {scanId: job.scanId, url: job.url ?? null};
++    debugBackgroundLogger?.setContext(activeDebugLogContext);
++}
++
++function collectDebugRecords(records) {
++    if (!Array.isArray(records)) return;
++
++    records.forEach((record) => {
++        if (!record || typeof record.scanId !== 'string' || !record.scanId) return;
++        const collector = debugCollectorsByScanId.get(record.scanId);
++        if (!collector || collector.exported) return;
++
++        const source = record.source;
++        if (collector.enabledSources?.[source] !== true) return;
++
++        collector.records.push({
++            timestamp: typeof record.timestamp === 'string' ? record.timestamp : new Date().toISOString(),
++            source,
++            level: ['log', 'info', 'warn', 'error'].includes(record.level)
++                ? record.level
++                : 'log',
++            sourceSequence: Number.isInteger(record.sourceSequence) ? record.sourceSequence : null,
++            collectorSequence: ++collector.collectorSequence,
++            scanId: record.scanId,
++            url: typeof record.url === 'string' ? record.url : collector.meta.url,
++            message: typeof record.message === 'string' ? record.message : '',
++            arguments: Array.isArray(record.arguments) ? record.arguments : []
++        });
++    });
++}
++
++function getDebugFilename(meta) {
++    let domain = 'unknown-domain';
++    try {
++        domain = new URL(meta.url).hostname || domain;
++    } catch {
++        // Keep the generic fallback for malformed or unavailable URLs.
++    }
++    const safeDomain = domain.replace(/[^a-z0-9.-]+/gi, '-').replace(/^-+|-+$/g, '') ||
++        'unknown-domain';
++    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
++    return `image-finder-debug-Beta-0.0.09-${safeDomain}-${timestamp}-${meta.scanId}.json`;
++}
++
++function getDebugLogFolder(date = new Date()) {
++    const year = String(date.getFullYear());
++    const month = String(date.getMonth() + 1).padStart(2, '0');
++    const day = String(date.getDate()).padStart(2, '0');
++
++    return `logs/imagefinder/${year}_${month}_${day}`;
++}
++
++async function exportDebugCollector(scanId) {
++    const collector = debugCollectorsByScanId.get(scanId);
++    if (!collector || collector.exported) return;
++
++    collector.exported = true;
++    const payload = JSON.stringify({meta: collector.meta, records: collector.records}, null, 2);
++    try {
++        await downloadBlob(new Blob([payload], {type: 'application/json'}), {
++            filename: `${getDebugLogFolder()}/${getDebugFilename(collector.meta)}`,
++            saveAs: false,
++            conflictAction: 'uniquify'
++        });
++    } catch {
++        // Export failure must never alter DeepScan completion.
++    } finally {
++        debugCollectorsByScanId.delete(scanId);
++        if (activeDebugLogContext?.scanId === scanId) activeDebugLogContext = null;
++        debugBackgroundLogger?.clearContext(scanId);
++    }
++}
++
++function queueDebugCollectorExport(collector, delayMs) {
++    if (!collector || collector.exported) return;
++    if (collector.exportTimer !== null) clearTimeout(collector.exportTimer);
++    collector.exportTimer = setTimeout(() => {
++        collector.exportTimer = null;
++        void exportDebugCollector(collector.meta.scanId);
++    }, delayMs);
++}
++
++function handleDebugContextComplete(message) {
++    if (message?.source !== 'popup' || typeof message.scanId !== 'string') return;
++    const collector = debugCollectorsByScanId.get(message.scanId);
++    if (!collector || collector.exported) return;
++
++    collector.popupComplete = true;
++    if (!collector.meta.status) return;
++    const flush = debugBackgroundLogger?.flush?.() ?? Promise.resolve();
++    void flush.finally(() => {
++        queueDebugCollectorExport(collector, DEBUG_LOG_POPUP_FINAL_DELAY_MS);
++    });
++}
++
++function scheduleDebugExport(job, status, reason = null) {
++    const collector = debugCollectorsByScanId.get(job?.scanId);
++    if (!collector || collector.exported) return;
++
++    collector.meta.endedAt = new Date().toISOString();
++    collector.meta.status = status;
++    if (typeof reason === 'string' && reason) collector.meta.reason = reason;
++    const flush = debugBackgroundLogger?.flush?.() ?? Promise.resolve();
++    void flush.finally(() => {
++        queueDebugCollectorExport(
++            collector,
++            collector.popupComplete ? DEBUG_LOG_POPUP_FINAL_DELAY_MS : DEBUG_LOG_EXPORT_DELAY_MS
++        );
++    });
++}
++
+ function getPopupDeepScanClientId(port) {
+     const prefix = `${POPUP_DEEP_SCAN_PORT_NAME}:`;
+     if (typeof port?.name !== 'string' || !port.name.startsWith(prefix)) return null;
+@@ -501,7 +675,7 @@ async function probeHiddenDeepScanHost(job) {
+ async function injectHiddenDeepScanHost(job) {
+     await chrome.scripting.executeScript({
+         target: {tabId: job.tabId, frameIds: [job.hostFrameId]},
+-        files: ['src/deepscan-frame.js'],
++        files: ['src/debug-logger.js', 'src/deepscan-frame.js'],
+         injectImmediately: true
+     });
+ }
+@@ -713,6 +887,7 @@ async function finishIsolatedDeepScan(job, status, reason = null, performance =
+         'clientQueue=drained',
+         `delivered=${delivered}`
+     );
++    scheduleDebugExport(job, status, reason);
+ }
+ 
+ async function startIsolatedDeepScanHost(job) {
+@@ -833,6 +1008,7 @@ async function cancelIsolatedDeepScan(scanId = null, endReason = 'cancelled') {
+         endReason: normalizedEndReason
+     });
+     if (cancellationSource) console.info('[DeepScan CANCEL COMPLETE]');
++    scheduleDebugExport(job, 'cancelled', normalizedEndReason);
+     return true;
+ }
+ 
+@@ -856,6 +1032,7 @@ async function startIsolatedDeepScan(request) {
+             ? Math.max(0, Math.round(request.minimumImageHeight))
+             : 200,
+         allowProtectedDeepScan: request.allowProtectedDeepScan === true,
++        enabledDebugLogSources: getEnabledDebugLogSources(request.debugSettings),
+         popupClientId: typeof request.popupClientId === 'string' && request.popupClientId
+             ? request.popupClientId
+             : null,
+@@ -866,6 +1043,7 @@ async function startIsolatedDeepScan(request) {
+         clientQueuePending: 0
+     };
+     activeIsolatedDeepScan = job;
++    createDebugCollector(job);
+ 
+     try {
+         const tab = await chrome.tabs.get(job.tabId);
+@@ -1193,6 +1371,13 @@ chrome.runtime.onConnect.addListener((port) => {
+ });
+ 
+ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
++    if (message?.target === DEBUG_LOG_TARGET) {
++        if (message.action === 'records') collectDebugRecords(message.records);
++        else if (message.action === 'context-complete') handleDebugContextComplete(message);
++        sendResponse({success: true});
++        return undefined;
++    }
++
+     if (message?.target === OFFSCREEN_TARGET) {
+         return undefined;
+     }
+diff --git a/src/classes/ImageFinder.js b/src/classes/ImageFinder.js
+index df7aa008f99f8ca1214e0801e78fa854c61d858d..5566d1bb45c8cbd3442270a2751563077003c352 100644
+--- a/src/classes/ImageFinder.js
++++ b/src/classes/ImageFinder.js
+@@ -966,6 +966,9 @@ export class ImageFinder {
+         item.remove();
+ 
+         this.DOM.imgPreview.removeAttribute('src');
++        this.DOM.h2_Preview.style.display = 'block';
++        this.DOM.spnStatusBar.style.display = 'none';
++        if (this.#activityCounts.deepScan > 0) this.#updateDeepScanTitle();
+         this.DOM.btnDownload.disabled = true;
+         this.DOM.btnDelete.disabled = true;
+         this.DOM.btnSaveAll.disabled = (this.images.size === 0);
+@@ -1601,4 +1604,4 @@ export class ImageFinder {
+         return elapsed;
+     }
+ 
+-}
+\ No newline at end of file
++}
+diff --git a/src/classes/ImageScanner.js b/src/classes/ImageScanner.js
+index 4e98f65832ea0accce89ae5d178f7df662bdfbd4..f3eb30ffc33a99b99c2750b87ce78b443c937a3e 100644
+--- a/src/classes/ImageScanner.js
++++ b/src/classes/ImageScanner.js
+@@ -215,6 +215,7 @@ export default class ImageScanner {
+         }
+ 
+         const filters = this.settings.get('filters') ?? {};
++        const debugSettings = this.settings.get('debug') ?? {};
+         const imageFilter = this.filter;
+         const allowProtectedDeepScan = this.settings.get(
+             'common',
+@@ -225,6 +226,8 @@ export default class ImageScanner {
+         await this.cancelDeepScan();
+ 
+         const scanId = crypto.randomUUID();
++        const debugLogger = globalThis.imageFinderDebugLogger;
++        debugLogger?.setContext({scanId, url: scanContext.url});
+         const transportMetrics = {
+             batches: 0,
+             timestampedBatches: 0,
+@@ -445,6 +448,12 @@ export default class ImageScanner {
+                     minimumImageWidth: imageFilter.minWidth,
+                     minimumImageHeight: imageFilter.minHeight,
+                     allowProtectedDeepScan,
++                    debugSettings: {
++                        debugmode: debugSettings.debugmode === true,
++                        logtab: debugSettings.logtab === true,
++                        logpopup: debugSettings.logpopup === true,
++                        logserviceworker: debugSettings.logserviceworker === true
++                    },
+                     ...(this.#deepScanClientId ? {popupClientId: this.#deepScanClientId} : {})
+                 });
+                 if (response?.success !== true) {
+@@ -464,6 +473,25 @@ export default class ImageScanner {
+         } finally {
+             session.finish({status: 'finished'});
+             console.info('[DeepScan Performance]', createTransportSummary(completionResult));
++            const completeDebugContext = () => {
++                debugLogger?.clearContext(scanId);
++                try {
++                    void window.chrome.runtime.sendMessage({
++                        target: 'image-finder-debug-log',
++                        action: 'context-complete',
++                        source: 'popup',
++                        scanId
++                    }).catch(() => undefined);
++                } catch {
++                    // The fallback export covers a closed popup.
++                }
++            };
++            const debugFlush = debugLogger?.flush?.();
++            if (debugFlush && typeof debugFlush.finally === 'function') {
++                void debugFlush.finally(completeDebugContext);
++            } else {
++                completeDebugContext();
++            }
+         }
+ 
+         return Array.from(candidatesByURL.values());
+@@ -624,4 +652,4 @@ export default class ImageScanner {
+ 
+         return size + UTF8_ENCODER.encode(payload.slice(rawStart)).byteLength;
+     }
+-}
+\ No newline at end of file
++}
+diff --git a/src/classes/Settings.js b/src/classes/Settings.js
+index 5833f3550712679fb31103c17aa11d70e7fe09bc..bf8b821a5c7edf61ac42c2df35172b34f6b55608 100644
+--- a/src/classes/Settings.js
++++ b/src/classes/Settings.js
+@@ -526,5 +526,11 @@ export const DEFAULT_SETTINGS = {
+         blurSettingsVersion: PIXEL_BLUR_SETTINGS_VERSION,
+         hasExcludeList: false,
+         excludeList: 'logo, avatar'
++    },
++    debug: {
++        debugmode: false,
++        logtab: false,
++        logpopup: false,
++        logserviceworker: false
+     }
+-};
+\ No newline at end of file
++};
+diff --git a/src/classes/SettingsForm.js b/src/classes/SettingsForm.js
+index ef592393700d8b1774777dc127448047f8a08917..71e6ea5fa1bbd1d657e6dc29ec76b78116c14924 100644
+--- a/src/classes/SettingsForm.js
++++ b/src/classes/SettingsForm.js
+@@ -87,6 +87,7 @@ export class SettingsForm {
+ 
+         this.form.addEventListener('change', () => {
+             this.updateDeepScanControls();
++            this.updateDebugControls();
+             const data = this.getFormData();
+ 
+             this.enqueue(async () => {
+@@ -125,6 +126,7 @@ export class SettingsForm {
+ 
+     async updateUI() {
+         this.updateDeepScanControls();
++        this.updateDebugControls();
+         this.updateImageSizeControls();
+         this.updateDownloadFolderControls();
+         this.updateExcludeListControls();
+@@ -155,6 +157,21 @@ export class SettingsForm {
+         return !enabled && wasChecked;
+     }
+ 
++    updateDebugControls() {
++        const debugMode = this.DOM.chkDebugmode;
++        if (!debugMode) return;
++
++        const disabled = !debugMode.checked;
++
++        [
++            this.DOM.chkLogPopupConsole,
++            this.DOM.chkLogTabConsole,
++            this.DOM.chkLogServiceWorkerConsole
++        ].filter(Boolean).forEach((control) => {
++            control.disabled = disabled;
++        });
++    }
++
+     updateDownloadFolderControls() {
+         const selected = Array.from(this.downloadFolderRadios)
+             .find((radio) => radio.checked);
+diff --git a/src/deepscan-frame.js b/src/deepscan-frame.js
+index 64a8485127c6f6560382ae6015748e2db73d53ab..fd9a6c4174d506d460df64a3707921ade5292dc6 100644
+--- a/src/deepscan-frame.js
++++ b/src/deepscan-frame.js
+@@ -16,6 +16,31 @@
+     let activeScan = null;
+     let activeHiddenDeepScanHost = null;
+     let activeHiddenDeepScanFrame = null;
++    const tabDebugLogger = globalThis.ImageFinderDebugLogger?.createLogger({
++        source: 'tab',
++        sendRecords: (records) => {
++            try {
++                return chrome.runtime.sendMessage({
++                    target: 'image-finder-debug-log',
++                    action: 'records',
++                    records
++                }).catch(() => undefined);
++            } catch {
++                return Promise.resolve();
++            }
++        }
++    })?.install();
++    const setTabDebugContext = (scanId) => {
++        tabDebugLogger?.setContext({scanId, url: window.location.href});
++    };
++    const flushTabDebugContext = (scanId) => {
++        const flush = tabDebugLogger?.flush?.();
++        if (flush && typeof flush.finally === 'function') {
++            void flush.finally(() => tabDebugLogger.clearContext(scanId));
++        } else {
++            tabDebugLogger?.clearContext(scanId);
++        }
++    };
+ 
+     const sendToHost = (message) => {
+         window.parent.postMessage({
+@@ -221,6 +246,7 @@
+             ...(performance && typeof performance === 'object' ? {performance} : {})
+         });
+         if (activeHiddenDeepScanFrame === scan) activeHiddenDeepScanFrame = null;
++        flushTabDebugContext(scan.scanId);
+     };
+     const sendHiddenDeepScanFrameState = (scan, phase) => {
+         if (!scan || scan.completed) return;
+@@ -355,6 +381,7 @@
+             cleanupDiagnostics: null,
+             stateTimeouts: []
+         };
++        setTabDebugContext(scan.scanId);
+         scan.cleanupDiagnostics = installHiddenDeepScanFrameDiagnostics(scan);
+         activeHiddenDeepScanFrame = scan;
+         sendHiddenDeepScanFrameState(scan, 'load');
+@@ -479,6 +506,7 @@
+                 `status=${status}`
+             );
+             clearHiddenDeepScanHost(scan);
++            flushTabDebugContext(scan.scanId);
+         }
+     };
+     const getHiddenDeepScanHandshakeTimeoutReason = (scan) =>
+@@ -607,6 +635,7 @@
+             eventQueue: Promise.resolve(),
+             visibleContainerMarker: null
+         };
++        setTabDebugContext(scan.scanId);
+         wrapper.setAttribute('aria-hidden', 'true');
+         wrapper.style.cssText = [
+             'position:fixed!important',
+@@ -759,6 +788,7 @@
+             controller: new AbortController(),
+             completed: false
+         };
++        setTabDebugContext(scan.scanId);
+         activeScan = scan;
+         sendReady(scan);
+ 
+@@ -834,4 +864,4 @@
+         sendResponse({success: false});
+         return undefined;
+     });
+-})();
+\ No newline at end of file
++})();
+diff --git a/src/popup.js b/src/popup.js
+index 183a11ffa7cdfffb38da4ace684605d3af51c3b0..5bac5965cb8c6dc34faaa9a95521d39e33c25600 100644
+--- a/src/popup.js
++++ b/src/popup.js
+@@ -1,7 +1,23 @@
+ 
+ import { ImageFinder } from './classes/ImageFinder.js';
+ import { loadSettingsForm, SettingsForm } from './classes/SettingsForm.js';
++import './debug-logger.js';
+ 
++const popupDebugLogger = globalThis.ImageFinderDebugLogger?.createLogger({
++    source: 'popup',
++    sendRecords: (records) => {
++        try {
++            return window.chrome.runtime.sendMessage({
++                target: 'image-finder-debug-log',
++                action: 'records',
++                records
++            }).catch(() => undefined);
++        } catch {
++            return Promise.resolve();
++        }
++    }
++})?.install();
++globalThis.imageFinderDebugLogger = popupDebugLogger;
+ const imageFinder = new ImageFinder();
+ const POPUP_DEEP_SCAN_PORT_NAME = 'image-finder-popup-deepscan';
+ let popupDeepScanClientId = null;
+diff --git a/ui/settings-form.html b/ui/settings-form.html
+index ad7ab7dbf840fb3d03b769c9ff10e81a18f35cb7..d29d845b107b8be5d0b09884d786b4db017dedf5 100644
+--- a/ui/settings-form.html
++++ b/ui/settings-form.html
+@@ -63,7 +63,6 @@
+             <input type="checkbox" id="chkDisableDownloadWhenDone" name="disableDownloadWhenDone">
+              Disable download button on done files
+         </label>
+-
+     </fieldset>
+ 
+     <fieldset name="filesizes"><legend>Image Size</legend>
+@@ -163,4 +162,23 @@
+              Blob images
+         </label>
+     </fieldset>
++
++    <fieldset name="debug"><legend>Debugging</legend>
++        <label id="lblDebugmode" class="control">
++            <input type="checkbox" id="chkDebugmode" name="debugmode">
++            Enable debugmode
++        </label>
++        <label id="lblLogTabConsole" class="control">
++            <input type="checkbox" id="chkLogTabConsole" name="logtab" disabled style="margin-left: 1rem;">
++            Log current tab messages into file
++        </label>
++        <label id="lblLogPopupConsole" class="control">
++            <input type="checkbox" id="chkLogPopupConsole" name="logpopup" disabled style="margin-left: 1rem;">
++            Log popup messages into file
++        </label>
++        <label id="lblLogServiceWorkerConsole" class="control">
++            <input type="checkbox" id="chkLogServiceWorkerConsole" name="logserviceworker" disabled style="margin-left: 1rem;">
++            Log service worker messages into file
++        </label>
++    </fieldset>
+ </form>
+diff --git a/src/debug-logger.js b/src/debug-logger.js
+new file mode 100755
+index 0000000000000000000000000000000000000000..80babe4ffd60132cb7f6221354054f4ee8c1b18b
+--- /dev/null
++++ b/src/debug-logger.js
+@@ -0,0 +1,233 @@
++(() => {
++    const LOGGER_REGISTRY_KEY = '__imageFinderDebugLoggers';
++    const CONSOLE_LEVELS = ['log', 'info', 'warn', 'error'];
++    const MAX_DEPTH = 4;
++    const MAX_ITEMS = 32;
++    const MAX_STRING_LENGTH = 2000;
++    const DEFAULT_BATCH_SIZE = 25;
++    const DEFAULT_FLUSH_DELAY_MS = 250;
++
++    const truncate = (value, maximum = MAX_STRING_LENGTH) => {
++        const text = String(value);
++        return text.length > maximum ? `${text.slice(0, maximum - 3)}...` : text;
++    };
++    const getElementDescription = (element) => {
++        try {
++            const className = typeof element.className === 'string'
++                ? element.className.trim()
++                : element.getAttribute?.('class')?.trim() ?? '';
++            return {
++                type: 'DOMElement',
++                tag: String(element.tagName ?? 'unknown').toLowerCase(),
++                id: element.id || null,
++                class: truncate(className, 240) || null
++            };
++        } catch {
++            return {type: 'DOMElement', tag: 'unavailable'};
++        }
++    };
++    const serializeValue = (value, seen = new WeakSet(), depth = 0) => {
++        try {
++            if (value === null) return null;
++            if (value === undefined) return {type: 'undefined'};
++            if (typeof value === 'string') return truncate(value);
++            if (typeof value === 'number' || typeof value === 'boolean') return value;
++            if (typeof value === 'bigint') return {type: 'bigint', value: String(value)};
++            if (typeof value === 'symbol') return {type: 'symbol', value: String(value)};
++            if (typeof value === 'function') {
++                return {type: 'function', name: value.name || null};
++            }
++            if (value?.nodeType === 1 && value?.tagName) return getElementDescription(value);
++            if (value instanceof Error ||
++                (typeof value?.name === 'string' && typeof value?.message === 'string' &&
++                    typeof value?.stack === 'string')) {
++                return {
++                    type: 'Error',
++                    name: value.name || 'Error',
++                    message: truncate(value.message),
++                    stack: typeof value.stack === 'string' ? truncate(value.stack, 6000) : null
++                };
++            }
++            if (value instanceof Date) return {type: 'Date', value: value.toISOString()};
++            if (depth >= MAX_DEPTH) return {type: 'truncated', reason: 'max-depth'};
++            if (typeof value !== 'object') return truncate(value);
++            if (seen.has(value)) return {type: 'circular'};
++            seen.add(value);
++
++            if (Array.isArray(value)) {
++                const items = value.slice(0, MAX_ITEMS).map((item) =>
++                    serializeValue(item, seen, depth + 1)
++                );
++                if (value.length > MAX_ITEMS) items.push({type: 'truncated', remaining: value.length - MAX_ITEMS});
++                return items;
++            }
++            if (value instanceof Map) {
++                return {
++                    type: 'Map',
++                    entries: Array.from(value.entries()).slice(0, MAX_ITEMS).map(([key, item]) => [
++                        serializeValue(key, seen, depth + 1),
++                        serializeValue(item, seen, depth + 1)
++                    ]),
++                    size: value.size
++                };
++            }
++            if (value instanceof Set) {
++                return {
++                    type: 'Set',
++                    values: Array.from(value.values()).slice(0, MAX_ITEMS).map((item) =>
++                        serializeValue(item, seen, depth + 1)
++                    ),
++                    size: value.size
++                };
++            }
++
++            const result = {};
++            const keys = Object.keys(value).slice(0, MAX_ITEMS);
++            keys.forEach((key) => {
++                try {
++                    result[key] = serializeValue(value[key], seen, depth + 1);
++                } catch {
++                    result[key] = {type: 'unavailable'};
++                }
++            });
++            if (Object.keys(value).length > MAX_ITEMS) {
++                result.__truncated__ = Object.keys(value).length - MAX_ITEMS;
++            }
++            return result;
++        } catch (error) {
++            return {
++                type: 'serialization-error',
++                message: error instanceof Error ? truncate(error.message) : 'unknown'
++            };
++        }
++    };
++    const getMessageText = (argumentsList) => argumentsList.map((value) => {
++        if (typeof value === 'string') return truncate(value, 400);
++        if (value && typeof value === 'object' && value.type === 'Error') {
++            return `${value.name}: ${value.message}`;
++        }
++        if (value && typeof value === 'object' && value.type === 'DOMElement') {
++            return `<${value.tag}>`;
++        }
++        if (value === null) return 'null';
++        if (typeof value === 'number' || typeof value === 'boolean') return String(value);
++        return '[object]';
++    }).join(' ');
++    const serializeConsoleArguments = (argumentsList) => {
++        const serializedArguments = Array.from(argumentsList, (value) => serializeValue(value));
++        return {
++            message: getMessageText(serializedArguments),
++            arguments: serializedArguments
++        };
++    };
++    const getRegistry = () => {
++        if (!(globalThis[LOGGER_REGISTRY_KEY] instanceof Map)) {
++            globalThis[LOGGER_REGISTRY_KEY] = new Map();
++        }
++        return globalThis[LOGGER_REGISTRY_KEY];
++    };
++    const createLogger = ({
++        source,
++        sendRecords = () => Promise.resolve(),
++        batchSize = DEFAULT_BATCH_SIZE,
++        flushDelayMs = DEFAULT_FLUSH_DELAY_MS
++    } = {}) => {
++        const normalizedSource = ['popup', 'tab', 'service-worker'].includes(source)
++            ? source
++            : 'unknown';
++        const registry = getRegistry();
++        if (registry.has(normalizedSource)) return registry.get(normalizedSource);
++
++        let context = {};
++        let sourceSequence = 0;
++        let pendingRecords = [];
++        let flushTimer = null;
++        let sendQueue = Promise.resolve();
++        let installed = false;
++        const originalMethods = new Map();
++        const normalizeContext = (nextContext) => ({
++            scanId: typeof nextContext?.scanId === 'string' && nextContext.scanId
++                ? nextContext.scanId
++                : null,
++            url: typeof nextContext?.url === 'string' && nextContext.url
++                ? nextContext.url
++                : null
++        });
++        const flush = () => {
++            if (flushTimer !== null) {
++                clearTimeout(flushTimer);
++                flushTimer = null;
++            }
++            if (pendingRecords.length === 0) return sendQueue;
++
++            const records = pendingRecords;
++            pendingRecords = [];
++            sendQueue = sendQueue
++                .then(() => Promise.resolve(sendRecords(records)))
++                .catch(() => undefined);
++            return sendQueue;
++        };
++        const queueRecord = (level, args) => {
++            try {
++                const serialized = serializeConsoleArguments(args);
++                pendingRecords.push({
++                    timestamp: new Date().toISOString(),
++                    source: normalizedSource,
++                    level,
++                    sourceSequence: ++sourceSequence,
++                    ...context,
++                    ...serialized
++                });
++                if (pendingRecords.length >= Math.max(1, batchSize)) {
++                    void flush();
++                } else if (flushTimer === null && typeof setTimeout === 'function') {
++                    flushTimer = setTimeout(() => {
++                        flushTimer = null;
++                        void flush();
++                    }, Math.max(0, flushDelayMs));
++                }
++            } catch {
++                // Debug logging must never affect the original console call.
++            }
++        };
++        const logger = {
++            install() {
++                if (installed || typeof console === 'undefined') return logger;
++                installed = true;
++                CONSOLE_LEVELS.forEach((level) => {
++                    const original = console[level];
++                    if (typeof original !== 'function') return;
++                    originalMethods.set(level, original);
++                    try {
++                        console[level] = (...args) => {
++                            original.apply(console, args);
++                            queueRecord(level, args);
++                        };
++                    } catch {
++                        // A locked console method simply remains unobserved.
++                    }
++                });
++                return logger;
++            },
++            setContext(nextContext) {
++                context = normalizeContext(nextContext);
++                return logger;
++            },
++            clearContext(scanId = null) {
++                if (!scanId || context.scanId === scanId) context = {};
++                return logger;
++            },
++            flush,
++            getContext: () => ({...context}),
++            getOriginalMethod: (level) => originalMethods.get(level) ?? null
++        };
++        registry.set(normalizedSource, logger);
++        return logger;
++    };
++
++    globalThis.ImageFinderDebugLogger = Object.freeze({
++        createLogger,
++        serializeConsoleArguments,
++        serializeValue
++    });
++})();
+diff --git a/tests/debug-logger.html b/tests/debug-logger.html
+new file mode 100755
+index 0000000000000000000000000000000000000000..8b10829ac7dd179fb4a5bca16d57fde537d89317
+--- /dev/null
++++ b/tests/debug-logger.html
+@@ -0,0 +1,49 @@
++<!DOCTYPE html>
++<html lang="en">
++<head>
++    <meta charset="UTF-8">
++    <meta name="viewport" content="width=device-width, initial-scale=1.0">
++    <title>Image Finder – Debug Logger Fixture</title>
++</head>
++<body>
++    <div id="element" class="fixture alpha beta"></div>
++
++    <script type="module">
++        const runFixture = async () => {
++            if (!new URLSearchParams(location.search).has('runDebugLogger')) return;
++
++            await import('../src/debug-logger.js');
++            const {serializeConsoleArguments} = globalThis.ImageFinderDebugLogger;
++            const cyclic = {name: 'cycle'};
++            cyclic.self = cyclic;
++            const error = new Error('fixture-error');
++            const serialized = serializeConsoleArguments([
++                {plain: true, nested: {value: 1}},
++                ['array', undefined, null],
++                error,
++                cyclic,
++                document.getElementById('element')
++            ]).arguments;
++            const passed = serialized[0]?.plain === true &&
++                Array.isArray(serialized[1]) && serialized[1][1]?.type === 'undefined' &&
++                serialized[2]?.type === 'Error' && serialized[2]?.message === 'fixture-error' &&
++                serialized[3]?.self?.type === 'circular' &&
++                serialized[4]?.type === 'DOMElement' && serialized[4]?.tag === 'div' &&
++                serialized[4]?.id === 'element' && serialized[4]?.class === 'fixture alpha beta';
++
++            document.documentElement.dataset.debugLoggerResult = passed ? 'passed' : 'failed';
++            document.documentElement.dataset.debugLoggerChecks = JSON.stringify({
++                object: serialized[0]?.plain === true,
++                array: Array.isArray(serialized[1]),
++                error: serialized[2]?.type === 'Error',
++                cyclic: serialized[3]?.self?.type === 'circular',
++                element: serialized[4]?.type === 'DOMElement'
++            });
++        };
++
++        void runFixture().catch(() => {
++            document.documentElement.dataset.debugLoggerResult = 'failed';
++        });
++    </script>
++</body>
++</html>
+

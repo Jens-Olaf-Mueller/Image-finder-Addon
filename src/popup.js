@@ -1,7 +1,23 @@
 
 import { ImageFinder } from './classes/ImageFinder.js';
 import { loadSettingsForm, SettingsForm } from './classes/SettingsForm.js';
+import './debug-logger.js';
 
+const popupDebugLogger = globalThis.ImageFinderDebugLogger?.createLogger({
+    source: 'popup',
+    sendRecords: (records) => {
+        try {
+            return window.chrome.runtime.sendMessage({
+                target: 'image-finder-debug-log',
+                action: 'records',
+                records
+            }).catch(() => undefined);
+        } catch {
+            return Promise.resolve();
+        }
+    }
+})?.install();
+globalThis.imageFinderDebugLogger = popupDebugLogger;
 const imageFinder = new ImageFinder();
 const POPUP_DEEP_SCAN_PORT_NAME = 'image-finder-popup-deepscan';
 let popupDeepScanClientId = null;

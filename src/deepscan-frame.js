@@ -16,6 +16,31 @@
     let activeScan = null;
     let activeHiddenDeepScanHost = null;
     let activeHiddenDeepScanFrame = null;
+    const tabDebugLogger = globalThis.ImageFinderDebugLogger?.createLogger({
+        source: 'tab',
+        sendRecords: (records) => {
+            try {
+                return chrome.runtime.sendMessage({
+                    target: 'image-finder-debug-log',
+                    action: 'records',
+                    records
+                }).catch(() => undefined);
+            } catch {
+                return Promise.resolve();
+            }
+        }
+    })?.install();
+    const setTabDebugContext = (scanId) => {
+        tabDebugLogger?.setContext({scanId, url: window.location.href});
+    };
+    const flushTabDebugContext = (scanId) => {
+        const flush = tabDebugLogger?.flush?.();
+        if (flush && typeof flush.finally === 'function') {
+            void flush.finally(() => tabDebugLogger.clearContext(scanId));
+        } else {
+            tabDebugLogger?.clearContext(scanId);
+        }
+    };
 
     const sendToHost = (message) => {
         window.parent.postMessage({
@@ -221,6 +246,7 @@
             ...(performance && typeof performance === 'object' ? {performance} : {})
         });
         if (activeHiddenDeepScanFrame === scan) activeHiddenDeepScanFrame = null;
+        flushTabDebugContext(scan.scanId);
     };
     const sendHiddenDeepScanFrameState = (scan, phase) => {
         if (!scan || scan.completed) return;
@@ -355,6 +381,7 @@
             cleanupDiagnostics: null,
             stateTimeouts: []
         };
+        setTabDebugContext(scan.scanId);
         scan.cleanupDiagnostics = installHiddenDeepScanFrameDiagnostics(scan);
         activeHiddenDeepScanFrame = scan;
         sendHiddenDeepScanFrameState(scan, 'load');
@@ -479,6 +506,7 @@
                 `status=${status}`
             );
             clearHiddenDeepScanHost(scan);
+            flushTabDebugContext(scan.scanId);
         }
     };
     const getHiddenDeepScanHandshakeTimeoutReason = (scan) =>
@@ -607,6 +635,7 @@
             eventQueue: Promise.resolve(),
             visibleContainerMarker: null
         };
+        setTabDebugContext(scan.scanId);
         wrapper.setAttribute('aria-hidden', 'true');
         wrapper.style.cssText = [
             'position:fixed!important',
@@ -759,6 +788,7 @@
             controller: new AbortController(),
             completed: false
         };
+        setTabDebugContext(scan.scanId);
         activeScan = scan;
         sendReady(scan);
 

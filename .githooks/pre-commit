@@ -1,0 +1,5 @@
+#!/usr/bin/env sh
+set -eu
+
+node scripts/bump-manifest-version.mjs
+git add manifest.json

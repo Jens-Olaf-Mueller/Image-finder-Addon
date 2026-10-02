@@ -63,7 +63,6 @@
             <input type="checkbox" id="chkDisableDownloadWhenDone" name="disableDownloadWhenDone">
              Disable download button on done files
         </label>
-
     </fieldset>
 
     <fieldset name="filesizes"><legend>Image Size</legend>
@@ -161,6 +160,25 @@
         <label id="lblBlobImages" class="control">
             <input type="checkbox" id="chkBlobImages" name="blobimages"/>
              Blob images
+        </label>
+    </fieldset>
+
+    <fieldset name="debug"><legend>Debugging</legend>
+        <label id="lblDebugmode" class="control">
+            <input type="checkbox" id="chkDebugmode" name="debugmode">
+            Enable debugmode
+        </label>
+        <label id="lblLogTabConsole" class="control">
+            <input type="checkbox" id="chkLogTabConsole" name="logtab" disabled style="margin-left: 1rem;">
+            Log current tab messages into file
+        </label>
+        <label id="lblLogPopupConsole" class="control">
+            <input type="checkbox" id="chkLogPopupConsole" name="logpopup" disabled style="margin-left: 1rem;">
+            Log popup messages into file
+        </label>
+        <label id="lblLogServiceWorkerConsole" class="control">
+            <input type="checkbox" id="chkLogServiceWorkerConsole" name="logserviceworker" disabled style="margin-left: 1rem;">
+            Log service worker messages into file
         </label>
     </fieldset>
 </form>

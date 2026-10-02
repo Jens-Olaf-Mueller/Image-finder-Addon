@@ -87,6 +87,7 @@ export class SettingsForm {
 
         this.form.addEventListener('change', () => {
             this.updateDeepScanControls();
+            this.updateDebugControls();
             const data = this.getFormData();
 
             this.enqueue(async () => {
@@ -125,6 +126,7 @@ export class SettingsForm {
 
     async updateUI() {
         this.updateDeepScanControls();
+        this.updateDebugControls();
         this.updateImageSizeControls();
         this.updateDownloadFolderControls();
         this.updateExcludeListControls();
@@ -153,6 +155,21 @@ export class SettingsForm {
         protectedDeepScan.disabled = !enabled;
 
         return !enabled && wasChecked;
+    }
+
+    updateDebugControls() {
+        const debugMode = this.DOM.chkDebugmode;
+        if (!debugMode) return;
+
+        const disabled = !debugMode.checked;
+
+        [
+            this.DOM.chkLogPopupConsole,
+            this.DOM.chkLogTabConsole,
+            this.DOM.chkLogServiceWorkerConsole
+        ].filter(Boolean).forEach((control) => {
+            control.disabled = disabled;
+        });
     }
 
     updateDownloadFolderControls() {

@@ -526,5 +526,11 @@ export const DEFAULT_SETTINGS = {
         blurSettingsVersion: PIXEL_BLUR_SETTINGS_VERSION,
         hasExcludeList: false,
         excludeList: 'logo, avatar'
+    },
+    debug: {
+        debugmode: false,
+        logtab: false,
+        logpopup: false,
+        logserviceworker: false
     }
 };

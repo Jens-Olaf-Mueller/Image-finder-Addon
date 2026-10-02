@@ -75,15 +75,15 @@ form#frmSettings {
     display: flex;
     align-items: center;
     justify-content: center;
-    height: 1.15rem;
+    height: 1.2rem;
     width: 1.5rem;
     padding: 0;
     cursor: pointer;
 }
 
 .folder-button__icon {
-    height: 90%;
-    width: 90%;
+    height: 91%;
+    width: 91%;
     display: block;
     color: var(--adn-icon-color);
 }

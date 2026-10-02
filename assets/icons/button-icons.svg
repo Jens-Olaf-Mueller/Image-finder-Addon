@@ -80,7 +80,7 @@
 
 
 <!-- Icon: SORT-CRONO-ASC -->
-<symbol id="svgSortCronoAsc" viewBox="0 0 512 512" fill="currentColor">
+<symbol id="svgSortCronoAsc" viewBox="0 0 480 480" fill="currentColor">
     <circle cx="256" cy="256" r="192" style="fill:none;stroke:currentColor;stroke-miterlimit:10;stroke-width:32px"/>
     <circle cx="416" cy="256" r="16" fill="currentColor"/>
     <circle cx="256" cy="416" r="16" fill="currentColor"/>
@@ -90,7 +90,7 @@
 </symbol>
 
 <!-- Icon: SORT-CRONO-DESC -->
-<symbol id="svgSortCronoDesc" viewBox="0 0 512 512" fill="currentColor">
+<symbol id="svgSortCronoDesc" viewBox="0 0 480 480" fill="currentColor">
     <circle cx="256" cy="256" r="192" style="fill:none;stroke:currentColor;stroke-miterlimit:10;stroke-width:32px"/>
     <circle cx="256" cy="96" r="16" fill="currentColor"/>
     <circle cx="416" cy="256" r="16" fill="currentColor"/>

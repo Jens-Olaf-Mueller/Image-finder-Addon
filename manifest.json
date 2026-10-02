@@ -1,9 +1,10 @@
 {
     "manifest_version": 3,
     "name": "Image Finder",
-    "version": "0.1.0",
+    "version": "0.1.11",
+    "version_name": "Beta 0.1.11",
     "description": "Find images on the current website.",
-        "icons": {
+    "icons": {
         "64": "assets/icons/icon64.png"
     },
     "host_permissions": [
@@ -32,6 +33,7 @@
                 "https://*/*"
             ],
             "js": [
+                "src/debug-logger.js",
                 "src/deepscan-frame.js"
             ],
             "all_frames": true,

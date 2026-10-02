@@ -5,6 +5,7 @@ import Progressbar from './Progressbar.js';
 import BlurScanner from './BlurScanner.js';
 import ImageMatcher from './ImageMatcher.js';
 import { ScanContext } from './ScanContext.js';
+import { getAddonVersionName } from '../addon-info.js';
 
 const SORT_BUTTON_TITLES = Object.freeze({
     filename: 'Sort by filename',
@@ -102,6 +103,7 @@ export class ImageFinder {
             this.#handleDownloadChanged(delta);
         });
         window.addEventListener('pagehide', () => this.#stopDeepScanTitleTimer(), {once: true});
+        this.#showAddonVersion();
         this.#updateLED();
         this.#updateLEDActivity();
 
@@ -343,6 +345,7 @@ export class ImageFinder {
         }
 
         this.DOM.h2_Preview.style.display = 'none';
+        this.DOM.spnStatusBar.style.display = 'none';
         this.DOM.btnDelete.disabled = false;
         const downloadOff = this.downloadButtonState && item.classList.contains('saved');
         this.DOM.btnDownload.disabled = false || downloadOff;
@@ -498,6 +501,7 @@ export class ImageFinder {
         this.DOM.divToolbarActions.hidden = false;
         this.DOM.divProgressbar.hidden = false;
         this.DOM.spnStatusBar.hidden = false;
+        this.#showAddonVersion();
         this.DOM.btnRestart.hidden = true;
         this.DOM.btnDefaultSettings.hidden = true;
         this.DOM.btnDefaultSettings.disabled = true;
@@ -574,6 +578,7 @@ export class ImageFinder {
         this.DOM.imgPreview.removeAttribute('src');
         this.DOM.h2_Preview.style.display = 'block';
         this.info = 'Image preview';
+        this.#showAddonVersion();
         this.DOM.btnDownload.disabled = true;
         this.DOM.btnSaveAll.disabled = true;
         this.DOM.btnDelete.disabled = true;
@@ -637,7 +642,7 @@ export class ImageFinder {
             this.clear({invalidateScan: false});
             this.sortState = {criterion: null, direction: 'asc'};
             this.#updateSortButtons();
-            this.DOM.spnStatusBar.style.display = 'none';
+            this.#showAddonVersion();
             this.progressbar.backgroundColor = SCAN_PROGRESS_COLOR;
             this.progressbar.reset();
 
@@ -996,6 +1001,9 @@ export class ImageFinder {
         item.remove();
 
         this.DOM.imgPreview.removeAttribute('src');
+        this.DOM.h2_Preview.style.display = 'block';
+        this.#showAddonVersion();
+        if (this.#activityCounts.deepScan > 0) this.#updateDeepScanTitle();
         this.DOM.btnDownload.disabled = true;
         this.DOM.btnDelete.disabled = true;
         this.DOM.btnSaveAll.disabled = (this.images.size === 0);
@@ -1173,7 +1181,7 @@ export class ImageFinder {
             this.currentBlobPreview = null;
             this.DOM.imgPreview.removeAttribute('src');
             this.DOM.h2_Preview.style.display = 'block';
-            this.DOM.spnStatusBar.style.display = 'none';
+            this.#showAddonVersion();
             this.DOM.btnDownload.disabled = true;
             this.DOM.btnDelete.disabled = true;
         }
@@ -1523,6 +1531,13 @@ export class ImageFinder {
         button.disabled = !(
             Number.isInteger(download?.downloadId) && download.completed === true
         );
+    }
+
+    #showAddonVersion() {
+        if (this.selectedItem) return;
+
+        this.DOM.spnStatusBar.textContent = `Image Finder – ${getAddonVersionName()}`;
+        this.DOM.spnStatusBar.style.display = 'flex';
     }
 
     #finalizeDeepScanUI(scanGeneration) {

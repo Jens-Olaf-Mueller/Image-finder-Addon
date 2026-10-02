@@ -10,8 +10,17 @@ const EMBED_BLOCKED_OR_LOAD_FAILED = 'EMBED_BLOCKED_OR_LOAD_FAILED';
 const POPUP_DEEP_SCAN_PORT_NAME = 'image-finder-popup-deepscan';
 const REOPEN_POPUP_AFTER_RESTART_STORAGE_KEY = 'reopenPopupAfterRestart';
 const REOPEN_POPUP_AFTER_RESTART_MAX_AGE_MS = 60 * 1000;
+const DEBUG_LOG_TARGET = 'image-finder-debug-log';
+const DEBUG_LOG_EXPORT_DELAY_MS = 5000;
+const DEBUG_LOG_POPUP_FINAL_DELAY_MS = 250;
+const DEBUG_LOG_SETTINGS_BY_SOURCE = Object.freeze({
+    popup: 'logpopup',
+    tab: 'logtab',
+    'service-worker': 'logserviceworker'
+});
 
 if (typeof importScripts === 'function') {
+    importScripts('debug-logger.js');
     importScripts('isolated-deepscan-host.js');
     if (typeof JSZip === 'undefined') importScripts('../vendor/jszip.min.js');
 }
@@ -26,6 +35,12 @@ let protectedDeepScanFrameRuleOwner = null;
 let hiddenDeepScanFrameRuleOwner = null;
 let protectedDeepScanFrameRuleUpdate = Promise.resolve();
 const popupDeepScanPorts = new Map();
+const debugCollectorsByScanId = new Map();
+let activeDebugLogContext = null;
+const debugBackgroundLogger = globalThis.ImageFinderDebugLogger?.createLogger({
+    source: 'service-worker',
+    sendRecords: (records) => collectDebugRecords(records)
+})?.install();
 
 async function reopenPopupAfterExtensionRestart() {
     let restartRequestedAt = null;
@@ -62,6 +77,167 @@ async function reopenPopupAfterExtensionRestart() {
 
 function getErrorMessage(error) {
     return error instanceof Error ? error.message : String(error);
+}
+
+function getDebugManifestMeta() {
+    try {
+        const manifest = chrome.runtime.getManifest();
+        return {
+            version: manifest?.version ?? null,
+            versionName: manifest?.version_name ?? null
+        };
+    } catch {
+        return {version: null, versionName: null};
+    }
+}
+
+function getEnabledDebugLogSources(debugSettings) {
+    const debugModeEnabled = debugSettings?.debugmode === true;
+
+    return Object.fromEntries(Object.entries(DEBUG_LOG_SETTINGS_BY_SOURCE).map(
+        ([source, setting]) => [source, debugModeEnabled && debugSettings?.[setting] === true]
+    ));
+}
+
+function hasEnabledDebugLogSource(enabledSources) {
+    return Object.values(enabledSources ?? {}).some((enabled) => enabled === true);
+}
+
+function createDebugCollector(job) {
+    if (!job?.scanId || debugCollectorsByScanId.has(job.scanId)) return;
+    activeDebugLogContext = null;
+    debugBackgroundLogger?.clearContext();
+
+    if (!hasEnabledDebugLogSource(job.enabledDebugLogSources)) return;
+
+    debugCollectorsByScanId.set(job.scanId, {
+        meta: {
+            ...getDebugManifestMeta(),
+            scanId: job.scanId,
+            url: job.url ?? null,
+            startedAt: new Date().toISOString(),
+            endedAt: null,
+            status: null,
+            enabledSources: {...job.enabledDebugLogSources}
+        },
+        enabledSources: {...job.enabledDebugLogSources},
+        records: [],
+        collectorSequence: 0,
+        exportTimer: null,
+        exported: false,
+        popupComplete: false
+    });
+    activeDebugLogContext = {scanId: job.scanId, url: job.url ?? null};
+    debugBackgroundLogger?.setContext(activeDebugLogContext);
+}
+
+function collectDebugRecords(records) {
+    if (!Array.isArray(records)) return;
+
+    records.forEach((record) => {
+        if (!record || typeof record.scanId !== 'string' || !record.scanId) return;
+        const collector = debugCollectorsByScanId.get(record.scanId);
+        if (!collector || collector.exported) return;
+
+        const source = record.source;
+        if (collector.enabledSources?.[source] !== true) return;
+
+        collector.records.push({
+            timestamp: typeof record.timestamp === 'string' ? record.timestamp : new Date().toISOString(),
+            source,
+            level: ['log', 'info', 'warn', 'error'].includes(record.level)
+                ? record.level
+                : 'log',
+            sourceSequence: Number.isInteger(record.sourceSequence) ? record.sourceSequence : null,
+            collectorSequence: ++collector.collectorSequence,
+            scanId: record.scanId,
+            url: typeof record.url === 'string' ? record.url : collector.meta.url,
+            message: typeof record.message === 'string' ? record.message : '',
+            arguments: Array.isArray(record.arguments) ? record.arguments : []
+        });
+    });
+}
+
+function getDebugFilename(meta) {
+    let domain = 'unknown-domain';
+    try {
+        domain = new URL(meta.url).hostname || domain;
+    } catch {
+        // Keep the generic fallback for malformed or unavailable URLs.
+    }
+    const safeDomain = domain.replace(/[^a-z0-9.-]+/gi, '-').replace(/^-+|-+$/g, '') ||
+        'unknown-domain';
+    const safeVersion = String(meta.versionName || meta.version || 'unknown-version')
+        .replace(/[^a-z0-9.-]+/gi, '-').replace(/^-+|-+$/g, '') || 'unknown-version';
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    return `image-finder-debug-${safeVersion}-${safeDomain}-${timestamp}-${meta.scanId}.json`;
+}
+
+function getDebugLogFolder(date = new Date()) {
+    const year = String(date.getFullYear());
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+
+    return `logs/imagefinder/${year}_${month}_${day}`;
+}
+
+async function exportDebugCollector(scanId) {
+    const collector = debugCollectorsByScanId.get(scanId);
+    if (!collector || collector.exported) return;
+
+    collector.exported = true;
+    const payload = JSON.stringify({meta: collector.meta, records: collector.records}, null, 2);
+    try {
+        await downloadBlob(new Blob([payload], {type: 'application/json'}), {
+            filename: `${getDebugLogFolder()}/${getDebugFilename(collector.meta)}`,
+            saveAs: false,
+            conflictAction: 'uniquify'
+        });
+    } catch {
+        // Export failure must never alter DeepScan completion.
+    } finally {
+        debugCollectorsByScanId.delete(scanId);
+        if (activeDebugLogContext?.scanId === scanId) activeDebugLogContext = null;
+        debugBackgroundLogger?.clearContext(scanId);
+    }
+}
+
+function queueDebugCollectorExport(collector, delayMs) {
+    if (!collector || collector.exported) return;
+    if (collector.exportTimer !== null) clearTimeout(collector.exportTimer);
+    collector.exportTimer = setTimeout(() => {
+        collector.exportTimer = null;
+        void exportDebugCollector(collector.meta.scanId);
+    }, delayMs);
+}
+
+function handleDebugContextComplete(message) {
+    if (message?.source !== 'popup' || typeof message.scanId !== 'string') return;
+    const collector = debugCollectorsByScanId.get(message.scanId);
+    if (!collector || collector.exported) return;
+
+    collector.popupComplete = true;
+    if (!collector.meta.status) return;
+    const flush = debugBackgroundLogger?.flush?.() ?? Promise.resolve();
+    void flush.finally(() => {
+        queueDebugCollectorExport(collector, DEBUG_LOG_POPUP_FINAL_DELAY_MS);
+    });
+}
+
+function scheduleDebugExport(job, status, reason = null) {
+    const collector = debugCollectorsByScanId.get(job?.scanId);
+    if (!collector || collector.exported) return;
+
+    collector.meta.endedAt = new Date().toISOString();
+    collector.meta.status = status;
+    if (typeof reason === 'string' && reason) collector.meta.reason = reason;
+    const flush = debugBackgroundLogger?.flush?.() ?? Promise.resolve();
+    void flush.finally(() => {
+        queueDebugCollectorExport(
+            collector,
+            collector.popupComplete ? DEBUG_LOG_POPUP_FINAL_DELAY_MS : DEBUG_LOG_EXPORT_DELAY_MS
+        );
+    });
 }
 
 function getPopupDeepScanClientId(port) {
@@ -513,7 +689,7 @@ async function probeHiddenDeepScanHost(job) {
 async function injectHiddenDeepScanHost(job) {
     await chrome.scripting.executeScript({
         target: {tabId: job.tabId, frameIds: [job.hostFrameId]},
-        files: ['src/deepscan-frame.js'],
+        files: ['src/debug-logger.js', 'src/deepscan-frame.js'],
         injectImmediately: true
     });
 }
@@ -753,6 +929,7 @@ async function finishIsolatedDeepScan(job, status, reason = null, performance = 
         'clientQueue=drained',
         `delivered=${delivered}`
     );
+    scheduleDebugExport(job, status, reason);
 }
 
 async function startIsolatedDeepScanHost(job) {
@@ -873,6 +1050,7 @@ async function cancelIsolatedDeepScan(scanId = null, endReason = 'cancelled') {
         endReason: normalizedEndReason
     });
     if (cancellationSource) console.info('[DeepScan CANCEL COMPLETE]');
+    scheduleDebugExport(job, 'cancelled', normalizedEndReason);
     return true;
 }
 
@@ -896,6 +1074,7 @@ async function startIsolatedDeepScan(request) {
             ? Math.max(0, Math.round(request.minimumImageHeight))
             : 200,
         allowProtectedDeepScan: request.allowProtectedDeepScan === true,
+        enabledDebugLogSources: getEnabledDebugLogSources(request.debugSettings),
         popupClientId: typeof request.popupClientId === 'string' && request.popupClientId
             ? request.popupClientId
             : null,
@@ -906,6 +1085,7 @@ async function startIsolatedDeepScan(request) {
         clientQueuePending: 0
     };
     activeIsolatedDeepScan = job;
+    createDebugCollector(job);
 
     try {
         const tab = await chrome.tabs.get(job.tabId);
@@ -1233,6 +1413,13 @@ chrome.runtime.onConnect.addListener((port) => {
 });
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    if (message?.target === DEBUG_LOG_TARGET) {
+        if (message.action === 'records') collectDebugRecords(message.records);
+        else if (message.action === 'context-complete') handleDebugContextComplete(message);
+        sendResponse({success: true});
+        return undefined;
+    }
+
     if (message?.target === OFFSCREEN_TARGET) {
         return undefined;
     }

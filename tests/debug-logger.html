@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Image Finder – Debug Logger Fixture</title>
+</head>
+<body>
+    <div id="element" class="fixture alpha beta"></div>
+
+    <script type="module">
+        const runFixture = async () => {
+            if (!new URLSearchParams(location.search).has('runDebugLogger')) return;
+
+            await import('../src/debug-logger.js');
+            const {serializeConsoleArguments} = globalThis.ImageFinderDebugLogger;
+            const cyclic = {name: 'cycle'};
+            cyclic.self = cyclic;
+            const error = new Error('fixture-error');
+            const serialized = serializeConsoleArguments([
+                {plain: true, nested: {value: 1}},
+                ['array', undefined, null],
+                error,
+                cyclic,
+                document.getElementById('element')
+            ]).arguments;
+            const passed = serialized[0]?.plain === true &&
+                Array.isArray(serialized[1]) && serialized[1][1]?.type === 'undefined' &&
+                serialized[2]?.type === 'Error' && serialized[2]?.message === 'fixture-error' &&
+                serialized[3]?.self?.type === 'circular' &&
+                serialized[4]?.type === 'DOMElement' && serialized[4]?.tag === 'div' &&
+                serialized[4]?.id === 'element' && serialized[4]?.class === 'fixture alpha beta';
+
+            document.documentElement.dataset.debugLoggerResult = passed ? 'passed' : 'failed';
+            document.documentElement.dataset.debugLoggerChecks = JSON.stringify({
+                object: serialized[0]?.plain === true,
+                array: Array.isArray(serialized[1]),
+                error: serialized[2]?.type === 'Error',
+                cyclic: serialized[3]?.self?.type === 'circular',
+                element: serialized[4]?.type === 'DOMElement'
+            });
+        };
+
+        void runFixture().catch(() => {
+            document.documentElement.dataset.debugLoggerResult = 'failed';
+        });
+    </script>
+</body>
+</html>

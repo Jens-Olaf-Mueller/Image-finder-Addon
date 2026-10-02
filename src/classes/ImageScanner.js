@@ -249,6 +249,7 @@ export default class ImageScanner {
         };
         trace('scan-deep-images-call');
         const filters = this.settings.get('filters') ?? {};
+        const debugSettings = this.settings.get('debug') ?? {};
         const imageFilter = this.filter;
         const allowProtectedDeepScan = this.settings.get(
             'common',
@@ -259,6 +260,8 @@ export default class ImageScanner {
         await this.cancelDeepScan();
 
         const scanId = crypto.randomUUID();
+        const debugLogger = globalThis.imageFinderDebugLogger;
+        debugLogger?.setContext({scanId, url: scanContext.url});
         const transportMetrics = {
             batches: 0,
             timestampedBatches: 0,
@@ -479,6 +482,12 @@ export default class ImageScanner {
                     minimumImageWidth: imageFilter.minWidth,
                     minimumImageHeight: imageFilter.minHeight,
                     allowProtectedDeepScan,
+                    debugSettings: {
+                        debugmode: debugSettings.debugmode === true,
+                        logtab: debugSettings.logtab === true,
+                        logpopup: debugSettings.logpopup === true,
+                        logserviceworker: debugSettings.logserviceworker === true
+                    },
                     ...(this.#deepScanClientId ? {popupClientId: this.#deepScanClientId} : {})
                 });
                 if (response?.success !== true) {
@@ -502,6 +511,25 @@ export default class ImageScanner {
         } finally {
             session.finish({status: 'finished'});
             console.info('[DeepScan Performance]', createTransportSummary(completionResult));
+            const completeDebugContext = () => {
+                debugLogger?.clearContext(scanId);
+                try {
+                    void window.chrome.runtime.sendMessage({
+                        target: 'image-finder-debug-log',
+                        action: 'context-complete',
+                        source: 'popup',
+                        scanId
+                    }).catch(() => undefined);
+                } catch {
+                    // The fallback export covers a closed popup.
+                }
+            };
+            const debugFlush = debugLogger?.flush?.();
+            if (debugFlush && typeof debugFlush.finally === 'function') {
+                void debugFlush.finally(completeDebugContext);
+            } else {
+                completeDebugContext();
+            }
         }
 
         return Array.from(candidatesByURL.values());
