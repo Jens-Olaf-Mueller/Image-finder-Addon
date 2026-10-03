@@ -1178,58 +1178,6 @@ export async function scanPhotoSwipeImages({
         processedTargetSources
     });
     const photoSwipeCarouselContext = activePhotoSwipeScanner.getCarouselContext();
-    /*
-     * Beta 0.0.08 legacy direct PhotoSwipe session-state implementation.
-     * Replaced by PhotoSwipeScanner; retained inactive for direct behaviour
-     * comparison during the extraction phase.
-     *
-    const getSlideStateIdentity = (readySlide) => {
-        const {slide, image} = readySlide ?? {};
-        const getAttributeValue = (element, attributeName) => {
-            const value = element?.getAttribute?.(attributeName)?.trim();
-            return value || null;
-        };
-        const index = [
-            'data-pswp-index',
-            'data-slide-index',
-            'data-index',
-            'aria-posinset'
-        ].map((attributeName) => getAttributeValue(slide, attributeName) ??
-            getAttributeValue(image, attributeName)).find(Boolean);
-        const label = getAttributeValue(slide, 'aria-label') ??
-            getAttributeValue(image, 'aria-label');
-        const snapshot = getImageSnapshot(image);
-        const source = snapshot.currentSrc ?? snapshot.src;
-        const identityParts = [
-            index ? 'index:' + index : null,
-            label ? 'label:' + label : null,
-            source ? 'source:' + source : null
-        ].filter(Boolean);
-
-        return identityParts.length > 0 ? identityParts.join('|') : null;
-    };
-    const getCanonicalCarouselStateKey = (carousel, key) => {
-        const visited = new Set();
-        let canonicalKey = key;
-
-        while (carousel.stateAliases.has(canonicalKey) && !visited.has(canonicalKey)) {
-            visited.add(canonicalKey);
-            canonicalKey = carousel.stateAliases.get(canonicalKey);
-        }
-        return canonicalKey;
-    };
-    const getCarouselState = (photoSwipe, carousel) => {
-        const readySlide = getReadyActiveSlideImage(photoSwipe);
-        const rawKey = getSlideStateIdentity(readySlide);
-        if (!readySlide || !rawKey) return null;
-
-        return {
-            readySlide,
-            rawKey,
-            key: getCanonicalCarouselStateKey(carousel, rawKey)
-        };
-    };
-    */
     // Shared with CarouselScanner's optional PhotoSwipe enrichment.
     const getCarouselStateLabel = (carousel, key) => {
         if (!carousel.stateLabels.has(key)) {
@@ -1237,301 +1185,6 @@ export async function scanPhotoSwipeImages({
         }
         return carousel.stateLabels.get(key);
     };
-    /*
-     * Beta 0.0.08 legacy direct PhotoSwipe controls and session traversal.
-     * Replaced by PhotoSwipeScanner; retained inactive for direct behaviour
-     * comparison during the extraction phase.
-     *
-    const isCarouselControlUsable = (control) => {
-        const phaseStartedAt = getPhaseStartedAt();
-        if (!control || !control.isConnected ||
-            control.hasAttribute?.('disabled') ||
-            control.getAttribute?.('aria-disabled') === 'true' ||
-            control.hasAttribute?.('hidden') ||
-            /(?:^|\s)disabled(?:\s|$)/i.test(control.className ?? '')) {
-            recordPhase('styleAttributeGeometryMs', phaseStartedAt);
-            return false;
-        }
-
-        try {
-            const usable = getComputedStyle(control).display !== 'none';
-            recordPhase('styleAttributeGeometryMs', phaseStartedAt);
-            return usable;
-        } catch {
-            recordPhase('styleAttributeGeometryMs', phaseStartedAt);
-            return false;
-        }
-    };
-    const getCarouselControl = (photoSwipe, direction) => {
-        const phaseStartedAt = getPhaseStartedAt();
-        const explicitSelector = direction === 'forward'
-            ? [
-                '.pswp__button--arrow--next',
-                '[data-pswp-next]',
-                '[data-pswp-action="next"]',
-                '[data-carousel-next]',
-                '[data-slide-next]',
-                '[rel~="next"]'
-            ]
-            : [
-                '.pswp__button--arrow--prev',
-                '.pswp__button--arrow--previous',
-                '[data-pswp-prev]',
-                '[data-pswp-previous]',
-                '[data-pswp-action="prev"]',
-                '[data-pswp-action="previous"]',
-                '[data-carousel-prev]',
-                '[data-carousel-previous]',
-                '[data-slide-prev]',
-                '[data-slide-previous]',
-                '[rel~="prev"]'
-            ];
-        const semanticPattern = direction === 'forward'
-            ? /\b(?:next|forward)\b/i
-            : /\b(?:previous|prev|back)\b/i;
-        const explicitControl = explicitSelector.map((selector) => {
-            const queryStartedAt = getPhaseStartedAt();
-            const control = photoSwipe.querySelector(selector);
-            recordQuery(selector, Number(Boolean(control)));
-            recordPhase('domQueriesMs', queryStartedAt);
-            return control;
-        }).find(isCarouselControlUsable);
-        if (explicitControl) {
-            recordPhase('candidateClassificationMs', phaseStartedAt);
-            return explicitControl;
-        }
-
-        const queryStartedAt = getPhaseStartedAt();
-        const controls = Array.from(photoSwipe.querySelectorAll('button, [role="button"], a'));
-        recordQuery('button, [role="button"], a', controls.length);
-        recordPhase('domQueriesMs', queryStartedAt);
-        const semanticControl = controls.find(
-            (control) => isCarouselControlUsable(control) && semanticPattern.test([
-                control.getAttribute('aria-label'),
-                control.getAttribute('title'),
-                control.textContent
-            ].filter(Boolean).join(' '))
-        ) ?? null;
-        recordPhase('candidateClassificationMs', phaseStartedAt);
-        return semanticControl;
-    };
-    const collectCarouselSources = (photoSwipe, carousel, stateLabel) => {
-        const phaseStartedAt = getPhaseStartedAt();
-        const availableCandidates = collectPhotoSwipeCandidates(photoSwipe, {
-            includePreloaded: true
-        });
-        const sourceURLs = new Set(availableCandidates.map((candidate) => candidate.url));
-        let newSources = 0;
-
-        sourceURLs.forEach((url) => {
-            if (!carousel.knownSources.has(url)) {
-                carousel.knownSources.add(url);
-                newSources += 1;
-            }
-            processedTargetSources.add(url);
-        });
-        candidates.push(...availableCandidates);
-        reportCarousel(
-            'CAROUSEL',
-            'state=' + stateLabel,
-            'preloadSources=' + sourceURLs.size,
-            'preloadNew=' + newSources
-        );
-        recordPhase('dedupeResultHandlingMs', phaseStartedAt);
-        return newSources;
-    };
-    const processCarouselState = async (photoSwipe, carousel, state, direction) => {
-        const stateLabel = getCarouselStateLabel(carousel, state.key);
-        const alreadyVisited = carousel.visitedStates.has(state.key);
-
-        reportCarousel(
-            'CAROUSEL',
-            'type=' + carousel.type,
-            'state=' + stateLabel,
-            'direction=' + direction,
-            'source=' + (alreadyVisited ? 'known' : 'new')
-        );
-
-        const sourcesBeforeZoom = collectCarouselSources(photoSwipe, carousel, stateLabel);
-        if (alreadyVisited) return {alreadyVisited, newSources: sourcesBeforeZoom};
-
-        carousel.visitedStates.add(state.key);
-        const beforeZoom = getImageSnapshot(state.readySlide.image);
-        try {
-            state.readySlide.image.click();
-            reportActivity();
-        } catch {
-            if (!isAborted()) reportZoom(imageDimensions(beforeZoom) + ' no-upgrade');
-            return {alreadyVisited: false, newSources: sourcesBeforeZoom};
-        }
-
-        const zoomedSlide = await waitFor(() => {
-            const activeSlide = getReadyActiveSlideImage(photoSwipe);
-            if (!activeSlide) return null;
-
-            const afterZoom = getImageSnapshot(activeSlide.image);
-            return didZoomStateChange(beforeZoom, afterZoom, activeSlide.photoSwipe)
-                ? {activeSlide, afterZoom}
-                : null;
-        }, 3000);
-        if (isAborted()) return {alreadyVisited: false, newSources: sourcesBeforeZoom};
-        if (!zoomedSlide) {
-            reportZoom(imageDimensions(beforeZoom) + ' no-upgrade');
-            return {alreadyVisited: false, newSources: sourcesBeforeZoom};
-        }
-
-        const afterState = getCarouselState(photoSwipe, carousel);
-        if (afterState && afterState.rawKey !== state.rawKey) {
-            carousel.stateAliases.set(afterState.rawKey, state.key);
-        }
-        const sourcesAfterZoom = collectCarouselSources(photoSwipe, carousel, stateLabel);
-        const afterZoom = zoomedSlide.afterZoom;
-        const resolutionImproved = afterZoom.naturalWidth > beforeZoom.naturalWidth ||
-            afterZoom.naturalHeight > beforeZoom.naturalHeight;
-        reportZoom(resolutionImproved
-            ? imageDimensions(beforeZoom) + ' -> ' + imageDimensions(afterZoom) + ' replaced'
-            : imageDimensions(beforeZoom) + ' no-upgrade');
-
-        return {
-            alreadyVisited: false,
-            newSources: sourcesBeforeZoom + sourcesAfterZoom
-        };
-    };
-    const traversePhotoSwipeCarousel = async (photoSwipe) => {
-        const carousel = {
-            type: 'unknown',
-            knownSources: new Set(),
-            stateAliases: new Map(),
-            stateLabels: new Map(),
-            visitedStates: new Set(),
-            transitions: {
-                forward: new Set(),
-                backward: new Set()
-            }
-        };
-        const initialState = await waitFor(() => getCarouselState(photoSwipe, carousel), 3000);
-        if (!initialState || isAborted()) return;
-
-        const initialStateLabel = getCarouselStateLabel(carousel, initialState.key);
-        reportCarousel(
-            'CAROUSEL',
-            'discovered',
-            'type=unknown',
-            'state=' + initialStateLabel
-        );
-        await processCarouselState(photoSwipe, carousel, initialState, 'initial');
-        if (isAborted()) return;
-
-        const traverseDirection = async (direction) => {
-            let successfulTransitions = 0;
-
-            while (!isAborted()) {
-                const beforeState = await waitFor(
-                    () => getCarouselState(photoSwipe, carousel),
-                    1000
-                );
-                if (!beforeState) {
-                    reportCarousel(
-                        'CAROUSEL EDGE',
-                        'direction=' + direction,
-                        'reason=active-slide-unavailable'
-                    );
-                    return {kind: 'edge', reason: 'active-slide-unavailable'};
-                }
-
-                const control = getCarouselControl(photoSwipe, direction);
-                if (!control) {
-                    reportCarousel(
-                        'CAROUSEL EDGE',
-                        'direction=' + direction,
-                        'reason=control-unavailable'
-                    );
-                    return {kind: 'edge', reason: 'control-unavailable'};
-                }
-
-                try {
-                    control.click();
-                    reportActivity();
-                } catch {
-                    reportCarousel(
-                        'CAROUSEL EDGE',
-                        'direction=' + direction,
-                        'reason=control-action-failed'
-                    );
-                    return {kind: 'edge', reason: 'control-action-failed'};
-                }
-
-                const nextState = await waitFor(() => {
-                    const state = getCarouselState(photoSwipe, carousel);
-                    return state && state.key !== beforeState.key ? state : null;
-                }, 3000);
-                if (isAborted()) return {kind: 'aborted'};
-                if (!nextState) {
-                    const stableControl = getCarouselControl(photoSwipe, direction);
-                    const reason = stableControl ? 'stable-state' : 'control-unavailable';
-                    reportCarousel(
-                        'CAROUSEL EDGE',
-                        'direction=' + direction,
-                        'reason=' + reason
-                    );
-                    return {kind: 'edge', reason};
-                }
-
-                successfulTransitions += 1;
-                const transitionKey = beforeState.key + '→' + nextState.key;
-                const knownState = carousel.visitedStates.has(nextState.key);
-                const repeatedTransition = carousel.transitions[direction].has(transitionKey);
-                carousel.transitions[direction].add(transitionKey);
-                const stateResult = await processCarouselState(
-                    photoSwipe,
-                    carousel,
-                    nextState,
-                    direction
-                );
-                if (isAborted()) return {kind: 'aborted'};
-
-                if (direction === 'forward' && knownState &&
-                    successfulTransitions > 0 && stateResult.newSources === 0) {
-                    carousel.type = 'cyclic';
-                    reportCarousel(
-                        'CAROUSEL END',
-                        'type=cyclic',
-                        'reason=cycle-complete',
-                        'states=' + carousel.visitedStates.size
-                    );
-                    return {kind: 'cycle', reason: 'cycle-complete'};
-                }
-
-                if (repeatedTransition && knownState && stateResult.newSources === 0) {
-                    reportCarousel(
-                        'CAROUSEL EDGE',
-                        'direction=' + direction,
-                        'reason=known-transition'
-                    );
-                    return {kind: 'edge', reason: 'known-transition'};
-                }
-            }
-
-            return {kind: 'aborted'};
-        };
-
-        const forward = await traverseDirection('forward');
-        if (forward.kind === 'aborted' || forward.kind === 'cycle') return;
-
-        const backward = await traverseDirection('backward');
-        if (backward.kind !== 'edge' || isAborted()) return;
-
-        carousel.type = 'finite';
-        reportCarousel(
-            'CAROUSEL END',
-            'type=finite',
-            'reason=both-edges-exhausted',
-            'forward=' + forward.reason,
-            'backward=' + backward.reason,
-            'states=' + carousel.visitedStates.size
-        );
-    };
-    */
     const activeCarouselScanner = carouselScanner ?? new CarouselScanner({processedCarouselRoots});
     if (traverseCarousel) {
         const carouselScanResult = await activeCarouselScanner.scan({
@@ -1565,600 +1218,6 @@ export async function scanPhotoSwipeImages({
         genericCarouselCalls += carouselScanResult.genericCarouselCalls;
     }
 
-    /*
-     * Beta 0.0.07 legacy Generic-Carousel implementation.
-     * Replaced by CarouselScanner above; retained here, inactive, for direct
-     * behaviour comparison during the extraction phase.
-     *
-    const genericSourceAttributes = [
-        'src',
-        'srcset',
-        'data-src',
-        'data-srcset',
-        'data-lazy-src',
-        'data-lazy-srcset',
-        'data-original',
-        'data-original-src'
-    ];
-    const genericGalleryTokens = /(?:carousel|gallery|slider|swiper)/i;
-    const genericSlideTokens = /(?:slide|item|media)/i;
-    const genericGalleryKeys = new WeakMap();
-    let genericGallerySequence = 0;
-    const getGenericGalleryKey = (root) => {
-        if (genericGalleryKeys.has(root)) return genericGalleryKeys.get(root);
-
-        const explicitKey = root.getAttribute?.('data-carousel-id')?.trim() ||
-            root.getAttribute?.('data-gallery-id')?.trim() || root.id?.trim();
-        const key = explicitKey ? 'gallery#' + explicitKey : 'gallery#?' + genericGallerySequence++;
-        genericGalleryKeys.set(root, key);
-        return key;
-    };
-    const getElementClassText = (element) => typeof element?.className === 'string'
-        ? element.className
-        : element?.getAttribute?.('class') ?? '';
-    const getGenericElementSources = (element) => {
-        if (!element?.getAttribute) return [];
-
-        const sources = [];
-        if (element instanceof HTMLImageElement) {
-            sources.push(getURL(element.currentSrc, element.baseURI));
-        }
-        genericSourceAttributes.forEach((attributeName) => {
-            const value = element.getAttribute(attributeName);
-            if (!value) return;
-
-            if (attributeName.endsWith('srcset')) {
-                sources.push(...getSrcsetURLs(value, element.baseURI));
-            } else {
-                sources.push(getURL(value, element.baseURI));
-            }
-        });
-        return sources.filter(Boolean);
-    };
-    const getGenericGalleryMediaElements = (root) => {
-        const selector = [
-            'img',
-            'source',
-            '[src]',
-            '[srcset]',
-            '[data-src]',
-            '[data-srcset]',
-            '[data-lazy-src]',
-            '[data-lazy-srcset]',
-            '[data-original]',
-            '[data-original-src]'
-        ].join(',');
-        const elements = root.matches?.(selector) ? [root] : [];
-        return [...elements, ...queryDeep(root, selector)].filter(
-            (element, index, values) => values.indexOf(element) === index
-        );
-    };
-    const getGenericSlideElements = (root) => {
-        const phaseStartedAt = getPhaseStartedAt();
-        const selector = [
-            '[data-swiper-slide-index]',
-            '[data-slide-index]',
-            '[data-index]',
-            '[aria-posinset]',
-            '[aria-current]',
-            '[aria-selected]',
-            '[data-active]',
-            '[role="group"]',
-            '[class*="slide"]',
-            '[class*="item"]'
-        ].join(',');
-
-        const slides = queryDeep(root, selector).filter((element) => genericSlideTokens.test([
-            getElementClassText(element),
-            element.getAttribute?.('role'),
-            element.getAttribute?.('data-slide-index'),
-            element.getAttribute?.('data-swiper-slide-index')
-        ].filter(Boolean).join(' ')) && getGenericGalleryMediaElements(element).length > 0);
-        recordPhase('candidateClassificationMs', phaseStartedAt);
-        return slides;
-    };
-    const getGenericControlDirection = (element) => {
-        const rel = element.getAttribute?.('rel')?.toLowerCase().split(/\s+/) ?? [];
-        if (rel.includes('next')) return 'forward';
-        if (rel.includes('prev') || rel.includes('previous')) return 'backward';
-
-        const label = [
-            element.getAttribute?.('aria-label'),
-            element.getAttribute?.('title'),
-            element.getAttribute?.('data-carousel-next') !== null ||
-            element.getAttribute?.('data-slide-next') !== null ? 'next' : null,
-            element.getAttribute?.('data-carousel-prev') !== null ||
-            element.getAttribute?.('data-slide-prev') !== null ? 'previous' : null,
-            element.getAttribute?.('data-slide-previous') !== null ? 'previous' : null,
-            getElementClassText(element)
-        ].filter(Boolean).join(' ');
-        if (/\b(?:next|forward)\b/i.test(label)) return 'forward';
-        if (/\b(?:previous|prev|back)\b/i.test(label)) return 'backward';
-        return null;
-    };
-    const getGenericControlKind = (control) => /(?:swiper|slick|splide|flickity)/i.test(
-        getElementClassText(control)
-    ) ? 'library' : (
-        control.getAttribute?.('rel') || control.getAttribute?.('aria-label') ||
-        control.getAttribute?.('title') ? 'semantic' : 'structural'
-    );
-    const getGenericControlAvailability = (control) => {
-        const phaseStartedAt = getPhaseStartedAt();
-        if (!control || !control.isConnected) return {usable: false, reason: 'control-unavailable'};
-        if (control.hasAttribute('disabled') || control.hasAttribute('hidden') ||
-            control.hasAttribute('inert') || control.getAttribute('aria-disabled') === 'true' ||
-            /(?:^|\s)(?:disabled|swiper-button-disabled)(?:\s|$)/i.test(
-                getElementClassText(control)
-            )) {
-            recordPhase('styleAttributeGeometryMs', phaseStartedAt);
-            return {usable: false, reason: 'control-disabled'};
-        }
-        try {
-            const style = getComputedStyle(control);
-            if (style.display === 'none' || style.visibility === 'hidden' ||
-                style.visibility === 'collapse' || style.pointerEvents === 'none') {
-                recordPhase('styleAttributeGeometryMs', phaseStartedAt);
-                return {usable: false, reason: 'control-unavailable'};
-            }
-        } catch {
-            recordPhase('styleAttributeGeometryMs', phaseStartedAt);
-            return {usable: false, reason: 'control-unavailable'};
-        }
-        recordPhase('styleAttributeGeometryMs', phaseStartedAt);
-        return {usable: true, reason: null};
-    };
-    const getGenericCarouselControl = (root, direction) => {
-        const phaseStartedAt = getPhaseStartedAt();
-        const controls = queryDeep(root, '*').filter((element) =>
-            getGenericControlDirection(element) === direction
-        );
-        const control = controls.find((candidate) => getGenericControlAvailability(candidate).usable);
-        if (control) {
-            recordPhase('candidateClassificationMs', phaseStartedAt);
-            return {
-                control,
-                kind: getGenericControlKind(control),
-                reason: null
-            };
-        }
-
-        const disabled = controls.find((candidate) =>
-            getGenericControlAvailability(candidate).reason === 'control-disabled'
-        );
-        const result = {
-            control: null,
-            kind: disabled ? getGenericControlKind(disabled) : null,
-            reason: disabled ? 'control-disabled' : 'control-unavailable'
-        };
-        recordPhase('candidateClassificationMs', phaseStartedAt);
-        return result;
-    };
-    const getGenericTotalHint = (root) => {
-        const attributeNames = ['data-slide-count', 'data-total', 'aria-setsize'];
-        for (const element of [root, ...queryDeep(root, '[data-slide-count], [data-total], [aria-setsize]')]) {
-            const total = attributeNames.map((attributeName) => Number(element.getAttribute?.(attributeName)))
-                .find(Number.isFinite);
-            if (total > 0) return total;
-        }
-
-        const counter = queryDeep(root, '[aria-live], [class*="counter"], [class*="pagination"]')
-            .map((element) => element.textContent?.trim() ?? '')
-            .map((text) => text.match(/\b\d+\s*(?:\/|of)\s*(\d+)\b/i)?.[1])
-            .map(Number)
-            .find((total) => Number.isFinite(total) && total > 0);
-        return counter ?? null;
-    };
-    const getGenericCarouselState = (root, gallery) => {
-        const phaseStartedAt = getPhaseStartedAt();
-        if (!root?.isConnected) return null;
-
-        const slides = getGenericSlideElements(root);
-        const active = slides.find((slide) => slide.getAttribute('aria-current') === 'true' ||
-            slide.getAttribute('aria-selected') === 'true' || slide.getAttribute('data-active') === 'true' ||
-            /(?:^|\s)(?:active|current|swiper-slide-active)(?:\s|$)/i.test(
-                getElementClassText(slide)
-            )) ?? slides.find((slide) => slide.getAttribute('aria-hidden') !== 'true') ??
-            (slides.length === 1 ? slides[0] : null) ?? root;
-        const stateElements = [active, root, ...getGenericGalleryMediaElements(active).slice(0, 1)];
-        const index = stateElements.flatMap((element) => [
-            'data-swiper-slide-index',
-            'data-slide-index',
-            'data-index',
-            'aria-posinset',
-            'data-active-slide'
-        ].map((attributeName) => {
-            const value = element?.getAttribute?.(attributeName)?.trim();
-            return value ? attributeName + ':' + value : null;
-        })).find(Boolean);
-        const activePagination = queryDeep(root, '[aria-current="true"], [aria-selected="true"]')
-            .find((element) => element !== active);
-        const pagination = activePagination?.getAttribute('aria-label')?.trim() ||
-            activePagination?.getAttribute('data-index')?.trim() || null;
-        const source = getGenericGalleryMediaElements(active).flatMap(getGenericElementSources)[0] ?? null;
-        const rawKey = index ? 'index:' + index : pagination ? 'pagination:' + pagination :
-            source ? 'source:' + source : null;
-        if (!rawKey) {
-            recordPhase('candidateClassificationMs', phaseStartedAt);
-            return null;
-        }
-
-        const state = {
-            active,
-            key: rawKey,
-            mountedSlides: slides.length,
-            totalHint: getGenericTotalHint(root)
-        };
-        recordPhase('candidateClassificationMs', phaseStartedAt);
-        return state;
-    };
-    const collectGenericCarouselSources = (root, gallery, stateLabel) => {
-        const phaseStartedAt = getPhaseStartedAt();
-        const elements = getGenericGalleryMediaElements(root);
-        const sourceURLs = new Set();
-        let lazySources = 0;
-
-        elements.forEach((element) => {
-            const hasLazyAttribute = Boolean(element.getAttribute?.('data-lazy-src') ||
-                element.getAttribute?.('data-lazy-srcset'));
-            const currentSource = element instanceof HTMLImageElement
-                ? getURL(element.currentSrc, element.baseURI)
-                : null;
-            getGenericElementSources(element).forEach((url) => {
-                sourceURLs.add(url);
-                candidates.push({
-                    url,
-                    width: url === currentSource ? Math.max(0, element.naturalWidth) : 0,
-                    height: url === currentSource ? Math.max(0, element.naturalHeight) : 0,
-                    source: 'imageelements',
-                    visuallyBlurred: false
-                });
-            });
-            if (hasLazyAttribute) lazySources += 1;
-        });
-
-        let preloadNew = 0;
-        sourceURLs.forEach((url) => {
-            if (!gallery.knownSources.has(url)) {
-                gallery.knownSources.add(url);
-                preloadNew += 1;
-            }
-        });
-        reportCarousel(
-            'CAROUSEL',
-            'gallery=' + gallery.key,
-            'state=' + stateLabel,
-            'preloadSources=' + sourceURLs.size,
-            'lazySources=' + lazySources,
-            'preloadNew=' + preloadNew
-        );
-        const result = {newSources: preloadNew, lazySources, preloadSources: sourceURLs.size};
-        if (collectPerformance) performanceDetail.generic.resultCount += sourceURLs.size;
-        recordPhase('dedupeResultHandlingMs', phaseStartedAt);
-        return result;
-    };
-    const enrichGenericCarouselState = async (state) => {
-        const activeTarget = state.active.matches?.('[at-attr="media_locator"]')
-            ? state.active
-            : state.active.querySelector?.('[at-attr="media_locator"]') ?? null;
-        if (!activeTarget || processedTargets.has(activeTarget) || isAborted()) return;
-
-        processedTargets.add(activeTarget);
-        const sourceKey = getTargetSourceKey(activeTarget);
-        if (sourceKey) processedTargetSources.add(sourceKey);
-        let temporaryStyle = null;
-        try {
-            temporaryStyle = createTemporaryStyle();
-            activeTarget.click();
-            const photoSwipe = await waitFor(findOpenPhotoSwipe, 2000);
-            if (!photoSwipe || isAborted()) return;
-
-            reportActivity();
-            const readySlide = await waitFor(() => getReadyActiveSlideImage(photoSwipe), 3000);
-            if (!readySlide || isAborted()) return;
-            candidates.push(...collectPhotoSwipeCandidates(photoSwipe, {includePreloaded: true}));
-            const beforeZoom = getImageSnapshot(readySlide.image);
-            try {
-                readySlide.image.click();
-                reportActivity();
-            } catch {
-                return;
-            }
-            const zoomedSlide = await waitFor(() => {
-                const activeSlide = getReadyActiveSlideImage(photoSwipe);
-                if (!activeSlide) return null;
-                const afterZoom = getImageSnapshot(activeSlide.image);
-                return didZoomStateChange(beforeZoom, afterZoom, photoSwipe)
-                    ? {activeSlide, afterZoom}
-                    : null;
-            }, 3000);
-            if (zoomedSlide) candidates.push(...collectPhotoSwipeCandidates(
-                zoomedSlide.activeSlide.photoSwipe,
-                {includePreloaded: true}
-            ));
-        } catch {
-            // One optional enrichment failure must not stop horizontal traversal.
-        } finally {
-            try {
-                const closed = await closePhotoSwipe();
-                if (!closed && findOpenPhotoSwipe()) await closePhotoSwipe();
-            } finally {
-                temporaryStyle?.remove();
-            }
-        }
-    };
-    const processGenericCarouselState = async (root, gallery, state, direction) => {
-        const stateLabel = getCarouselStateLabel(gallery, state.key);
-        const alreadyVisited = gallery.visitedStates.has(state.key);
-        const sourceBefore = collectGenericCarouselSources(root, gallery, stateLabel);
-        reportCarousel(
-            'CAROUSEL',
-            'gallery=' + gallery.key,
-            'type=' + gallery.type,
-            'state=' + stateLabel,
-            'direction=' + direction,
-            'source=' + (alreadyVisited ? 'known' : 'new'),
-            'mountedSlides=' + state.mountedSlides,
-            'lazySources=' + sourceBefore.lazySources,
-            'preloadSources=' + sourceBefore.preloadSources,
-            'preloadNew=' + sourceBefore.newSources
-        );
-        if (alreadyVisited) return {alreadyVisited, newSources: sourceBefore.newSources};
-
-        gallery.visitedStates.add(state.key);
-        await enrichGenericCarouselState(state);
-        const sourceAfter = collectGenericCarouselSources(root, gallery, stateLabel);
-        return {
-            alreadyVisited: false,
-            newSources: sourceBefore.newSources + sourceAfter.newSources
-        };
-    };
-    const isGenericGalleryRoot = (root) => {
-        const phaseStartedAt = getPhaseStartedAt();
-        const rootLabel = [
-            root.id,
-            getElementClassText(root),
-            root.getAttribute?.('role'),
-            root.getAttribute?.('data-carousel-id'),
-            root.getAttribute?.('data-gallery-id')
-        ].filter(Boolean).join(' ');
-        const rootAppearsSlide = genericSlideTokens.test(getElementClassText(root)) && Boolean(
-            root.getAttribute?.('data-slide-index') || root.getAttribute?.('data-swiper-slide-index') ||
-            root.getAttribute?.('aria-posinset')
-        );
-        const hasGallerySignal = !rootAppearsSlide && (genericGalleryTokens.test(rootLabel) ||
-            root.hasAttribute?.('data-carousel-id') || root.hasAttribute?.('data-gallery-id')
-        );
-        if (!hasGallerySignal) {
-            recordPhase('candidateClassificationMs', phaseStartedAt);
-            return false;
-        }
-
-        const slides = getGenericSlideElements(root);
-        const mediaCount = getGenericGalleryMediaElements(root).length;
-        if (collectPerformance) {
-            performanceDetail.generic.rootSlideElements += slides.length;
-            performanceDetail.generic.rootMediaElements += mediaCount;
-            performanceDetail.generic.maxSlidesPerRoot = Math.max(
-                performanceDetail.generic.maxSlidesPerRoot,
-                slides.length
-            );
-            performanceDetail.generic.maxMediaElementsPerRoot = Math.max(
-                performanceDetail.generic.maxMediaElementsPerRoot,
-                mediaCount
-            );
-        }
-        const hasControls = getGenericCarouselControl(root, 'forward').control ||
-            getGenericCarouselControl(root, 'backward').control;
-        const totalHint = getGenericTotalHint(root);
-        const score = Number(hasGallerySignal) + Number(slides.length > 1) +
-            Number(mediaCount > 0) + Number(Boolean(hasControls)) + Number(Boolean(totalHint));
-        const isGalleryRoot = hasGallerySignal && score >= 2;
-        recordPhase('candidateClassificationMs', phaseStartedAt);
-        return isGalleryRoot;
-    };
-    const traverseGenericCarousel = async (root) => {
-        const gallery = {
-            key: getGenericGalleryKey(root),
-            type: 'unknown',
-            knownSources: new Set(),
-            stateLabels: new Map(),
-            visitedStates: new Set()
-        };
-        const initialState = await waitFor(() => getGenericCarouselState(root, gallery), 1500);
-        if (!initialState || isAborted()) return;
-
-        const initialLabel = getCarouselStateLabel(gallery, initialState.key);
-        const virtualHint = /(?:virtual|recycl)/i.test([
-            getElementClassText(root),
-            root.getAttribute?.('data-virtual'),
-            root.getAttribute?.('data-swiper-virtual')
-        ].filter(Boolean).join(' '));
-        reportCarousel(
-            'CAROUSEL',
-            'discovered',
-            'gallery=' + gallery.key,
-            'type=unknown',
-            'state=' + initialLabel,
-            'virtualHint=' + virtualHint,
-            'mountedSlides=' + initialState.mountedSlides,
-            'totalHint=' + (initialState.totalHint ?? 'unknown')
-        );
-        await processGenericCarouselState(root, gallery, initialState, 'initial');
-        if (isAborted()) return;
-
-        const traverseDirection = async (direction) => {
-            let successfulTransitions = 0;
-            while (!isAborted()) {
-                const beforeState = await waitFor(() => getGenericCarouselState(root, gallery), 1000);
-                if (!beforeState) return {kind: 'failed', reason: 'gallery-unavailable'};
-
-                const controlState = getGenericCarouselControl(root, direction);
-                if (!controlState.control) {
-                    reportCarousel(
-                        'CAROUSEL EDGE',
-                        'gallery=' + gallery.key,
-                        'direction=' + direction,
-                        'reason=' + controlState.reason
-                    );
-                    return {kind: 'edge', reason: controlState.reason};
-                }
-                reportCarousel(
-                    'CAROUSEL NAV',
-                    'gallery=' + gallery.key,
-                    'direction=' + direction,
-                    'control=' + controlState.kind,
-                    'stateBefore=' + getCarouselStateLabel(gallery, beforeState.key)
-                );
-                try {
-                    controlState.control.click();
-                    reportActivity();
-                } catch {
-                    reportCarousel(
-                        'CAROUSEL EDGE',
-                        'gallery=' + gallery.key,
-                        'direction=' + direction,
-                        'reason=control-action-failed'
-                    );
-                    return {kind: 'failed', reason: 'control-action-failed'};
-                }
-
-                const nextState = await waitFor(() => {
-                    const state = getGenericCarouselState(root, gallery);
-                    return state && state.key !== beforeState.key ? state : null;
-                }, 3000);
-                if (isAborted()) return {kind: 'aborted'};
-                if (!nextState) {
-                    const settledControl = getGenericCarouselControl(root, direction);
-                    const reason = settledControl.control ? 'stable-state' : settledControl.reason;
-                    reportCarousel(
-                        'CAROUSEL EDGE',
-                        'gallery=' + gallery.key,
-                        'direction=' + direction,
-                        'reason=' + reason
-                    );
-                    return {kind: 'edge', reason};
-                }
-
-                successfulTransitions += 1;
-                const wasVisited = gallery.visitedStates.has(nextState.key);
-                const stateResult = await processGenericCarouselState(root, gallery, nextState, direction);
-                if (isAborted()) return {kind: 'aborted'};
-                if (direction === 'forward' && wasVisited && successfulTransitions > 1 &&
-                    stateResult.newSources === 0) {
-                    gallery.type = 'cyclic';
-                    reportCarousel(
-                        'CAROUSEL END',
-                        'gallery=' + gallery.key,
-                        'type=cyclic',
-                        'visitedStates=' + gallery.visitedStates.size,
-                        'totalHint=' + (nextState.totalHint ?? 'unknown'),
-                        'reason=cycle-complete'
-                    );
-                    return {kind: 'cycle', reason: 'cycle-complete'};
-                }
-            }
-            return {kind: 'aborted'};
-        };
-
-        const forward = await traverseDirection('forward');
-        if (forward.kind === 'aborted' || forward.kind === 'cycle' || forward.kind === 'failed') return;
-        const backward = await traverseDirection('backward');
-        if (backward.kind !== 'edge' || isAborted()) return;
-
-        const type = gallery.visitedStates.size === 1 ? 'single' : 'finite';
-        gallery.type = type;
-        reportCarousel(
-            'CAROUSEL END',
-            'gallery=' + gallery.key,
-            'type=' + type,
-            'visitedStates=' + gallery.visitedStates.size,
-            'totalHint=' + (initialState.totalHint ?? 'unknown'),
-            'reason=both-edges-exhausted'
-        );
-    };
-    const traverseGenericCarousels = async () => {
-        const discoveryStartedAt = getPhaseStartedAt();
-        const elements = queryDeep(document, '*');
-        const roots = elements.filter(isGenericGalleryRoot);
-        const candidateIterationStartedAt = getPhaseStartedAt();
-        if (collectPerformance) {
-            performanceDetail.generic.candidateCount = elements.length;
-            performanceDetail.generic.documentElementsScanned = elements.length;
-            elements.forEach((root) => {
-                if (performanceState?.genericCandidates?.has(root)) {
-                    performanceDetail.generic.previouslySeenCandidates += 1;
-                } else {
-                    performanceDetail.generic.newCandidates += 1;
-                    performanceState?.genericCandidates?.add(root);
-                }
-            });
-        }
-        recordPhase('candidateIterationMs', candidateIterationStartedAt);
-        const isExplicitGalleryRoot = (root) => Boolean(
-            root.id || root.getAttribute?.('data-carousel-id') || root.getAttribute?.('data-gallery-id')
-        );
-        const containsComposed = (ancestor, element) => {
-            const phaseStartedAt = getPhaseStartedAt();
-            for (let current = element; current;) {
-                if (current === ancestor) {
-                    recordPhase('ancestorDescendantChecksMs', phaseStartedAt);
-                    return true;
-                }
-                current = current.parentElement ?? current.getRootNode?.().host ?? null;
-            }
-            recordPhase('ancestorDescendantChecksMs', phaseStartedAt);
-            return false;
-        };
-        const uniqueRoots = roots.filter((root) => !roots.some((other) => other !== root &&
-            !isExplicitGalleryRoot(root) && isExplicitGalleryRoot(other) &&
-            (containsComposed(root, other) || containsComposed(other, root))
-        ));
-        recordPhase('genericCarouselDiscoveryMs', discoveryStartedAt);
-        for (const root of uniqueRoots) {
-            const rootIterationStartedAt = getPhaseStartedAt();
-            if (isAborted()) return;
-            if (collectPerformance) {
-                performanceDetail.generic.rootsConsidered += 1;
-                const rootState = performanceState?.genericRoots?.get(root);
-                if (rootState) {
-                    performanceDetail.generic.rootsPreviouslySeen += 1;
-                    performanceDetail.generic.rootsRechecked += 1;
-                    if (rootState.lastMutationVersion > rootState.lastCheckedMutationVersion) {
-                        performanceDetail.generic.rootsChangedSincePreviousCall += 1;
-                    } else {
-                        performanceDetail.generic.rootsUnchangedSincePreviousCall += 1;
-                    }
-                    rootState.lastCheckedMutationVersion = performanceState?.mutationVersion ??
-                        rootState.lastCheckedMutationVersion;
-                    rootState.lastSeenCall = performanceDetail.callIndex;
-                } else {
-                    performanceDetail.generic.rootsNew += 1;
-                    performanceState?.genericRoots?.set(root, {
-                        firstSeenCall: performanceDetail.callIndex,
-                        lastSeenCall: performanceDetail.callIndex,
-                        lastMutationVersion: performanceState?.mutationVersion ?? 0,
-                        lastCheckedMutationVersion: performanceState?.mutationVersion ?? 0
-                    });
-                }
-            }
-            if (processedCarouselRoots.has(root)) {
-                if (collectPerformance) performanceDetail.generic.rootsAlreadyProcessed += 1;
-                recordPhase('candidateIterationMs', rootIterationStartedAt);
-                continue;
-            }
-            processedCarouselRoots.add(root);
-            recordPhase('candidateIterationMs', rootIterationStartedAt);
-            const carouselStartedAt = performance.now();
-            genericCarouselCalls += 1;
-            try {
-                await traverseGenericCarousel(root);
-            } finally {
-                genericCarouselMs += performance.now() - carouselStartedAt;
-            }
-        }
-    };
-    if (traverseCarousel) await traverseGenericCarousels();
-    */
 
     const photoSwipeScanResult = await activePhotoSwipeScanner.scan({
         document,
@@ -2191,143 +1250,6 @@ export async function scanPhotoSwipeImages({
     directPhotoSwipeMs += photoSwipeScanResult.directPhotoSwipeMs;
     directPhotoSwipeCalls += photoSwipeScanResult.directPhotoSwipeCalls;
 
-    /*
-     * Beta 0.0.08 legacy direct PhotoSwipe target scan.
-     * Replaced by PhotoSwipeScanner; retained inactive for direct behaviour
-     * comparison during the extraction phase.
-     *
-    const directDiscoveryStartedAt = getPhaseStartedAt();
-    const targets = queryDeep(document, '[at-attr="media_locator"]');
-    if (collectPerformance) performanceDetail.direct.targetCount = targets.length;
-    recordPhase('directPhotoSwipeDiscoveryMs', directDiscoveryStartedAt);
-    for (const target of targets) {
-        const targetIterationStartedAt = getPhaseStartedAt();
-        const candidateStartedAt = getPhaseStartedAt();
-        const finishTargetIteration = () => recordPhase(
-            'candidateIterationMs',
-            targetIterationStartedAt
-        );
-        if (collectPerformance) {
-            if (performanceState?.directTargets?.has(target)) {
-                performanceDetail.direct.previouslySeenTargets += 1;
-            } else {
-                performanceDetail.direct.newTargets += 1;
-                performanceState?.directTargets?.add(target);
-            }
-        }
-        const targetSource = getTargetSourceKey(target);
-        if (isAborted()) {
-            recordPhase('candidateClassificationMs', candidateStartedAt);
-            finishTargetIteration();
-            continue;
-        }
-        if (processedTargets.has(target)) {
-            if (collectPerformance) performanceDetail.direct.processedTargetsSkipped += 1;
-            recordPhase('candidateClassificationMs', candidateStartedAt);
-            finishTargetIteration();
-            continue;
-        }
-        if (targetSource && processedTargetSources.has(targetSource)) {
-            if (collectPerformance) performanceDetail.direct.sourceDuplicatesSkipped += 1;
-            recordPhase('candidateClassificationMs', candidateStartedAt);
-            finishTargetIteration();
-            continue;
-        }
-        if (!isVisibleMediaTarget(target)) {
-            if (collectPerformance) performanceDetail.direct.invisibleTargetsSkipped += 1;
-            recordPhase('candidateClassificationMs', candidateStartedAt);
-            finishTargetIteration();
-            continue;
-        }
-        if (collectPerformance) performanceDetail.direct.openModalChecks += 1;
-        if (findOpenPhotoSwipe()) {
-            if (collectPerformance) performanceDetail.direct.openModalSkips += 1;
-            recordPhase('candidateClassificationMs', candidateStartedAt);
-            finishTargetIteration();
-            continue;
-        }
-        recordPhase('candidateClassificationMs', candidateStartedAt);
-        finishTargetIteration();
-        processedTargets.add(target);
-        if (targetSource) processedTargetSources.add(targetSource);
-
-        const photoSwipeStartedAt = performance.now();
-        const directCandidatesBefore = candidates.length;
-        directPhotoSwipeCalls += 1;
-        let temporaryStyle = null;
-        try {
-            temporaryStyle = createTemporaryStyle();
-            target.click();
-
-            const photoSwipe = await waitFor(findOpenPhotoSwipe, 2000);
-            if (isAborted()) break;
-            if (!photoSwipe) continue;
-
-            reportActivity();
-            if (traverseCarousel) {
-                await traversePhotoSwipeCarousel(photoSwipe);
-                continue;
-            }
-
-            const readySlide = await waitFor(
-                () => getReadyActiveSlideImage(findOpenPhotoSwipe()),
-                3000
-            );
-            if (isAborted()) break;
-            if (!readySlide) continue;
-
-            candidates.push(...collectPhotoSwipeCandidates(readySlide.photoSwipe));
-            const beforeZoom = getImageSnapshot(readySlide.image);
-            try {
-                readySlide.image.click();
-                reportActivity();
-            } catch {
-                if (!isAborted()) reportZoom(imageDimensions(beforeZoom) + ' no-upgrade');
-                continue;
-            }
-
-            const zoomedSlide = await waitFor(() => {
-                const activeSlide = getReadyActiveSlideImage(findOpenPhotoSwipe());
-                if (!activeSlide) return null;
-
-                const afterZoom = getImageSnapshot(activeSlide.image);
-                return didZoomStateChange(beforeZoom, afterZoom, activeSlide.photoSwipe)
-                    ? {activeSlide, afterZoom}
-                    : null;
-            }, 3000);
-            if (isAborted()) break;
-            if (!zoomedSlide) {
-                reportZoom(imageDimensions(beforeZoom) + ' no-upgrade');
-                continue;
-            }
-
-            candidates.push(...collectPhotoSwipeCandidates(zoomedSlide.activeSlide.photoSwipe));
-            const afterZoom = zoomedSlide.afterZoom;
-            const resolutionImproved = afterZoom.naturalWidth > beforeZoom.naturalWidth ||
-                afterZoom.naturalHeight > beforeZoom.naturalHeight;
-            reportZoom(resolutionImproved
-                ? imageDimensions(beforeZoom) + ' -> ' + imageDimensions(afterZoom) + ' replaced'
-                : imageDimensions(beforeZoom) + ' no-upgrade');
-        } catch {
-            // One page-owned PhotoSwipe target must not stop the remaining DeepScan.
-        } finally {
-            try {
-                const closed = await closePhotoSwipe();
-                if (!closed && findOpenPhotoSwipe()) await closePhotoSwipe();
-            } finally {
-                temporaryStyle?.remove();
-                directPhotoSwipeMs += performance.now() - photoSwipeStartedAt;
-                if (collectPerformance) {
-                    performanceDetail.direct.resultCount += Math.max(
-                        0,
-                        candidates.length - directCandidatesBefore
-                    );
-                }
-            }
-        }
-    }
-
-    */
     const scanPhotoSwipeMs = performance.now() - performanceStartedAt;
     try {
         const detail = collectPerformance ? {
@@ -2860,7 +1782,6 @@ export async function runIsolatedDeepScan({
 export async function runHiddenFrameDeepScan({
     ignoreHiddenImages = false,
     onBatch = null,
-    onActiveScrollContainer = null,
     signal = null,
     stableCycleLimit = 3,
     scrollStepFactor = 0.8,
@@ -2893,54 +1814,14 @@ export async function runHiddenFrameDeepScan({
     let observer = null;
     let lastRelevantMutationAt = startedAt;
     let relevantMutationCount = 0;
-    let relevantChildListMutationCount = 0;
-    let relevantAttributeMutationCount = 0;
-    let relevantAddedElementCount = 0;
-    let relevantRemovedElementCount = 0;
     let photoSwipeActivityCount = 0;
-    let progressDiagnosticBatchSequence = 0;
-    let deepScanPass = 0;
     let currentPassMetrics = null;
-    let lastNewSourceAt = null;
-    let lastRawCandidateAt = null;
-    let collectionSequence = 0;
-    let observedMutationCount = 0;
-    let observedChildListMutationCount = 0;
-    let observedAttributeMutationCount = 0;
-    let observedAddedElementCount = 0;
-    let observedRemovedElementCount = 0;
     // Kept central so a future setting can switch LOW traversal back on without
     // changing the planner or any discovery code.
     const skipLowPriorityContainers = true;
-    const ofRegressionTrace = {
-        container: null,
-        containerId: 0,
-        firstScrollTraced: false,
-        firstScrollSettlePending: false,
-        firstEdgeWaitTraced: false,
-        edgeMutationTracking: false,
-        relevantMutationsInsideContainer: 0,
-        relevantMutationsOutsideContainer: 0,
-        documentDownObserved: false,
-        secondContainerDecisionTraced: false,
-        snapshots: {},
-        secondContainerDecision: 'not-observed'
-    };
-    const logOFRegressionTrace = (event, details = {}) => {
-        try {
-            console.info(
-                '[OF REGRESSION TRACE]',
-                `event=${event}`,
-                ...Object.entries(details).map(([name, value]) => `${name}=${value}`)
-            );
-        } catch {
-            // Temporary diagnostics must never affect a hidden scan.
-        }
-    };
     const edgeLoadWaitMs = Math.max(5000, maximumSettleMs);
     const edgeLoadPollMs = 100;
     const isActive = () => signal?.aborted !== true;
-    const getElapsedMs = () => Math.max(0, Math.round(performance.now() - startedAtPerformance));
     const createPerformanceMetrics = () => ({
         steps: 0,
         scrollActionMs: 0,
@@ -2980,10 +1861,12 @@ export async function runHiddenFrameDeepScan({
         repeatContainers: 0,
         newSources: 0,
         newRawCandidates: 0,
+        newBases: 0,
+        queryVariants: 0,
+        resolutionUpgrades: 0,
         newDomImages: 0,
         newTargets: 0,
-        newGalleries: 0,
-        mutationStart: null
+        newGalleries: 0
     });
     const scanPerformanceMetrics = createPerformanceMetrics();
     const edgeRangeWaits = [];
@@ -3399,11 +2282,6 @@ export async function runHiddenFrameDeepScan({
                     ([direction, summary]) => [direction, roundEdgeRangeGrowthSummary(summary)]
                 ))
             },
-            edgeRangeWaits: edgeRangeWaits.map((wait) => ({
-                ...wait,
-                durationMs: Math.round(wait.durationMs),
-                lastRelevantMutationAgeMs: Math.round(wait.lastRelevantMutationAgeMs)
-            })),
             settle: {
                 ...roundSettleSummary(settle),
                 byScope: Object.fromEntries(Object.entries(settleByScope).map(
@@ -3414,15 +2292,13 @@ export async function runHiddenFrameDeepScan({
                 )),
                 durationBuckets: settleDurationBuckets
             },
-            settleWaits: settleWaits.map((wait) => ({
-                ...wait,
-                durationMs: Math.round(wait.durationMs),
-                lastRelevantMutationAgeMs: Math.round(wait.lastRelevantMutationAgeMs)
-            })),
             counters: {
                 collectSourcesCalls: scanPerformanceMetrics.collectSourcesCalls,
                 rawCandidates: scanPerformanceMetrics.rawCandidates,
                 afterDedupe: scanPerformanceMetrics.dedupedCandidates,
+                newBases: scanPerformanceMetrics.newBases,
+                queryVariants: scanPerformanceMetrics.queryVariants,
+                resolutionUpgrades: scanPerformanceMetrics.resolutionUpgrades,
                 batches: scanPerformanceMetrics.batches,
                 documentUpSteps: scanPerformanceMetrics.documentUpSteps,
                 documentDownSteps: scanPerformanceMetrics.documentDownSteps,
@@ -3479,48 +2355,10 @@ export async function runHiddenFrameDeepScan({
         });
         return added;
     };
-    const getMutationSnapshot = () => ({
-        total: observedMutationCount,
-        childList: observedChildListMutationCount,
-        attributes: observedAttributeMutationCount,
-        addedElements: observedAddedElementCount,
-        removedElements: observedRemovedElementCount,
-        relevantTotal: relevantMutationCount,
-        relevantChildList: relevantChildListMutationCount,
-        relevantAttributes: relevantAttributeMutationCount,
-        relevantAddedElements: relevantAddedElementCount,
-        relevantRemovedElements: relevantRemovedElementCount
-    });
-    const getMutationDelta = (before) => ({
-        total: Math.max(0, observedMutationCount - before.total),
-        childList: Math.max(0, observedChildListMutationCount - before.childList),
-        attributes: Math.max(0, observedAttributeMutationCount - before.attributes),
-        addedElements: Math.max(0, observedAddedElementCount - before.addedElements),
-        removedElements: Math.max(0, observedRemovedElementCount - before.removedElements),
-        relevantTotal: Math.max(0, relevantMutationCount - before.relevantTotal),
-        relevantChildList: Math.max(
-            0,
-            relevantChildListMutationCount - before.relevantChildList
-        ),
-        relevantAttributes: Math.max(
-            0,
-            relevantAttributeMutationCount - before.relevantAttributes
-        ),
-        relevantAddedElements: Math.max(
-            0,
-            relevantAddedElementCount - before.relevantAddedElements
-        ),
-        relevantRemovedElements: Math.max(
-            0,
-            relevantRemovedElementCount - before.relevantRemovedElements
-        )
-    });
     const getCandidateURLClass = (candidateURL) => {
         try {
             const url = new URL(candidateURL);
-            const isDataURL = url.protocol === 'data:';
-            const isBlobURL = url.protocol === 'blob:';
-            const base = isDataURL || isBlobURL
+            const base = url.protocol === 'data:' || url.protocol === 'blob:'
                 ? candidateURL
                 : `${url.origin}${url.pathname}`;
             const knownVariants = seenCandidateURLsByBase.get(base);
@@ -3528,17 +2366,13 @@ export async function runHiddenFrameDeepScan({
             return {
                 base,
                 baseKnown: (knownVariants?.size ?? 0) > 0,
-                queryVariant: Boolean(knownVariants?.size && url.search),
-                dataURL: isDataURL,
-                blobURL: isBlobURL
+                queryVariant: Boolean(knownVariants?.size && url.search)
             };
         } catch {
             return {
                 base: candidateURL,
                 baseKnown: false,
-                queryVariant: false,
-                dataURL: false,
-                blobURL: false
+                queryVariant: false
             };
         }
     };
@@ -3650,16 +2484,7 @@ export async function runHiddenFrameDeepScan({
                 : 'timeout';
         return createResult(false, endReason, rangeBefore, rangeAfter);
     };
-    const reportActiveScrollContainer = (container = null, colorIndex = 0) => {
-        if (typeof onActiveScrollContainer !== 'function') return;
-
-        try {
-            onActiveScrollContainer(container, colorIndex);
-        } catch {
-            // The temporary visible-tab marker must never affect the hidden traversal.
-        }
-    };
-    const collectSources = async ({diagnosticPhase = null, metrics = null, context = null} = {}) => {
+    const collectSources = async ({metrics = null} = {}) => {
         if (!isActive()) return 0;
 
         recordCollectionMetric(metrics, 'collectSourcesCalls', 1);
@@ -3680,12 +2505,10 @@ export async function runHiddenFrameDeepScan({
             photoSwipeScanner,
             performanceState: photoSwipePerformanceState,
             signal,
-            onDiagnostic: (message) => console.info('[DeepScan ZOOM]', message),
             onCarouselDiagnostic: (event, ...details) => {
                 if (event === 'CAROUSEL' && details.includes('discovered')) {
                     recordCollectionMetric(metrics, 'newGalleries', 1);
                 }
-                console.info(`[DeepScan ${event}]`, ...details);
             },
             onActivity: () => {
                 photoSwipeActivityCount += 1;
@@ -3705,16 +2528,10 @@ export async function runHiddenFrameDeepScan({
         recordCollectionMetric(metrics, 'scanPhotoSwipeCalls', 1);
         const candidatePipelineStartedAt = performance.now();
         const newCandidates = [];
-        const photoSwipeURLs = new Set(photoSwipeCandidates.map((candidate) => candidate?.url));
         const candidateClasses = {
             newBases: 0,
             queryVariants: 0,
-            resolutionUpgrades: 0,
-            dataURLs: 0,
-            blobURLs: 0,
-            zeroDimensions: 0,
-            smallDimensions: 0,
-            photoSwipe: 0
+            resolutionUpgrades: 0
         };
         recordCollectionMetric(
             metrics,
@@ -3749,14 +2566,6 @@ export async function runHiddenFrameDeepScan({
             } else if (!candidateClass.baseKnown) {
                 candidateClasses.newBases += 1;
             }
-            if (candidateClass.dataURL) candidateClasses.dataURLs += 1;
-            if (candidateClass.blobURL) candidateClasses.blobURLs += 1;
-            if (serializedCandidate.width <= 0 || serializedCandidate.height <= 0) {
-                candidateClasses.zeroDimensions += 1;
-            } else if (serializedCandidate.width <= 144 && serializedCandidate.height <= 144) {
-                candidateClasses.smallDimensions += 1;
-            }
-            if (photoSwipeURLs.has(serializedCandidate.url)) candidateClasses.photoSwipe += 1;
 
             const variants = seenCandidateURLsByBase.get(candidateClass.base) ?? new Set();
             variants.add(serializedCandidate.url);
@@ -3765,48 +2574,16 @@ export async function runHiddenFrameDeepScan({
             newCandidates.push(serializedCandidate);
         }
         recordCollectionMetric(metrics, 'dedupedCandidates', newCandidates.length);
+        recordCollectionMetric(metrics, 'newBases', candidateClasses.newBases);
+        recordCollectionMetric(metrics, 'queryVariants', candidateClasses.queryVariants);
+        recordCollectionMetric(metrics, 'resolutionUpgrades', candidateClasses.resolutionUpgrades);
         if (newCandidates.length > 0) {
-            const discoveredAt = getElapsedMs();
-            lastNewSourceAt = discoveredAt;
-            lastRawCandidateAt = discoveredAt;
             recordCollectionMetric(metrics, 'newSources', newCandidates.length);
             recordCollectionMetric(metrics, 'newRawCandidates', newCandidates.length);
         }
         if (newCandidates.length > 0 && typeof onBatch === 'function' && isActive()) {
-            const candidatePreparationMs = performance.now() - candidatePipelineStartedAt;
-            const diagnostic = {
-                id: `${startedAt}-${++progressDiagnosticBatchSequence}`,
-                phase: diagnosticPhase ?? context?.scope ?? 'deep-scan',
-                rawCandidates: newCandidates.length,
-                collection: ++collectionSequence,
-                emittedAt: Date.now(),
-                candidatePreparationMs: Math.round(candidatePreparationMs),
-                ...(Number.isInteger(context?.pass) ? {pass: context.pass} : {}),
-                ...(typeof context?.container === 'string' ? {container: context.container} : {}),
-                ...(typeof context?.direction === 'string' ? {direction: context.direction} : {}),
-                scanImagesMs: Math.round(scanImagesMs),
-                carouselPhotoSwipeMs: Math.round(carouselPhotoSwipeMs),
-                ...candidateClasses
-            };
-            console.info(
-                '[DeepScan CANDIDATE CLASS]',
-                `phase=${diagnostic.phase}`,
-                `collection=${diagnostic.collection}`,
-                ...(Number.isInteger(diagnostic.pass) ? [`pass=${diagnostic.pass}`] : []),
-                ...(diagnostic.container ? [`container=${diagnostic.container}`] : []),
-                ...(diagnostic.direction ? [`direction=${diagnostic.direction}`] : []),
-                `rawCandidates=${diagnostic.rawCandidates}`,
-                `newBases=${diagnostic.newBases}`,
-                `queryVariants=${diagnostic.queryVariants}`,
-                `resolutionUpgrades=${diagnostic.resolutionUpgrades}`,
-                `dataURLs=${diagnostic.dataURLs}`,
-                `blobURLs=${diagnostic.blobURLs}`,
-                `zeroDimensions=${diagnostic.zeroDimensions}`,
-                `smallDimensions=${diagnostic.smallDimensions}`,
-                `photoSwipe=${diagnostic.photoSwipe}`
-            );
             const batchDispatchStartedAt = performance.now();
-            await onBatch(newCandidates, diagnostic);
+            await onBatch(newCandidates);
             const batchDispatchMs = performance.now() - batchDispatchStartedAt;
             recordCollectionMetric(metrics, 'batchDispatchMs', batchDispatchMs);
             recordCollectionMetric(metrics, 'batches', 1);
@@ -3828,11 +2605,6 @@ export async function runHiddenFrameDeepScan({
 
         return Array.from(node.children).some((element) => !isGeneratedScrollAnchor(element));
     };
-    const countMutationElements = (nodes) => Array.from(nodes ?? []).reduce((count, node) => {
-        if (node?.nodeType === Node.ELEMENT_NODE) return count + 1;
-        if (node?.nodeType !== Node.DOCUMENT_FRAGMENT_NODE) return count;
-        return count + (node.querySelectorAll?.('*').length ?? 0);
-    }, 0);
     const isRelevantMutation = (record) => {
         if (record.type === 'attributes') {
             return !isGeneratedScrollAnchor(record.target) && record.attributeName !== 'class' &&
@@ -3922,152 +2694,6 @@ export async function runHiddenFrameDeepScan({
         const metrics = getContainerMetrics(container);
         return [metrics.scrollHeight, metrics.clientHeight].join(':');
     };
-    const getOFRegressionTraceIdentity = (container) => {
-        const className = typeof container?.className === 'string'
-            ? container.className.trim()
-            : container?.getAttribute?.('class')?.trim() ?? '';
-        return {
-            tagName: container?.tagName?.toLowerCase?.() ?? 'unknown',
-            id: container?.id?.trim?.() || 'none',
-            className: className.length > 96 ? `${className.slice(0, 93)}...` : className || 'none'
-        };
-    };
-    const getOFRegressionTraceSnapshot = (container) => {
-        if (!container) {
-            return {
-                isConnected: false,
-                scrollTop: 'unavailable',
-                scrollHeight: 'unavailable',
-                clientHeight: 'unavailable',
-                scrollRange: 'unavailable'
-            };
-        }
-
-        const geometry = ContainerAnalyser.getGeometry(container);
-        return {
-            isConnected: container.isConnected,
-            scrollTop: geometry.scrollTop,
-            scrollHeight: geometry.scrollHeight,
-            clientHeight: geometry.clientHeight,
-            scrollRange: Math.max(0, geometry.scrollHeight - geometry.clientHeight)
-        };
-    };
-    const captureOFRegressionTraceSnapshot = (phase, details = {}) => {
-        const container = ofRegressionTrace.container;
-        if (!container) return null;
-
-        const snapshot = {
-            ...getOFRegressionTraceSnapshot(container),
-            completedScrollContainerState: completedScrollContainerStates.get(container) ?? 'none',
-            ...details
-        };
-        ofRegressionTrace.snapshots[phase] = snapshot;
-        logOFRegressionTrace('container-snapshot', {
-            traceContainerId: ofRegressionTrace.containerId,
-            phase,
-            ...snapshot
-        });
-        return snapshot;
-    };
-    const trackOFRegressionContainer = (container) => {
-        if (ofRegressionTrace.container || !container) return;
-
-        ofRegressionTrace.container = container;
-        ofRegressionTrace.containerId = 1;
-        logOFRegressionTrace('container-selected', {
-            traceContainerId: ofRegressionTrace.containerId,
-            ...getOFRegressionTraceIdentity(container)
-        });
-        captureOFRegressionTraceSnapshot('first-container-before');
-    };
-    const isOFRegressionTraceContainer = (container) => ofRegressionTrace.container === container;
-    const recordOFRegressionTraceMutations = (records) => {
-        if (!ofRegressionTrace.edgeMutationTracking || !ofRegressionTrace.container) return;
-
-        records.forEach((record) => {
-            let inside = false;
-            try {
-                inside = record.target === ofRegressionTrace.container ||
-                    ofRegressionTrace.container.contains(record.target);
-            } catch {
-                inside = false;
-            }
-            if (inside) ofRegressionTrace.relevantMutationsInsideContainer += 1;
-            else ofRegressionTrace.relevantMutationsOutsideContainer += 1;
-        });
-    };
-    const traceOFRegressionSecondContainerDecision = (plan = null) => {
-        if (!ofRegressionTrace.documentDownObserved ||
-            ofRegressionTrace.secondContainerDecisionTraced || !ofRegressionTrace.container) {
-            return;
-        }
-
-        const entry = plan?.entries.find(({container}) => container === ofRegressionTrace.container);
-        const snapshot = getOFRegressionTraceSnapshot(ofRegressionTrace.container);
-        const storedState = completedScrollContainerStates.get(ofRegressionTrace.container) ?? 'none';
-        const currentState = snapshot.isConnected
-            ? [snapshot.scrollHeight, snapshot.clientHeight].join(':')
-            : 'unavailable';
-        const decision = entry
-            ? !entry.isScrollable
-                ? 'structural-pending'
-                : entry.priority === 'low' && skipLowPriorityContainers
-                    ? 'low-priority'
-                    : 'pending'
-            : !snapshot.isConnected
-                ? 'disconnected'
-                : storedState !== 'none' && storedState === currentState
-                    ? 'completed-unchanged'
-                    : 'not-pending';
-        ofRegressionTrace.secondContainerDecisionTraced = true;
-        ofRegressionTrace.secondContainerDecision = decision;
-        captureOFRegressionTraceSnapshot('second-container-decision', {
-            decision,
-            currentTraversalState: currentState,
-            planEntry: Boolean(entry),
-            priority: entry?.priority ?? 'none'
-        });
-    };
-    const traceOFRegressionAfterDocumentTraversal = (direction) => {
-        if (!ofRegressionTrace.container) return;
-
-        captureOFRegressionTraceSnapshot(`after-document-${direction}`);
-        if (direction === 'down') ofRegressionTrace.documentDownObserved = true;
-    };
-    const traceOFRegressionPassDecision = ({repeatReason, pendingContainers} = {}) => {
-        if (repeatReason !== 'container-pending' || !ofRegressionTrace.container) return;
-
-        const trackedContainerPending = pendingContainers?.some(
-            ({container}) => container === ofRegressionTrace.container
-        ) === true;
-        logOFRegressionTrace('repeat-container-pending', {
-            traceContainerId: ofRegressionTrace.containerId,
-            trackedContainerPending,
-            reason: trackedContainerPending ? 'tracked-container' : 'other-pending-container',
-            pendingContainerCount: pendingContainers?.length ?? 0
-        });
-    };
-    const logOFRegressionTraceSummary = ({status, performance} = {}) => {
-        const getSnapshotSummary = (phase) => {
-            const snapshot = ofRegressionTrace.snapshots[phase];
-            return snapshot
-                ? `scrollTop:${snapshot.scrollTop},range:${snapshot.scrollRange}`
-                : 'not-recorded';
-        };
-        logOFRegressionTrace('summary', {
-            hiddenStatus: status ?? 'unknown',
-            passes: performance?.passes?.length ?? 0,
-            totalDurationMs: performance?.totalMs ?? 'unavailable',
-            trackedContainer: ofRegressionTrace.container ? ofRegressionTrace.containerId : 'none',
-            initial: getSnapshotSummary('first-container-before'),
-            afterFirstContainer: getSnapshotSummary('after-first-container'),
-            afterDocumentUp: getSnapshotSummary('after-document-up'),
-            afterDocumentDown: getSnapshotSummary('after-document-down'),
-            secondContainerDecision: ofRegressionTrace.secondContainerDecision,
-            firstEdgeWaitMutationsInside: ofRegressionTrace.relevantMutationsInsideContainer,
-            firstEdgeWaitMutationsOutside: ofRegressionTrace.relevantMutationsOutsideContainer
-        });
-    };
     const getPendingRelevantContainerCandidates = () => {
         completedScrollContainerStates.forEach((_state, container) => {
             if (!container.isConnected) completedScrollContainerStates.delete(container);
@@ -4085,36 +2711,12 @@ export async function runHiddenFrameDeepScan({
             completedScrollContainerStates.set(container, getContainerTraversalState(container));
         });
     };
-    const getContainerDiagnosticState = (container) => {
-        const scrollInfo = ContainerAnalyser.getScrollInfo(container);
-        const {geometry} = scrollInfo;
-
-        return {
-            scrollTop: geometry.scrollTop,
-            scrollHeight: geometry.scrollHeight,
-            clientHeight: geometry.clientHeight,
-            overflowY: scrollInfo.overflowY,
-            flexDirection: scrollInfo.flexDirection
-        };
-    };
     const getScrollContainerIndex = (container) => {
         if (!knownScrollContainerIndices.has(container)) {
             knownScrollContainerIndices.set(container, knownScrollContainerIndices.size);
         }
 
         return knownScrollContainerIndices.get(container);
-    };
-    const getLogTimestamp = () => {
-        const now = new Date();
-        const pad = (value, length = 2) => String(value).padStart(length, '0');
-
-        return [now.getHours(), now.getMinutes(), now.getSeconds()]
-            .map((value) => pad(value))
-            .join(':') + `.${pad(now.getMilliseconds(), 3)}`;
-    };
-    const getContainerLogLabel = (container, index) => {
-        const id = typeof container?.id === 'string' ? container.id.trim() : '';
-        return id ? `container#${id}` : `container#?=${index}`;
     };
     const getContainerAnalysis = (container) => {
         if (!containerAnalyses.has(container)) {
@@ -4130,46 +2732,13 @@ export async function runHiddenFrameDeepScan({
         }
         return containerAnalyses.get(container);
     };
-    const logContainerAnalysis = (container, index) => {
-        const analysis = getContainerAnalysis(container);
-        console.info(
-            '[DeepScan CONTAINER ANALYSIS]',
-            getContainerLogLabel(container, index),
-            `classification=${analysis.classification}`,
-            `priority=${analysis.priority}`,
-            `score=${analysis.score}`,
-            `suggestedAction=${analysis.suggestedAction}`,
-            `repeatedStructureRatio=${analysis.repeatedStructureRatio.toFixed(2)}`,
-            `rows=${analysis.rowCount}`,
-            `rowGroup=${analysis.rowGroupTag}`,
-            `links=${analysis.links}`,
-            `buttons=${analysis.buttons}`,
-            `svg=${analysis.svgs}`,
-            `images=${analysis.imageCount}`,
-            `smallImages=${analysis.smallImageCount}`,
-            `largeEnoughImages=${analysis.largeEnoughImageCount}`,
-            `eligibleImageRatio=${analysis.eligibleImageRatio.toFixed(2)}`,
-            `dominantImageSize=${analysis.dominantImageSize}`,
-            `dominantImageSizeRatio=${analysis.dominantImageSizeRatio.toFixed(2)}`,
-            `distinctImageSizes=${analysis.distinctImageSizes}`,
-            `mediaSignals=${analysis.mediaSignals}`,
-            `positiveSignals=${analysis.positiveSignals.join(',') || 'none'}`,
-            `negativeSignals=${analysis.negativeSignals.join(',') || 'none'}`
-        );
-        return analysis;
-    };
-    const getContainerPlanLabel = (container, index) => {
-        const id = typeof container?.id === 'string' ? container.id.trim() : '';
-        return id ? `#${id}` : `?=${index}`;
-    };
     const createContainerPlan = (candidates) => {
         const entries = candidates.map(({container, isScrollable, isStructural}) => {
             const isNewContainer = !knownScrollContainerIndices.has(container);
-            const index = getScrollContainerIndex(container);
+            getScrollContainerIndex(container);
             const analysis = getContainerAnalysis(container);
             return {
                 container,
-                index,
                 analysis,
                 priority: analysis.priority,
                 isNewContainer,
@@ -4189,111 +2758,20 @@ export async function runHiddenFrameDeepScan({
 
         return {entries, high, medium, low, analysisOnly, skipped, scanEntries};
     };
-    const logContainerPriority = (entry) => {
-        const action = !entry.isScrollable
-            ? 'classify-only'
-            : entry.priority === 'low' && skipLowPriorityContainers ? 'skip' : 'scan';
-        console.info(
-            '[DeepScan CONTAINER PRIORITY]',
-            `container=${getContainerPlanLabel(entry.container, entry.index)}`,
-            `classification=${entry.analysis.classification}`,
-            `priority=${entry.priority}`,
-            `score=${entry.analysis.score}`,
-            `scrollable=${entry.isScrollable}`,
-            `structural=${entry.isStructural}`,
-            `action=${action}`,
-            ...(action === 'skip' ? ['reason=low-priority-policy'] : []),
-            ...(action === 'classify-only' ? ['reason=non-scrollable-structure'] : [])
-        );
-    };
-    const logContainerPlan = (plan) => {
-        const labels = (entries) => entries.map(({container, index}) =>
-            getContainerPlanLabel(container, index)
-        ).join(',');
-        console.info(
-            '[DeepScan CONTAINER PLAN]',
-            `high=[${labels(plan.high)}]`,
-            `medium=[${labels(plan.medium)}]`,
-            `low=[${labels(plan.low)}]`,
-            `analysisOnly=[${labels(plan.analysisOnly)}]`,
-            `skipLowPriorityContainers=${skipLowPriorityContainers}`,
-            `scanOrder=[${labels(plan.scanEntries)}]`,
-            `skipped=[${labels(plan.skipped)}]`
-        );
-    };
-    const logContainerDirection = (label, container, index, {
-        reason = null,
-        durationMs = null
-    } = {}) => {
-        const state = getContainerDiagnosticState(container);
-        console.info(
-            `[DeepScan ${label}]`,
-            `time=${getLogTimestamp()}`,
-            ...(Number.isFinite(durationMs) ? [`durationMs=${Math.round(durationMs)}`] : []),
-            getContainerLogLabel(container, index),
-            ...(reason ? [`reason=${reason}`] : []),
-            `scrollTop=${state.scrollTop}`,
-            `scrollHeight=${state.scrollHeight}`,
-            `clientHeight=${state.clientHeight}`,
-            `overflowY=${state.overflowY}`,
-            `flexDirection=${state.flexDirection}`
-        );
-    };
-    const logContainerPerformance = (container, index, direction, result, metrics, durationMs) => {
-        const mutations = getMutationDelta(metrics.mutationStart ?? getMutationSnapshot());
-        const otherMs = Math.max(
-            0,
-            durationMs - metrics.scrollActionMs - metrics.settleMs - metrics.edgeRangeGrowthMs -
-                metrics.collectSourcesMs
-        );
-        console.info(
-            '[DeepScan CONTAINER PERF]',
-            `container=${getContainerLogLabel(container, index)}`,
-            `direction=${direction}`,
-            `result=${result}`,
-            `durationMs=${Math.round(durationMs)}`,
-            `steps=${metrics.steps}`,
-            `scrollActionMs=${Math.round(metrics.scrollActionMs)}`,
-            `settleMs=${Math.round(metrics.settleMs)}`,
-            `edgeRangeGrowthMs=${Math.round(metrics.edgeRangeGrowthMs)}`,
-            `collectSourcesMs=${Math.round(metrics.collectSourcesMs)}`,
-            `scanImagesMs=${Math.round(metrics.scanImagesMs)}`,
-            `carouselPhotoSwipeMs=${Math.round(metrics.carouselPhotoSwipeMs)}`,
-            `candidatePipelineMs=${Math.round(metrics.candidatePipelineMs)}`,
-            `otherMs=${Math.round(otherMs)}`,
-            `newSources=${metrics.newSources}`,
-            `newRawCandidates=${metrics.newRawCandidates}`,
-            'newAcceptedCandidates=pipeline-reported',
-            `newDomImages=${metrics.newDomImages}`,
-            `newTargets=${metrics.newTargets}`,
-            `mutations=${mutations.total}`,
-            `mutationChildList=${mutations.childList}`,
-            `mutationAttributes=${mutations.attributes}`,
-            `mutationAddedElements=${mutations.addedElements}`,
-            `mutationRemovedElements=${mutations.removedElements}`,
-            `relevantMutations=${mutations.relevantTotal}`
-        );
-    };
     const logPassSummary = (pass, metrics, durationMs, repeat, repeatReasons, newContainers) => {
-        const mutations = getMutationDelta(metrics.mutationStart ?? getMutationSnapshot());
         console.info(
             '[DeepScan PASS SUMMARY]',
             `pass=${pass}`,
             `durationMs=${Math.round(durationMs)}`,
             `newSources=${metrics.newSources}`,
-            `newCandidates=${metrics.newRawCandidates}`,
+            `rawCandidates=${metrics.newRawCandidates}`,
             `newImages=${metrics.newDomImages}`,
             `newContainers=${newContainers}`,
+            `containersHandled=${metrics.containersHandled}`,
+            `containersScanned=${metrics.containersScanned}`,
+            `containerScrollSteps=${metrics.containerScrollSteps}`,
+            `repeatContainers=${metrics.repeatContainers}`,
             `newGalleries=${metrics.newGalleries}`,
-            `mutations=${mutations.total}`,
-            `mutationChildList=${mutations.childList}`,
-            `mutationAttributes=${mutations.attributes}`,
-            `mutationAddedElements=${mutations.addedElements}`,
-            `mutationRemovedElements=${mutations.removedElements}`,
-            `relevantMutations=${mutations.relevantTotal}`,
-            `lastNewSourceAt=${lastNewSourceAt ?? 'none'}`,
-            `lastRawCandidateAt=${lastRawCandidateAt ?? 'none'}`,
-            'lastAcceptedCandidateAt=pipeline-reported',
             `repeat=${repeat}`,
             `repeatReasons=${repeatReasons.join(',') || 'none'}`
         );
@@ -4302,15 +2780,11 @@ export async function runHiddenFrameDeepScan({
     const isAtContainerBottom = (metrics) => metrics.scrollTop + metrics.clientHeight >=
         metrics.scrollHeight - 4;
     const getScrollRange = (metrics) => Math.max(0, metrics.scrollHeight - metrics.clientHeight);
-    const scanScrollableContainer = async (container, direction, index) => {
+    const scanScrollableContainer = async (container, direction) => {
         let edgeStableCycles = 0;
         let edgeLoadWaited = false;
-        let progressDiagnosticLogged = false;
-        const label = direction === 'up' ? 'UP' : 'DOWN';
         const directionStartedAt = performance.now();
         const directionMetrics = createPerformanceMetrics();
-        directionMetrics.mutationStart = getMutationSnapshot();
-        const containerLabel = getContainerLogLabel(container, index);
         let directionFinished = false;
 
         const finishContainerScan = (result) => {
@@ -4321,19 +2795,9 @@ export async function runHiddenFrameDeepScan({
                     'containerTraversalMs',
                     performance.now() - directionStartedAt
                 );
-                logContainerPerformance(
-                    container,
-                    index,
-                    direction,
-                    result,
-                    directionMetrics,
-                    performance.now() - directionStartedAt
-                );
             }
             return result;
         };
-
-        logContainerDirection(label, container, index);
 
         while (isActive() && container.isConnected && isRelevantScrollableContainer(container)) {
             addMetric(directionMetrics, 'steps', 1);
@@ -4342,26 +2806,14 @@ export async function runHiddenFrameDeepScan({
             const atEdge = direction === 'up'
                 ? isAtContainerTop(before)
                 : isAtContainerBottom(before);
-            const mutationsBefore = getMutationSnapshot();
-
             const scrollActionStartedAt = performance.now();
             if (!atEdge) {
-                const traceFirstScroll = isOFRegressionTraceContainer(container) &&
-                    !ofRegressionTrace.firstScrollTraced;
-                if (traceFirstScroll) {
-                    ofRegressionTrace.firstScrollTraced = true;
-                    ofRegressionTrace.firstScrollSettlePending = true;
-                    captureOFRegressionTraceSnapshot('first-container-scroll-before', {direction});
-                }
                 const offset = Math.ceil(before.clientHeight * scrollStepFactor);
                 const maximumScrollTop = Math.max(0, before.scrollHeight - before.clientHeight);
                 const nextScrollTop = direction === 'up'
                     ? Math.max(0, before.scrollTop - offset)
                     : Math.min(maximumScrollTop, before.scrollTop + offset);
                 container.scrollTop = nextScrollTop;
-                if (traceFirstScroll) {
-                    captureOFRegressionTraceSnapshot('first-container-scroll-after', {direction});
-                }
             }
             addMetric(directionMetrics, 'scrollActionMs', performance.now() - scrollActionStartedAt);
 
@@ -4373,32 +2825,15 @@ export async function runHiddenFrameDeepScan({
                 phase: `container-${direction}`
             });
             addMetric(directionMetrics, 'settleMs', performance.now() - settleStartedAt);
-            if (isOFRegressionTraceContainer(container) &&
-                ofRegressionTrace.firstScrollSettlePending) {
-                ofRegressionTrace.firstScrollSettlePending = false;
-                captureOFRegressionTraceSnapshot('first-container-scroll-after-settle', {
-                    direction,
-                    settled
-                });
-            }
             if (!settled) {
                 return finishContainerScan('aborted');
             }
 
-            let newCandidates = await collectSources({
-                metrics: directionMetrics,
-                context: {
-                    scope: 'container',
-                    pass: deepScanPass,
-                    container: containerLabel,
-                    direction
-                }
-            });
+            await collectSources({metrics: directionMetrics});
             registerTargets();
             let after = getContainerMetrics(container);
             let newImages = Math.max(0, after.images - before.images);
             let newTargets = Math.max(0, after.targets - before.targets);
-            const mutations = getMutationDelta(mutationsBefore).relevantTotal;
             let scrollMoved = direction === 'up'
                 ? after.scrollTop < before.scrollTop
                 : after.scrollTop > before.scrollTop;
@@ -4413,38 +2848,14 @@ export async function runHiddenFrameDeepScan({
             if ((atEdge || reachedEdge) && !edgeLoadWaited) {
                 edgeLoadWaited = true;
                 const edgeRangeGrowthStartedAt = performance.now();
-                const traceEdgeWait = isOFRegressionTraceContainer(container) &&
-                    !ofRegressionTrace.firstEdgeWaitTraced;
-                if (traceEdgeWait) {
-                    ofRegressionTrace.firstEdgeWaitTraced = true;
-                    ofRegressionTrace.edgeMutationTracking = true;
-                    ofRegressionTrace.relevantMutationsInsideContainer = 0;
-                    ofRegressionTrace.relevantMutationsOutsideContainer = 0;
-                }
-                let edgeRangeGrowthResult;
-                try {
-                    edgeRangeGrowthResult = await waitForEdgeRangeGrowth(
-                        () => getScrollRange(getContainerMetrics(container)),
-                        () => container.isConnected && isRelevantScrollableContainer(container)
-                    );
-                } finally {
-                    if (traceEdgeWait) ofRegressionTrace.edgeMutationTracking = false;
-                }
-                if (traceEdgeWait) {
-                    captureOFRegressionTraceSnapshot('first-container-edge-wait-after', {
-                        direction,
-                        edgeWaitEndReason: edgeRangeGrowthResult?.endReason ?? 'error',
-                        relevantMutationsInsideContainer:
-                            ofRegressionTrace.relevantMutationsInsideContainer,
-                        relevantMutationsOutsideContainer:
-                            ofRegressionTrace.relevantMutationsOutsideContainer
-                    });
-                }
+                const edgeRangeGrowthResult = await waitForEdgeRangeGrowth(
+                    () => getScrollRange(getContainerMetrics(container)),
+                    () => container.isConnected && isRelevantScrollableContainer(container)
+                );
                 const edgeRangeGrowthDurationMs = performance.now() - edgeRangeGrowthStartedAt;
                 recordEdgeRangeWait({
                     scope: 'container',
                     direction,
-                    container: containerLabel,
                     durationMs: edgeRangeGrowthDurationMs,
                     result: edgeRangeGrowthResult
                 });
@@ -4456,15 +2867,7 @@ export async function runHiddenFrameDeepScan({
                 if (!isActive()) return finishContainerScan('aborted');
 
                 if (edgeRangeGrowthResult.grew) {
-                    newCandidates += await collectSources({
-                        metrics: directionMetrics,
-                        context: {
-                            scope: 'container',
-                            pass: deepScanPass,
-                            container: containerLabel,
-                            direction
-                        }
-                    });
+                    await collectSources({metrics: directionMetrics});
                     registerTargets();
                     after = getContainerMetrics(container);
                     newImages = Math.max(0, after.images - before.images);
@@ -4484,45 +2887,18 @@ export async function runHiddenFrameDeepScan({
             addMetric(directionMetrics, 'newTargets', newTargets);
 
             const traversalProgress = scrollMoved || scrollRangeGrew;
-            const structuralProgress = newImages > 0 || newTargets > 0 || mutations > 0;
 
             if (!atEdge && !reachedEdge) edgeLoadWaited = false;
-
-            if (!progressDiagnosticLogged && (scrollRangeGrew || structuralProgress ||
-                newCandidates > 0)) {
-                progressDiagnosticLogged = true;
-                console.info(
-                    '[DeepScan CONTAINER PROGRESS]',
-                    `time=${getLogTimestamp()}`,
-                    getContainerLogLabel(container, index),
-                    `direction=${direction}`,
-                    `scrollMoved=${scrollMoved}`,
-                    `scrollRangeChanged=${scrollRangeGrew}`,
-                    `newTargets=${newTargets}`,
-                    `newCandidates=${newCandidates}`,
-                    `structure=${structuralProgress}`,
-                    `scrollHeightBefore=${before.scrollHeight}`,
-                    `scrollHeightAfter=${after.scrollHeight}`
-                );
-            }
 
             if (atEdge || reachedEdge || !scrollMoved) {
                 edgeStableCycles = traversalProgress ? 0 : edgeStableCycles + 1;
                 if (edgeStableCycles >= stableCycleLimit) {
-                    logContainerDirection(`${label} END`, container, index, {
-                        reason: 'stable',
-                        durationMs: performance.now() - directionStartedAt
-                    });
                     return finishContainerScan('stable');
                 }
             }
         }
 
         if (isActive()) {
-            logContainerDirection(`${label} END`, container, index, {
-                reason: 'stable',
-                durationMs: performance.now() - directionStartedAt
-            });
             return finishContainerScan('stable');
         }
 
@@ -4531,42 +2907,15 @@ export async function runHiddenFrameDeepScan({
     const scanRelevantScrollContainers = async () => {
         while (isActive()) {
             const candidates = getPendingRelevantContainerCandidates();
-            if (candidates.length === 0) {
-                traceOFRegressionSecondContainerDecision();
-                return;
-            }
+            if (candidates.length === 0) return;
 
             const plan = createContainerPlan(candidates);
             if (!isActive()) return;
-            traceOFRegressionSecondContainerDecision(plan);
             for (const entry of plan.entries) {
-                const {container, index} = entry;
+                const {container} = entry;
                 addMetric(null, 'containersHandled', 1);
                 if (!entry.isNewContainer) addMetric(null, 'repeatContainers', 1);
-                if (entry.isNewContainer) {
-                    logContainerAnalysis(container, index);
-                    const state = getContainerDiagnosticState(container);
-                    console.info(
-                        '[DeepScan CONTAINER] added',
-                        `time=${getLogTimestamp()}`,
-                        getContainerLogLabel(container, index),
-                        `scrollHeight=${state.scrollHeight}`,
-                        `clientHeight=${state.clientHeight}`,
-                        `overflowY=${state.overflowY}`,
-                        `flexDirection=${state.flexDirection}`
-                    );
-                } else {
-                    console.info(
-                        '[DeepScan CONTAINER] requeue',
-                        `time=${getLogTimestamp()}`,
-                        getContainerLogLabel(container, index),
-                        `previous=${completedScrollContainerStates.get(container)}`,
-                        `current=${getContainerTraversalState(container)}`
-                    );
-                }
-                logContainerPriority(entry);
             }
-            logContainerPlan(plan);
 
             for (const entry of plan.analysisOnly) {
                 handledStructureContainers.add(entry.container);
@@ -4583,269 +2932,35 @@ export async function runHiddenFrameDeepScan({
                 }
             }
 
-            for (const {container, index} of plan.scanEntries) {
+            for (const {container} of plan.scanEntries) {
                 if (!container.isConnected || !isRelevantScrollableContainer(container)) continue;
 
-                trackOFRegressionContainer(container);
                 addMetric(null, 'containersScanned', 1);
-                reportActiveScrollContainer(container, index);
-                try {
-                    await scanScrollableContainer(container, 'up', index);
-                    if (!isActive()) return;
+                await scanScrollableContainer(container, 'up');
+                if (!isActive()) return;
 
-                    await scanScrollableContainer(container, 'down', index);
-                    if (!isActive()) return;
-                    if (isOFRegressionTraceContainer(container) &&
-                        !ofRegressionTrace.snapshots['after-first-container']) {
-                        captureOFRegressionTraceSnapshot('after-first-container');
-                    }
-                    if (container.isConnected && isRelevantScrollableContainer(container)) {
-                        completedScrollContainerStates.set(
-                            container,
-                            getContainerTraversalState(container)
-                        );
-                    }
-                } finally {
-                    reportActiveScrollContainer();
-                }
-            }
-        }
-    };
-    /*
-     * Beta 0.0.10 legacy document traversal implementation.
-     * Replaced by DocumentTraverser below; retained inactive for direct
-     * behaviour comparison and rollback during the extraction phase.
-     *
-    const scanDocumentDirection = async (direction) => {
-        const label = direction === 'up' ? 'UP' : 'DOWN';
-        let edgeStableCycles = 0;
-        let edgeLoadWaited = false;
-        let progressDiagnosticLogged = false;
-        const directionStartedAt = performance.now();
-        const durationMetric = direction === 'up' ? 'documentUpMs' : 'documentDownMs';
-        const stepMetric = direction === 'up' ? 'documentUpSteps' : 'documentDownSteps';
-        let directionFinished = false;
-        const finishDocumentScan = (result) => {
-            if (!directionFinished) {
-                directionFinished = true;
-                addMetric(currentPassMetrics, durationMetric, performance.now() - directionStartedAt);
-            }
-            return result;
-        };
-
-        reportActiveScrollContainer();
-        logDocumentDirection(label);
-        while (isActive()) {
-            addMetric(currentPassMetrics, stepMetric, 1);
-            const beforeNewTargets = registerTargets();
-            const before = getMetrics();
-            const atEdge = direction === 'up'
-                ? isAtCurrentDocumentTop(before)
-                : isAtCurrentDocumentBottom(before);
-            const mutationsBefore = getMutationSnapshot();
-            const photoSwipeActivityBefore = photoSwipeActivityCount;
-            let scrollResult = {scrolled: false, targetMovement: 0};
-
-            const scrollActionStartedAt = performance.now();
-            if (atEdge) {
-                if (direction === 'down') {
-                    const bottomTarget = getBottomDwellTarget();
-                    if (bottomTarget) scrollResult = scrollElementIntoView(bottomTarget, 'end');
-                }
-            } else {
-                const target = getNextScrollTarget(direction);
-                if (target) {
-                    if (direction === 'up') attemptedUpwardTargets.add(target.element);
-                    else attemptedDownwardTargets.add(target.element);
-                    scrollResult = scrollElementIntoView(target.element);
-                } else {
-                    scrollResult = scrollFurtherWithAnchor(before, direction);
-                }
-            }
-            addMetric(
-                currentPassMetrics,
-                'scrollActionMs',
-                performance.now() - scrollActionStartedAt
-            );
-
-            const settleStartedAt = performance.now();
-            if (!(await waitForSettle({
-                minimumMs: atEdge ? 400 : minimumSettleMs,
-                scope: 'document',
-                direction,
-                phase: `document-${direction}`
-            }))) {
-                addMetric(currentPassMetrics, 'settleMs', performance.now() - settleStartedAt);
-                return finishDocumentScan('aborted');
-            }
-            addMetric(currentPassMetrics, 'settleMs', performance.now() - settleStartedAt);
-
-            let newCandidates = await collectSources({
-                diagnosticPhase: direction === 'down' && !progressDiagnosticLogged
-                    ? 'document-down'
-                    : null,
-                metrics: currentPassMetrics,
-                context: {scope: 'document', pass: deepScanPass, direction}
-            });
-            let afterNewTargets = registerTargets();
-            let after = getMetrics();
-            let newImages = Math.max(0, after.images - before.images);
-            let newTargets = beforeNewTargets + afterNewTargets;
-            const mutationDelta = getMutationDelta(mutationsBefore);
-            const mutations = mutationDelta.relevantTotal;
-            let scrollRangeGrew = getScrollRange(after) > getScrollRange(before);
-            let documentScrollMoved = direction === 'up'
-                ? after.effectiveScrollTop < before.effectiveScrollTop
-                : after.effectiveScrollTop > before.effectiveScrollTop;
-            const targetGeometryMoved = direction === 'up'
-                ? scrollResult.targetMovement > 1
-                : scrollResult.targetMovement < -1;
-            let scrollMoved = documentScrollMoved;
-            let reachedEdge = direction === 'up'
-                ? isAtCurrentDocumentTop(after)
-                : isAtCurrentDocumentBottom(after);
-
-            if ((atEdge || reachedEdge) && !edgeLoadWaited) {
-                edgeLoadWaited = true;
-                const edgeRangeGrowthStartedAt = performance.now();
-                const edgeRangeGrowthResult = await waitForEdgeRangeGrowth(
-                    () => getScrollRange(getMetrics())
-                );
-                const edgeRangeGrowthDurationMs = performance.now() - edgeRangeGrowthStartedAt;
-                recordEdgeRangeWait({
-                    scope: 'document',
-                    direction,
-                    durationMs: edgeRangeGrowthDurationMs,
-                    result: edgeRangeGrowthResult
-                });
-                addMetric(
-                    currentPassMetrics,
-                    'edgeRangeGrowthMs',
-                    edgeRangeGrowthDurationMs
-                );
-                if (!isActive()) return finishDocumentScan('aborted');
-
-                if (edgeRangeGrowthResult.grew) {
-                    newCandidates += await collectSources({
-                        diagnosticPhase: direction === 'down' && !progressDiagnosticLogged
-                            ? 'document-down'
-                            : null,
-                        metrics: currentPassMetrics,
-                        context: {scope: 'document', pass: deepScanPass, direction}
-                    });
-                    afterNewTargets += registerTargets();
-                    after = getMetrics();
-                    newImages = Math.max(0, after.images - before.images);
-                    newTargets = beforeNewTargets + afterNewTargets;
-                    scrollRangeGrew = getScrollRange(after) > getScrollRange(before);
-                    documentScrollMoved = direction === 'up'
-                        ? after.effectiveScrollTop < before.effectiveScrollTop
-                        : after.effectiveScrollTop > before.effectiveScrollTop;
-                    scrollMoved = documentScrollMoved;
-                    reachedEdge = direction === 'up'
-                        ? isAtCurrentDocumentTop(after)
-                        : isAtCurrentDocumentBottom(after);
-                    edgeLoadWaited = false;
-                }
-            }
-
-            const traversalProgress = scrollMoved || scrollRangeGrew;
-            const discoveryProgress = newImages > 0 || newTargets > 0 || newCandidates > 0 ||
-                mutations > 0;
-            addMetric(currentPassMetrics, 'newDomImages', newImages);
-            addMetric(currentPassMetrics, 'newTargets', newTargets);
-
-            if (!atEdge && !reachedEdge) edgeLoadWaited = false;
-
-            if (atEdge || reachedEdge || !scrollMoved) {
-                if (direction === 'down' && (traversalProgress || discoveryProgress) &&
-                    !progressDiagnosticLogged) {
-                    progressDiagnosticLogged = true;
-                    console.info(
-                        '[DeepScan PROGRESS]',
-                        'phase=document-down',
-                        `structure=${newImages > 0 || newTargets > 0 || mutations > 0}`,
-                        `scrollRange=${scrollRangeGrew}`,
-                        `newCandidates=${newCandidates}`,
-                        `newTargets=${newTargets}`,
-                        `newImages=${newImages}`,
-                        `mutations=${mutationDelta.total}`,
-                        `mutationChildList=${mutationDelta.childList}`,
-                        `mutationAttributes=${mutationDelta.attributes}`,
-                        `mutationAddedElements=${mutationDelta.addedElements}`,
-                        `mutationRemovedElements=${mutationDelta.removedElements}`,
-                        `relevantMutations=${mutations}`,
-                        `relevantMutationChildList=${mutationDelta.relevantChildList}`,
-                        `relevantMutationAttributes=${mutationDelta.relevantAttributes}`,
-                        `photoSwipeActivity=${photoSwipeActivityCount - photoSwipeActivityBefore}`,
-                        'acceptedCandidates=pending-pipeline',
-                        'visibleImageDelta=pending-pipeline',
-                        `effectiveScrollBefore=${before.effectiveScrollTop}`,
-                        `effectiveScrollAfter=${after.effectiveScrollTop}`,
-                        `scrollHeightBefore=${before.scrollHeight}`,
-                        `scrollHeightAfter=${after.scrollHeight}`,
-                        `clientHeightBefore=${before.clientHeight}`,
-                        `clientHeightAfter=${after.clientHeight}`,
-                        `scrollRangeBefore=${getScrollRange(before)}`,
-                        `scrollRangeAfter=${getScrollRange(after)}`,
-                        `documentScrollMoved=${documentScrollMoved}`,
-                        `scrollAttempted=${scrollResult.scrolled}`,
-                        `targetGeometryMovement=${scrollResult.targetMovement}`,
-                        `targetGeometryMoved=${targetGeometryMoved}`,
-                        `scrollMoved=${scrollMoved}`
+                await scanScrollableContainer(container, 'down');
+                if (!isActive()) return;
+                if (container.isConnected && isRelevantScrollableContainer(container)) {
+                    completedScrollContainerStates.set(
+                        container,
+                        getContainerTraversalState(container)
                     );
                 }
-                edgeStableCycles = traversalProgress ? 0 : edgeStableCycles + 1;
-                if (edgeStableCycles >= stableCycleLimit) {
-                    logDocumentDirection(`${label} END`, {
-                        reason: 'stable',
-                        durationMs: performance.now() - directionStartedAt
-                    });
-                    return finishDocumentScan('stable');
-                }
             }
         }
-
-        return finishDocumentScan('aborted');
     };
-    */
 
     const startMutationObservation = () => {
         if (typeof MutationObserver !== 'function' || !document.documentElement) return;
 
         observer = new MutationObserver((records) => {
-            records.forEach((record) => {
-                observedMutationCount += 1;
-                if (record.type === 'attributes') {
-                    observedAttributeMutationCount += 1;
-                    return;
-                }
-
-                observedChildListMutationCount += 1;
-                observedAddedElementCount += countMutationElements(record.addedNodes);
-                observedRemovedElementCount += countMutationElements(record.removedNodes);
-            });
             const relevantMutations = records.filter(isRelevantMutation);
             if (relevantMutations.length === 0) return;
 
-            recordOFRegressionTraceMutations(relevantMutations);
             relevantMutations.forEach(markKnownGenericRootsChanged);
             lastRelevantMutationAt = Date.now();
             relevantMutationCount += relevantMutations.length;
-            relevantMutations.forEach((record) => {
-                if (record.type === 'attributes') {
-                    relevantAttributeMutationCount += 1;
-                    return;
-                }
-
-                relevantChildListMutationCount += 1;
-                relevantAddedElementCount += Array.from(record.addedNodes ?? []).filter(
-                    containsRealElement
-                ).length;
-                relevantRemovedElementCount += Array.from(record.removedNodes ?? []).filter(
-                    containsRealElement
-                ).length;
-            });
         });
         observer.observe(document.documentElement, {
             subtree: true,
@@ -4894,16 +3009,11 @@ export async function runHiddenFrameDeepScan({
         getTargetElements,
         isInsideLowPriorityStructureContainer,
         isActive,
-        getLogTimestamp,
         registerTargets,
         collectSources,
         waitForSettle,
         waitForEdgeRangeGrowth,
         recordEdgeRangeWait,
-        getMutationSnapshot,
-        getMutationDelta,
-        getPhotoSwipeActivityCount: () => photoSwipeActivityCount,
-        reportActiveScrollContainer,
         addMetric,
         getScrollRange
     });
@@ -4922,14 +3032,9 @@ export async function runHiddenFrameDeepScan({
             stopMutationObservation,
             waitForReadiness: waitForHiddenFrameReadiness,
             getPhotoSwipeActivityCount: () => photoSwipeActivityCount,
-            getRelevantMutationCount: () => relevantMutationCount,
             getKnownScrollContainerCount: () => knownScrollContainerIndices.size,
             getCompletedScrollContainerStates: () => completedScrollContainerStates,
             getHandledStructureContainers: () => handledStructureContainers,
-            reportActiveScrollContainer,
-            setDeepScanPass: (pass) => {
-                deepScanPass = pass;
-            }
         },
         collection: {
             registerTargets,
@@ -4944,280 +3049,17 @@ export async function runHiddenFrameDeepScan({
         documentTraverser,
         diagnostics: {
             createPerformanceMetrics,
-            getMutationSnapshot,
-            getMutationDelta,
             addMetric,
             setCurrentPass,
             clearCurrentPass,
             finalizeCurrentPass,
             addPassRecord: (record) => passPerformanceRecords.push(record),
             logPassSummary,
-            createPerformanceSummary,
-            traceAfterDocumentTraversal: traceOFRegressionAfterDocumentTraversal,
-            tracePassDecision: traceOFRegressionPassDecision,
-            logRegressionTraceSummary: logOFRegressionTraceSummary
+            createPerformanceSummary
         }
     });
     return controller.run();
 
-    /*
-     * Beta 0.0.09 legacy Hidden-DeepScan orchestration.
-     * Replaced by DeepScanController above; retained inactive for direct
-     * behaviour comparison during the extraction phase.
-     *
-    try {
-        if (typeof MutationObserver === 'function' && document.documentElement) {
-            observer = new MutationObserver((records) => {
-                records.forEach((record) => {
-                    observedMutationCount += 1;
-                    if (record.type === 'attributes') {
-                        observedAttributeMutationCount += 1;
-                        return;
-                    }
-
-                    observedChildListMutationCount += 1;
-                    observedAddedElementCount += countMutationElements(record.addedNodes);
-                    observedRemovedElementCount += countMutationElements(record.removedNodes);
-                });
-                const relevantMutations = records.filter(isRelevantMutation);
-                if (relevantMutations.length === 0) return;
-
-                relevantMutations.forEach(markKnownGenericRootsChanged);
-                lastRelevantMutationAt = Date.now();
-                relevantMutationCount += relevantMutations.length;
-                relevantMutations.forEach((record) => {
-                    if (record.type === 'attributes') {
-                        relevantAttributeMutationCount += 1;
-                        return;
-                    }
-
-                    relevantChildListMutationCount += 1;
-                    relevantAddedElementCount += Array.from(record.addedNodes ?? []).filter(
-                        containsRealElement
-                    ).length;
-                    relevantRemovedElementCount += Array.from(record.removedNodes ?? []).filter(
-                        containsRealElement
-                    ).length;
-                });
-            });
-            observer.observe(document.documentElement, {
-                subtree: true,
-                childList: true,
-                attributes: true,
-                attributeFilter: [
-                    'src',
-                    'srcset',
-                    'data-src',
-                    'data-srcset',
-                    'data-lazy-src',
-                    'data-lazy-srcset',
-                    'data-image',
-                    'data-image-src',
-                    'data-full',
-                    'data-full-src',
-                    'data-fullsize',
-                    'data-large',
-                    'data-original',
-                    'data-original-src',
-                    'data-lightbox-src'
-                ]
-            });
-        }
-
-        const readinessStartedAt = performance.now();
-        const readinessDeadline = Date.now() + DEEP_SCAN_READINESS_MAX_WAIT_MS;
-        deepScanMutationStart = getMutationSnapshot();
-        while (isActive() && (window.innerWidth <= 0 || window.innerHeight <= 0 ||
-            document.readyState === 'loading') && Date.now() < readinessDeadline) {
-            if (!(await wait(DEEP_SCAN_READINESS_POLL_INTERVAL_MS))) break;
-        }
-        addMetric(null, 'readinessWaitMs', performance.now() - readinessStartedAt);
-
-        registerTargets();
-        const initialCollectionStartedAt = performance.now();
-        await collectSources({context: {scope: 'initial'}});
-        addMetric(null, 'initialCollectionMs', performance.now() - initialCollectionStartedAt);
-        while (isActive()) {
-            const pass = ++deepScanPass;
-            const passStartedAt = performance.now();
-            const passMetrics = createPerformanceMetrics();
-            passMetrics.mutationStart = getMutationSnapshot();
-            currentPassRecord = {
-                pass,
-                startedAt: passStartedAt,
-                startPosition: getMetrics().scrollY,
-                endPosition: null,
-                durationMs: 0,
-                metrics: passMetrics,
-                repeatReason: 'aborted'
-            };
-            passPerformanceRecords.push(currentPassRecord);
-            const containersAtPassStart = knownScrollContainerIndices.size;
-            currentPassMetrics = passMetrics;
-            console.info('[DeepScan PASS START]', `pass=${pass}`);
-            const photoSwipeActivityAtPassStart = photoSwipeActivityCount;
-            await scanRelevantScrollContainers();
-            if (!isActive()) break;
-
-            await scanDocumentDirection('up');
-            if (!isActive()) break;
-
-            await scanDocumentDirection('down');
-            if (!isActive()) break;
-
-            const documentStateAfterDirections = getDocumentTraversalState();
-            const mutationCountAfterDirections = relevantMutationCount;
-            await scanRelevantScrollContainers();
-            if (!isActive()) break;
-
-            const finalSettleStartedAt = performance.now();
-            if (!(await waitForSettle({
-                minimumMs: 400,
-                scope: 'final',
-                phase: 'final'
-            }))) {
-                addMetric(passMetrics, 'settleMs', performance.now() - finalSettleStartedAt);
-                addMetric(passMetrics, 'finalSettleMs', performance.now() - finalSettleStartedAt);
-                break;
-            }
-            const finalSettleMs = performance.now() - finalSettleStartedAt;
-            addMetric(passMetrics, 'settleMs', finalSettleMs);
-            addMetric(passMetrics, 'finalSettleMs', finalSettleMs);
-
-            const photoSwipeActivityBeforeFinalCollection = photoSwipeActivityCount;
-            const finalCollectionStartedAt = performance.now();
-            const newCandidates = await collectSources({
-                metrics: passMetrics,
-                context: {scope: 'final-settle', pass}
-            });
-            addMetric(passMetrics, 'finalCollectionMs', performance.now() - finalCollectionStartedAt);
-            const newTargets = registerTargets();
-            addMetric(passMetrics, 'newTargets', newTargets);
-            const documentStateAfterFinalSettle = getDocumentTraversalState();
-            const mutationCountAfterFinalSettle = relevantMutationCount;
-            const documentChangedAfterDirections = documentStateAfterDirections !==
-                documentStateAfterFinalSettle;
-            const mutationDetected = mutationCountAfterDirections !== mutationCountAfterFinalSettle;
-            const candidatesDetected = newCandidates > 0;
-            const targetsDetected = newTargets > 0;
-            const photoSwipeActivityDetected = photoSwipeActivityCount !==
-                photoSwipeActivityAtPassStart;
-            const photoSwipeActivityDuringFinalCollection = photoSwipeActivityCount !==
-                photoSwipeActivityBeforeFinalCollection;
-
-            // Opening and closing PhotoSwipe changes page-owned DOM. Its candidates have already
-            // been collected above, so treat that temporary DOM as the current baseline instead
-            // of scheduling a complete traversal of unchanged containers.
-            if (photoSwipeActivityDuringFinalCollection) {
-                synchronizeCompletedScrollContainerStates();
-            }
-
-            const pendingContainers = getPendingRelevantContainerCandidates();
-            const newContainersDetected = pendingContainers.some(({container, isScrollable}) =>
-                isScrollable
-                    ? !completedScrollContainerStates.has(container)
-                    : !handledStructureContainers.has(container)
-            );
-            const containersDetected = pendingContainers.some(({container, isScrollable}) =>
-                isScrollable && completedScrollContainerStates.has(container)
-            );
-
-            // Discovery work has already been collected and sent to the client. Repeat traversal
-            // only when the reachable document range changed or a container range is unfinished.
-            const repeatPass = documentChangedAfterDirections || pendingContainers.length > 0;
-            const repeatReasons = [];
-            if (documentChangedAfterDirections) repeatReasons.push('document-scroll-range-changed');
-            if (pendingContainers.length > 0) repeatReasons.push('container-still-open');
-            if (newContainersDetected) repeatReasons.push('new-container-discovered');
-            const repeatReason = documentChangedAfterDirections && pendingContainers.length > 0
-                ? 'both'
-                : documentChangedAfterDirections
-                    ? 'document-changed'
-                    : pendingContainers.length > 0
-                        ? 'container-pending'
-                        : 'none';
-            currentPassRecord.endPosition = getMetrics().scrollY;
-            currentPassRecord.durationMs = performance.now() - passStartedAt;
-            currentPassRecord.repeatReason = repeatReason;
-
-            logPassSummary(
-                pass,
-                passMetrics,
-                performance.now() - passStartedAt,
-                repeatPass,
-                repeatReasons,
-                Math.max(0, knownScrollContainerIndices.size - containersAtPassStart)
-            );
-            currentPassMetrics = null;
-            currentPassRecord = null;
-
-            if (!repeatPass) {
-                console.info('[DeepScan PASS] complete');
-                completedNaturally = true;
-                break;
-            }
-
-            console.info(
-                '[DeepScan PASS] repeat',
-                `pass=${pass}`,
-                `repeatReasons=${repeatReasons.join(',')}`,
-                `mutation=${mutationDetected}`,
-                `candidates=${candidatesDetected}`,
-                `targets=${targetsDetected}`,
-                `documentRange=${documentChangedAfterDirections}`,
-                `containers=${containersDetected}`,
-                `newContainers=${newContainersDetected}`,
-                `photoSwipeActivity=${photoSwipeActivityDetected}`
-            );
-        }
-    } finally {
-        observer?.disconnect();
-        if (currentPassRecord?.endPosition === null) {
-            currentPassRecord.endPosition = getMetrics().scrollY;
-            currentPassRecord.durationMs = performance.now() - currentPassRecord.startedAt;
-            currentPassRecord.repeatReason = signal?.aborted === true ? 'aborted' : 'interrupted';
-        }
-        currentPassMetrics = null;
-        currentPassRecord = null;
-        reportActiveScrollContainer();
-    }
-
-    const status = signal?.aborted === true ? 'cancelled' : 'completed';
-    if (status === 'completed' && completedNaturally) {
-        const mutations = getMutationDelta(deepScanMutationStart ?? getMutationSnapshot());
-        console.info(
-            '[DeepScan END] status=completed',
-            `mutations=${mutations.total}`,
-            `mutationChildList=${mutations.childList}`,
-            `mutationAttributes=${mutations.attributes}`,
-            `mutationAddedElements=${mutations.addedElements}`,
-            `mutationRemovedElements=${mutations.removedElements}`,
-            `relevantMutations=${mutations.relevantTotal}`,
-            'styleClassObserved=false'
-        );
-    } else if (status === 'cancelled') {
-        const mutations = getMutationDelta(deepScanMutationStart ?? getMutationSnapshot());
-        console.info(
-            '[DeepScan END] status=cancelled',
-            `mutations=${mutations.total}`,
-            `mutationChildList=${mutations.childList}`,
-            `mutationAttributes=${mutations.attributes}`,
-            `mutationAddedElements=${mutations.addedElements}`,
-            `mutationRemovedElements=${mutations.removedElements}`,
-            `relevantMutations=${mutations.relevantTotal}`,
-            'styleClassObserved=false'
-        );
-    }
-
-    const performanceSummary = createPerformanceSummary(status);
-    console.info('[DeepScan Performance Hidden]', performanceSummary);
-
-    return {
-        status,
-        endReason: status === 'cancelled' ? 'aborted' : 'stable',
-        performance: performanceSummary
-    };
-    */
 }
 
 export function getPageURL() {

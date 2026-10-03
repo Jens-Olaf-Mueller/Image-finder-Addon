@@ -48,18 +48,9 @@ export default class ImageScanner {
             : null;
     }
 
-    async scan({onStart = null, onProgress = null, signal = null, onTrace = null} = {}) {
+    async scan({onStart = null, onProgress = null, signal = null} = {}) {
         if (signal?.aborted) return [];
 
-        const scanStartedAt = performance.now();
-        const trace = (phase, phaseStartedAt = scanStartedAt, details = {}) => {
-            try {
-                onTrace?.(phase, phaseStartedAt, details);
-            } catch {
-                // Temporary diagnostics must never affect a scan.
-            }
-        };
-        trace('image-scanner-scan-start');
         this.currentTab = null;
         this.#imageDimensionsByURL.clear();
         const [tab] = await window.chrome.tabs.query({
@@ -70,7 +61,6 @@ export default class ImageScanner {
         this.currentTab = tab ?? null;
 
         const filters = this.settings.get('filters') ?? {};
-        const normalDOMScanStartedAt = performance.now();
         const result = await window.chrome.scripting.executeScript({
             target: {tabId: tab.id},
             func: scanImages,
@@ -78,22 +68,8 @@ export default class ImageScanner {
         });
         if (signal?.aborted) return [];
         const filesFound = result[0]?.result ?? [];
-        trace('normal-dom-scan-resolved', normalDOMScanStartedAt, {
-            rawResultCount: filesFound.length
-        });
 
-        const candidateProcessingStartedAt = performance.now();
-        trace('candidate-filter-processing-start', candidateProcessingStartedAt, {
-            rawResultCount: filesFound.length
-        });
         const candidates = await this.createCandidates(filesFound, tab.id, {onStart, onProgress, signal});
-        trace('candidate-filter-processing-end', candidateProcessingStartedAt, {
-            candidateCount: candidates.length
-        });
-        trace('image-scanner-scan-resolved', scanStartedAt, {
-            rawResultCount: filesFound.length,
-            candidateCount: candidates.length
-        });
         return candidates;
     }
 
@@ -234,20 +210,11 @@ export default class ImageScanner {
         return true;
     }
 
-    async scanDeepImages(scanContext, onCandidates = null, {onTrace = null} = {}) {
+    async scanDeepImages(scanContext, onCandidates = null) {
         if (!scanContext?.isScannable || !Number.isInteger(scanContext.tabId)) {
             return [];
         }
 
-        const deepScanStartedAt = performance.now();
-        const trace = (phase, phaseStartedAt = deepScanStartedAt, details = {}) => {
-            try {
-                onTrace?.(phase, phaseStartedAt, details);
-            } catch {
-                // Temporary diagnostics must never affect a scan.
-            }
-        };
-        trace('scan-deep-images-call');
         const filters = this.settings.get('filters') ?? {};
         const debugSettings = this.settings.get('debug') ?? {};
         const imageFilter = this.filter;
@@ -331,31 +298,6 @@ export default class ImageScanner {
             }
         };
 
-        const sendPipelineDiagnostic = (diagnostic, result) => {
-            if (!diagnostic) return;
-
-            void window.chrome.runtime.sendMessage({
-                target: ISOLATED_DEEP_SCAN_TARGET,
-                action: 'diagnostic-result',
-                scanId,
-                diagnostic,
-                result: {
-                    scannerNewURLs: result.scannerNewURLs ?? 0,
-                    imageFinderNewURLs: result.imageFinderNewURLs ?? 0,
-                    acceptedCandidates: result.acceptedCandidates ?? 0,
-                    existingUpgrades: result.existingUpgrades ?? 0,
-                    visibleImageDelta: result.visibleImageDelta ?? 0,
-                    visibleNewURLs: result.visibleNewURLs ?? 0,
-                    visibleWinnersFromBatch: result.visibleWinnersFromBatch ?? 0,
-                    notVisibleAfterFiltering: result.notVisibleAfterFiltering ?? 0,
-                    candidatePipelineMs: result.candidatePipelineMs ?? 0,
-                    visibleImages: Number.isFinite(result.visibleImages)
-                        ? result.visibleImages
-                        : 'unavailable'
-                }
-            }).catch(() => undefined);
-        };
-
         const processCandidates = async (
             foundCandidates,
             diagnostic = null,
@@ -379,21 +321,10 @@ export default class ImageScanner {
                     newCandidates.push(candidate);
                 }
                 if (newCandidates.length === 0 || typeof onCandidates !== 'function') {
-                    sendPipelineDiagnostic(diagnostic, {
-                        scannerNewURLs: 0,
-                        candidatePipelineMs: Math.round(performance.now() - pipelineStartedAt)
-                    });
                     return;
                 }
 
                 const result = await onCandidates(newCandidates, session.controller.signal, diagnostic);
-                if (diagnostic && result && typeof result === 'object') {
-                    sendPipelineDiagnostic(diagnostic, {
-                        scannerNewURLs: newCandidates.length,
-                        ...result,
-                        candidatePipelineMs: Math.round(performance.now() - pipelineStartedAt)
-                    });
-                }
 
                 if ((result === false || result?.continue === false) ||
                     session.cancelled || session.controller.signal.aborted) {
@@ -441,27 +372,8 @@ export default class ImageScanner {
             }
 
             if (message.action === 'complete') {
-                console.info(
-                    '[DeepScan COMPLETE TRACE] scanner-received',
-                    `scanId=${scanId}`,
-                    `status=${message.status}`,
-                    `clientId=${this.#deepScanClientId ?? 'none'}`
-                );
                 sendResponse?.({success: true, scanId, clientId: this.#deepScanClientId ?? null});
-                console.info(
-                    '[DeepScan COMPLETE TRACE] scanner-queue-state',
-                    `scanId=${scanId}`,
-                    'batchQueue=draining',
-                    `sessionFinished=${session.finished}`,
-                    `cancelled=${session.cancelled}`
-                );
                 void batchQueue.then(() => {
-                    console.info(
-                        '[DeepScan COMPLETE TRACE] scanner-drained',
-                        `scanId=${scanId}`,
-                        `sessionFinished=${session.finished}`,
-                        `cancelled=${session.cancelled}`
-                    );
                     session.finish(message);
                 });
             }
@@ -495,16 +407,6 @@ export default class ImageScanner {
                 }
 
                 completionResult = await completion;
-                trace('hidden-deep-scan-result', deepScanStartedAt, {
-                    status: completionResult?.status ?? 'unknown',
-                    endReason: completionResult?.endReason ?? 'none'
-                });
-                console.info(
-                    '[DeepScan COMPLETE TRACE] scanDeepImages-resolved',
-                    `scanId=${scanId}`,
-                    `status=${completionResult?.status ?? 'unknown'}`,
-                    `cancelled=${session.cancelled}`
-                );
             }
         } catch {
             session.finish({status: 'failed'});

@@ -10,16 +10,11 @@ export default class DocumentTraverser {
     #getTargetElements;
     #isInsideLowPriorityStructureContainer;
     #isActive;
-    #getLogTimestamp;
     #registerTargets;
     #collectSources;
     #waitForSettle;
     #waitForEdgeRangeGrowth;
     #recordEdgeRangeWait;
-    #getMutationSnapshot;
-    #getMutationDelta;
-    #getPhotoSwipeActivityCount;
-    #reportActiveScrollContainer;
     #addMetric;
     #getScrollRange;
     #attemptedUpwardTargets = new WeakSet();
@@ -33,16 +28,11 @@ export default class DocumentTraverser {
         getTargetElements,
         isInsideLowPriorityStructureContainer,
         isActive,
-        getLogTimestamp,
         registerTargets,
         collectSources,
         waitForSettle,
         waitForEdgeRangeGrowth,
         recordEdgeRangeWait,
-        getMutationSnapshot,
-        getMutationDelta,
-        getPhotoSwipeActivityCount,
-        reportActiveScrollContainer,
         addMetric,
         getScrollRange
     } = {}) {
@@ -53,16 +43,11 @@ export default class DocumentTraverser {
         this.#getTargetElements = getTargetElements;
         this.#isInsideLowPriorityStructureContainer = isInsideLowPriorityStructureContainer;
         this.#isActive = isActive;
-        this.#getLogTimestamp = getLogTimestamp;
         this.#registerTargets = registerTargets;
         this.#collectSources = collectSources;
         this.#waitForSettle = waitForSettle;
         this.#waitForEdgeRangeGrowth = waitForEdgeRangeGrowth;
         this.#recordEdgeRangeWait = recordEdgeRangeWait;
-        this.#getMutationSnapshot = getMutationSnapshot;
-        this.#getMutationDelta = getMutationDelta;
-        this.#getPhotoSwipeActivityCount = getPhotoSwipeActivityCount;
-        this.#reportActiveScrollContainer = reportActiveScrollContainer;
         this.#addMetric = addMetric;
         this.#getScrollRange = getScrollRange;
     }
@@ -93,11 +78,9 @@ export default class DocumentTraverser {
         return [metrics.scrollHeight, metrics.clientHeight].join(':');
     }
 
-    async traverse(direction, {metrics = null, pass = 0} = {}) {
-        const label = direction === 'up' ? 'UP' : 'DOWN';
+    async traverse(direction, {metrics = null} = {}) {
         let edgeStableCycles = 0;
         let edgeLoadWaited = false;
-        let progressDiagnosticLogged = false;
         const directionStartedAt = performance.now();
         const durationMetric = direction === 'up' ? 'documentUpMs' : 'documentDownMs';
         const stepMetric = direction === 'up' ? 'documentUpSteps' : 'documentDownSteps';
@@ -110,8 +93,6 @@ export default class DocumentTraverser {
             return result;
         };
 
-        this.#reportActiveScrollContainer();
-        this.#logDocumentDirection(label);
         while (this.#isActive()) {
             this.#addMetric(metrics, stepMetric, 1);
             const beforeNewTargets = this.#registerTargets();
@@ -119,8 +100,6 @@ export default class DocumentTraverser {
             const atEdge = direction === 'up'
                 ? this.#isAtCurrentDocumentTop(before)
                 : this.#isAtCurrentDocumentBottom(before);
-            const mutationsBefore = this.#getMutationSnapshot();
-            const photoSwipeActivityBefore = this.#getPhotoSwipeActivityCount();
             let scrollResult = {scrolled: false, targetMovement: 0};
 
             const scrollActionStartedAt = performance.now();
@@ -153,26 +132,15 @@ export default class DocumentTraverser {
             }
             this.#addMetric(metrics, 'settleMs', performance.now() - settleStartedAt);
 
-            let newCandidates = await this.#collectSources({
-                diagnosticPhase: direction === 'down' && !progressDiagnosticLogged
-                    ? 'document-down'
-                    : null,
-                metrics,
-                context: {scope: 'document', pass, direction}
-            });
+            await this.#collectSources({metrics});
             let afterNewTargets = this.#registerTargets();
             let after = this.getMetrics();
             let newImages = Math.max(0, after.images - before.images);
             let newTargets = beforeNewTargets + afterNewTargets;
-            const mutationDelta = this.#getMutationDelta(mutationsBefore);
-            const mutations = mutationDelta.relevantTotal;
             let scrollRangeGrew = this.#getScrollRange(after) > this.#getScrollRange(before);
             let documentScrollMoved = direction === 'up'
                 ? after.effectiveScrollTop < before.effectiveScrollTop
                 : after.effectiveScrollTop > before.effectiveScrollTop;
-            const targetGeometryMoved = direction === 'up'
-                ? scrollResult.targetMovement > 1
-                : scrollResult.targetMovement < -1;
             let scrollMoved = documentScrollMoved;
             let reachedEdge = direction === 'up'
                 ? this.#isAtCurrentDocumentTop(after)
@@ -195,13 +163,7 @@ export default class DocumentTraverser {
                 if (!this.#isActive()) return finishDocumentScan('aborted');
 
                 if (edgeRangeGrowthResult.grew) {
-                    newCandidates += await this.#collectSources({
-                        diagnosticPhase: direction === 'down' && !progressDiagnosticLogged
-                            ? 'document-down'
-                            : null,
-                        metrics,
-                        context: {scope: 'document', pass, direction}
-                    });
+                    await this.#collectSources({metrics});
                     afterNewTargets += this.#registerTargets();
                     after = this.getMetrics();
                     newImages = Math.max(0, after.images - before.images);
@@ -219,57 +181,14 @@ export default class DocumentTraverser {
             }
 
             const traversalProgress = scrollMoved || scrollRangeGrew;
-            const discoveryProgress = newImages > 0 || newTargets > 0 || newCandidates > 0 ||
-                mutations > 0;
             this.#addMetric(metrics, 'newDomImages', newImages);
             this.#addMetric(metrics, 'newTargets', newTargets);
 
             if (!atEdge && !reachedEdge) edgeLoadWaited = false;
 
             if (atEdge || reachedEdge || !scrollMoved) {
-                if (direction === 'down' && (traversalProgress || discoveryProgress) &&
-                    !progressDiagnosticLogged) {
-                    progressDiagnosticLogged = true;
-                    console.info(
-                        '[DeepScan PROGRESS]',
-                        'phase=document-down',
-                        `structure=${newImages > 0 || newTargets > 0 || mutations > 0}`,
-                        `scrollRange=${scrollRangeGrew}`,
-                        `newCandidates=${newCandidates}`,
-                        `newTargets=${newTargets}`,
-                        `newImages=${newImages}`,
-                        `mutations=${mutationDelta.total}`,
-                        `mutationChildList=${mutationDelta.childList}`,
-                        `mutationAttributes=${mutationDelta.attributes}`,
-                        `mutationAddedElements=${mutationDelta.addedElements}`,
-                        `mutationRemovedElements=${mutationDelta.removedElements}`,
-                        `relevantMutations=${mutations}`,
-                        `relevantMutationChildList=${mutationDelta.relevantChildList}`,
-                        `relevantMutationAttributes=${mutationDelta.relevantAttributes}`,
-                        `photoSwipeActivity=${this.#getPhotoSwipeActivityCount() - photoSwipeActivityBefore}`,
-                        'acceptedCandidates=pending-pipeline',
-                        'visibleImageDelta=pending-pipeline',
-                        `effectiveScrollBefore=${before.effectiveScrollTop}`,
-                        `effectiveScrollAfter=${after.effectiveScrollTop}`,
-                        `scrollHeightBefore=${before.scrollHeight}`,
-                        `scrollHeightAfter=${after.scrollHeight}`,
-                        `clientHeightBefore=${before.clientHeight}`,
-                        `clientHeightAfter=${after.clientHeight}`,
-                        `scrollRangeBefore=${this.#getScrollRange(before)}`,
-                        `scrollRangeAfter=${this.#getScrollRange(after)}`,
-                        `documentScrollMoved=${documentScrollMoved}`,
-                        `scrollAttempted=${scrollResult.scrolled}`,
-                        `targetGeometryMovement=${scrollResult.targetMovement}`,
-                        `targetGeometryMoved=${targetGeometryMoved}`,
-                        `scrollMoved=${scrollMoved}`
-                    );
-                }
                 edgeStableCycles = traversalProgress ? 0 : edgeStableCycles + 1;
                 if (edgeStableCycles >= this.#stableCycleLimit) {
-                    this.#logDocumentDirection(`${label} END`, {
-                        reason: 'stable',
-                        durationMs: performance.now() - directionStartedAt
-                    });
                     return finishDocumentScan('stable');
                 }
             }
@@ -398,17 +317,4 @@ export default class DocumentTraverser {
         return metrics.scrollY <= 4;
     }
 
-    #logDocumentDirection(label, {reason = null, durationMs = null} = {}) {
-        const metrics = this.getMetrics();
-        console.info(
-            `[DeepScan ${label}]`,
-            `time=${this.#getLogTimestamp()}`,
-            ...(Number.isFinite(durationMs) ? [`durationMs=${Math.round(durationMs)}`] : []),
-            'document',
-            ...(reason ? [`reason=${reason}`] : []),
-            `scrollY=${metrics.scrollY}`,
-            `scrollHeight=${metrics.scrollHeight}`,
-            `clientHeight=${metrics.clientHeight}`
-        );
-    }
 }

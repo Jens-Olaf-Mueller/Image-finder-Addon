@@ -7,11 +7,6 @@
     const HIDDEN_DEEP_SCAN_HYDRATION_POLL_INTERVAL_MS = 100;
     const HIDDEN_DEEP_SCAN_HYDRATION_STABLE_MS = 2500;
     const HIDDEN_DEEP_SCAN_HYDRATION_MAX_WAIT_MS = 10000;
-    const HIDDEN_DEEP_SCAN_ACTIVE_CONTAINER_COLORS = [
-        '#ff634733',
-        '#90ee9040',
-        '#a5cef255'
-    ];
     const extensionOrigin = new URL(chrome.runtime.getURL('/')).origin;
     let activeScan = null;
     let activeHiddenDeepScanHost = null;
@@ -54,14 +49,6 @@
     const sendHiddenDeepScanEvent = async (message) => {
         const isCompletion = message?.action === 'complete';
 
-        if (isCompletion) {
-            console.info(
-                '[DeepScan COMPLETE TRACE] host-send-start',
-                `scanId=${message.scanId}`,
-                `status=${message.status}`
-            );
-        }
-
         try {
             const response = await chrome.runtime.sendMessage({
                 target: HIDDEN_DEEP_SCAN_TARGET,
@@ -71,18 +58,11 @@
             if (response?.success !== true) {
                 throw new Error('Hidden DeepScan background acknowledgement failed');
             }
-            if (isCompletion) {
-                console.info(
-                    '[DeepScan COMPLETE TRACE] host-send-success',
-                    `scanId=${message.scanId}`,
-                    `status=${message.status}`
-                );
-            }
             return true;
         } catch (error) {
             if (isCompletion) {
                 console.error(
-                    '[DeepScan COMPLETE TRACE] host-send-error',
+                    '[DeepScan] host completion delivery failed',
                     `scanId=${message.scanId}`,
                     `error=${getDiagnosticErrorMessage(error)}`
                 );
@@ -90,43 +70,30 @@
             return false;
         }
     };
-    const getSafeLocation = (location) => {
+    const getHiddenStateSnapshot = () => {
         try {
-            return `${location.origin}${location.pathname}`;
-        } catch {
-            return '(unavailable)';
-        }
-    };
-    const getHiddenStateSnapshot = (frameWindow = window) => {
-        try {
-            const documentElement = frameWindow.document.documentElement;
-            const body = frameWindow.document.body;
-            const scrollElement = frameWindow.document.scrollingElement ?? documentElement;
+            const documentElement = document.documentElement;
+            const body = document.body;
+            const scrollElement = document.scrollingElement ?? documentElement;
 
             return {
-                location: getSafeLocation(frameWindow.location),
-                readyState: frameWindow.document.readyState,
+                readyState: document.readyState,
                 bodyChildren: body?.children.length ?? 0,
-                domElements: frameWindow.document.getElementsByTagName('*').length,
-                images: frameWindow.document.images?.length ?? 0,
+                domElements: document.getElementsByTagName('*').length,
+                images: document.images?.length ?? 0,
                 scrollHeight: Math.max(
                     documentElement?.scrollHeight ?? 0,
                     body?.scrollHeight ?? 0,
                     scrollElement?.scrollHeight ?? 0
-                ),
-                hasBeforePreloader: Boolean(frameWindow.document.querySelector(
-                    'before_preloader, #before_preloader, .before_preloader'
-                ))
+                )
             };
         } catch {
             return {
-                location: '(unavailable)',
                 readyState: '(unavailable)',
                 bodyChildren: 0,
                 domElements: 0,
                 images: 0,
-                scrollHeight: 0,
-                hasBeforePreloader: false
+                scrollHeight: 0
             };
         }
     };
@@ -139,84 +106,8 @@
 
         return message ? message.slice(0, 240) : 'UNKNOWN_ERROR';
     };
-    const logHiddenState = (phase, state) => {
-        console.log(
-            '[DeepScan HIDDEN STATE]',
-            `phase=${phase}`,
-            `location=${state.location}`,
-            `readyState=${state.readyState}`,
-            `bodyChildren=${state.bodyChildren}`,
-            `domElements=${state.domElements}`,
-            `images=${state.images}`,
-            `scrollHeight=${state.scrollHeight}`,
-            `hasBeforePreloader=${state.hasBeforePreloader}`
-        );
-    };
     const logHiddenError = (kind, message) => {
         console.error('[DeepScan HIDDEN ERROR]', `kind=${kind}`, `message=${message}`);
-    };
-    const getElementPathFromBody = (element) => {
-        if (!element?.isConnected || !document.body?.contains(element)) return null;
-
-        const path = [];
-        let current = element;
-        while (current && current !== document.body) {
-            const parent = current.parentElement;
-            const index = parent ? Array.prototype.indexOf.call(parent.children, current) : -1;
-            if (!parent || index < 0) return null;
-
-            path.unshift(index);
-            current = parent;
-        }
-
-        return current === document.body
-            ? {path, tagName: element.tagName}
-            : null;
-    };
-    const getElementFromBodyPath = (descriptor) => {
-        if (!Array.isArray(descriptor?.path) || descriptor.path.length === 0 ||
-            descriptor.path.length > 128 || typeof descriptor.tagName !== 'string') {
-            return null;
-        }
-
-        let current = document.body;
-        for (const index of descriptor.path) {
-            if (!Number.isInteger(index) || index < 0) return null;
-            current = current?.children[index] ?? null;
-            if (!current) return null;
-        }
-
-        return current?.tagName === descriptor.tagName ? current : null;
-    };
-    const clearVisibleContainerMarker = (scan) => {
-        const marker = scan?.visibleContainerMarker;
-        if (!marker) return;
-
-        const {element, value, priority} = marker;
-        if (element?.isConnected) {
-            if (value) element.style.setProperty('background-color', value, priority);
-            else element.style.removeProperty('background-color');
-        }
-        scan.visibleContainerMarker = null;
-    };
-    const setVisibleContainerMarker = (scan, descriptor, colorIndex = 0) => {
-        clearVisibleContainerMarker(scan);
-        const element = getElementFromBodyPath(descriptor);
-        if (!element) return;
-        const index = Number.isInteger(colorIndex) ? colorIndex : 0;
-        const color = HIDDEN_DEEP_SCAN_ACTIVE_CONTAINER_COLORS[
-            ((index % HIDDEN_DEEP_SCAN_ACTIVE_CONTAINER_COLORS.length) +
-                HIDDEN_DEEP_SCAN_ACTIVE_CONTAINER_COLORS.length) %
-                HIDDEN_DEEP_SCAN_ACTIVE_CONTAINER_COLORS.length
-        ];
-
-        scan.visibleContainerMarker = {
-            element,
-            value: element.style.getPropertyValue('background-color'),
-            priority: element.style.getPropertyPriority('background-color'),
-            color
-        };
-        element.style.setProperty('background-color', color, 'important');
     };
     const sendHiddenDeepScanFrameMessage = (scan, message) => {
         window.parent.postMessage({
@@ -237,7 +128,6 @@
 
         scan.completed = true;
         scan.cleanupDiagnostics?.();
-        scan.stateTimeouts?.forEach((timeout) => clearTimeout(timeout));
         sendHiddenDeepScanFrameMessage(scan, {
             action: 'complete',
             status,
@@ -247,17 +137,6 @@
         });
         if (activeHiddenDeepScanFrame === scan) activeHiddenDeepScanFrame = null;
         flushTabDebugContext(scan.scanId);
-    };
-    const sendHiddenDeepScanFrameState = (scan, phase) => {
-        if (!scan || scan.completed) return;
-
-        const state = getHiddenStateSnapshot();
-        logHiddenState(phase, state);
-        sendHiddenDeepScanFrameMessage(scan, {
-            action: 'hidden-state',
-            phase,
-            state
-        });
     };
     const sendHiddenDeepScanFrameError = (scan, kind, reason) => {
         if (!scan || scan.completed) return;
@@ -378,21 +257,12 @@
             controller: new AbortController(),
             started: false,
             completed: false,
-            cleanupDiagnostics: null,
-            stateTimeouts: []
+            cleanupDiagnostics: null
         };
         setTabDebugContext(scan.scanId);
         scan.cleanupDiagnostics = installHiddenDeepScanFrameDiagnostics(scan);
         activeHiddenDeepScanFrame = scan;
-        sendHiddenDeepScanFrameState(scan, 'load');
         sendHiddenDeepScanFrameMessage(scan, {action: 'ready'});
-        sendHiddenDeepScanFrameState(scan, 'ready');
-        scan.stateTimeouts.push(setTimeout(() => {
-            sendHiddenDeepScanFrameState(scan, '1s');
-        }, 1000));
-        scan.stateTimeouts.push(setTimeout(() => {
-            sendHiddenDeepScanFrameState(scan, '3s');
-        }, 3000));
     };
     const startHiddenDeepScanFrame = async (message) => {
         const scan = activeHiddenDeepScanFrame;
@@ -408,7 +278,6 @@
                 completeHiddenDeepScanFrame(scan, 'cancelled');
                 return;
             }
-            sendHiddenDeepScanFrameState(scan, 'before-start');
             const result = await runHiddenFrameDeepScan({
                 ignoreHiddenImages: message.ignoreHiddenImages === true,
                 minimumImageWidth: message.minimumImageWidth,
@@ -422,23 +291,8 @@
                         candidates,
                         ...(diagnostic ? {diagnostic} : {})
                     });
-                },
-                onActiveScrollContainer: (container, colorIndex = 0) => {
-                    sendHiddenDeepScanFrameMessage(scan, {
-                        action: 'active-container',
-                        ...(container ? {
-                            container: getElementPathFromBody(container),
-                            colorIndex
-                        } : {})
-                    });
                 }
             });
-            console.info(
-                '[DeepScan COMPLETE TRACE] hidden-return',
-                `scanId=${scan.scanId}`,
-                `status=${result.status}`,
-                `endReason=${result.endReason}`
-            );
             completeHiddenDeepScanFrame(
                 scan,
                 result.status,
@@ -458,7 +312,6 @@
     const clearHiddenDeepScanHost = (scan) => {
         if (!scan) return;
 
-        clearVisibleContainerMarker(scan);
         clearTimeout(scan.handshakeTimeout);
         clearInterval(scan.handshakeInterval);
         window.removeEventListener('message', scan.onMessage);
@@ -485,11 +338,6 @@
 
         scan.finished = true;
         scan.cancelled = status === 'cancelled';
-        console.info(
-            '[DeepScan COMPLETE TRACE] host-queue-enter',
-            `scanId=${scan.scanId}`,
-            `status=${status}`
-        );
         try {
             await queueHiddenDeepScanEvent(scan, {
                 action: 'complete',
@@ -500,11 +348,6 @@
                 ...(performance && typeof performance === 'object' ? {performance} : {})
             });
         } finally {
-            console.info(
-                '[DeepScan COMPLETE TRACE] host-cleanup-start',
-                `scanId=${scan.scanId}`,
-                `status=${status}`
-            );
             clearHiddenDeepScanHost(scan);
             flushTabDebugContext(scan.scanId);
         }
@@ -632,8 +475,7 @@
             handshakeInterval: null,
             onMessage: null,
             onFrameLoad: null,
-            eventQueue: Promise.resolve(),
-            visibleContainerMarker: null
+            eventQueue: Promise.resolve()
         };
         setTabDebugContext(scan.scanId);
         wrapper.setAttribute('aria-hidden', 'true');
@@ -684,22 +526,6 @@
                 return;
             }
             if (scan.finished) return;
-            if (data.action === 'active-container') {
-                if (data.container) {
-                    setVisibleContainerMarker(scan, data.container, data.colorIndex);
-                }
-                else clearVisibleContainerMarker(scan);
-                return;
-            }
-            if (data.action === 'hidden-state' && typeof data.phase === 'string' && data.state) {
-                void queueHiddenDeepScanEvent(scan, {
-                    action: 'hidden-state',
-                    scanId: scan.scanId,
-                    phase: data.phase,
-                    state: data.state
-                });
-                return;
-            }
             if (data.action === 'hidden-error' && typeof data.kind === 'string') {
                 void queueHiddenDeepScanEvent(scan, {
                     action: 'hidden-error',
@@ -719,12 +545,6 @@
                 return;
             }
             if (data.action === 'complete') {
-                console.info(
-                    '[DeepScan COMPLETE TRACE] frame-forward',
-                    `scanId=${scan.scanId}`,
-                    `status=${data.status}`,
-                    'hostQueue=scheduled'
-                );
                 void finishHiddenDeepScanHost(
                     scan,
                     data.status,

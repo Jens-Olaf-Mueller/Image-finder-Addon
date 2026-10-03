@@ -1,11 +1,11 @@
 {
     "manifest_version": 3,
     "name": "Image Finder",
-    "version": "0.1.11",
-    "version_name": "Beta 0.1.11",
+    "version": "0.1.12",
+    "version_name": "Beta 0.1.12",
     "description": "Find images on the current website.",
     "icons": {
-        "64": "assets/icons/icon64.png"
+        "64": "assets/icons/icon512.png"
     },
     "host_permissions": [
         "http://*/*",
@@ -58,7 +58,7 @@
     ],
     "action": {
         "default_title": "Image Finder",
-        "default_icon": "assets/icons/icon64.png",
+        "default_icon": "assets/icons/icon512.png",
         "default_popup": "ui/popup.html"
     },
     "options_ui": {

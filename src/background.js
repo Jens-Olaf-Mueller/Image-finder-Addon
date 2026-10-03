@@ -591,14 +591,6 @@ async function sendDeepScanClientMessage(job, message) {
     const isCompletion = message?.action === 'complete' && message.status === 'completed';
     const clientId = job?.popupClientId ?? null;
 
-    if (isCompletion) {
-        console.info(
-            '[DeepScan COMPLETE TRACE] background-client-send-start',
-            `scanId=${job.scanId}`,
-            `clientId=${clientId ?? 'none'}`
-        );
-    }
-
     try {
         const response = await chrome.runtime.sendMessage({
             target: ISOLATED_DEEP_SCAN_TARGET,
@@ -611,18 +603,11 @@ async function sendDeepScanClientMessage(job, message) {
             throw new Error('DEEP_SCAN_CLIENT_ACK_MISSING');
         }
 
-        if (isCompletion) {
-            console.info(
-                '[DeepScan COMPLETE TRACE] background-client-send-success',
-                `scanId=${job.scanId}`,
-                `clientId=${clientId ?? 'none'}`
-            );
-        }
         return true;
     } catch (error) {
         if (isCompletion) {
             console.warn(
-                '[DeepScan COMPLETE TRACE] background-client-send-error',
+                '[DeepScan] completion delivery failed',
                 `scanId=${job.scanId}`,
                 `clientId=${clientId ?? 'none'}`,
                 `error=${getErrorMessage(error)}`
@@ -821,7 +806,6 @@ function handleHiddenDeepScanEvent(event) {
     const isolatedJob = activeIsolatedDeepScan;
     if (!isolatedJob || isolatedJob.scanId !== job.scanId) return;
     if (event.action === 'hidden-state' && typeof event.phase === 'string' && event.state) {
-        console.info('[DeepScan HIDDEN STATE]', {phase: event.phase, ...event.state});
         return;
     }
     if (event.action === 'hidden-error' && typeof event.kind === 'string') {
@@ -849,13 +833,6 @@ function handleHiddenDeepScanEvent(event) {
         return;
     }
     if (event.action !== 'complete') return;
-
-    console.info(
-        '[DeepScan COMPLETE TRACE] background-received',
-        `scanId=${job.scanId}`,
-        `status=${event.status}`,
-        `clientId=${isolatedJob.popupClientId ?? 'none'}`
-    );
 
     const isHiddenFrameUnavailable = event.status === 'unavailable' &&
         isHiddenDeepScanFrameUnavailableReason(event.reason);
@@ -904,16 +881,8 @@ async function finishIsolatedDeepScan(job, status, reason = null, performance = 
     if (!['completed', 'cancelled'].includes(status)) {
         logIsolatedDeepScanFailure(job, status, reason);
     }
-    if (status === 'completed') {
-        console.info(
-            '[DeepScan COMPLETE TRACE] background-queue-start',
-            `scanId=${job.scanId}`,
-            `clientId=${job.popupClientId ?? 'none'}`,
-            `queuePending=${job.clientQueuePending ?? 0}`
-        );
-    }
     await job.clientEventQueue?.catch(() => undefined);
-    const delivered = await sendDeepScanClientMessage(job, {
+    await sendDeepScanClientMessage(job, {
         action: 'complete',
         scanId: job.scanId,
         url: job.url,
@@ -921,14 +890,6 @@ async function finishIsolatedDeepScan(job, status, reason = null, performance = 
         ...(typeof reason === 'string' ? {reason} : {}),
         ...(performance && typeof performance === 'object' ? {performance} : {})
     });
-    console.info(
-        '[DeepScan COMPLETE TRACE] background-forward',
-        `scanId=${job.scanId}`,
-        `status=${status}`,
-        `clientId=${job.popupClientId ?? 'none'}`,
-        'clientQueue=drained',
-        `delivered=${delivered}`
-    );
     scheduleDebugExport(job, status, reason);
 }
 
@@ -1438,42 +1399,6 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
             return undefined;
         }
         if (message.source === 'background') return undefined;
-
-        if (message.action === 'diagnostic-result' && message.diagnostic && message.result) {
-            const diagnostic = message.diagnostic;
-            const result = message.result;
-            console.info(
-                '[DeepScan PIPELINE]',
-                `phase=${diagnostic.phase}`,
-                `batch=${diagnostic.id}`,
-                `collection=${diagnostic.collection ?? 'unknown'}`,
-                `pass=${diagnostic.pass ?? 'initial'}`,
-                `container=${diagnostic.container ?? 'document'}`,
-                `direction=${diagnostic.direction ?? 'none'}`,
-                `rawCandidates=${diagnostic.rawCandidates}`,
-                `scannerNewURLs=${result.scannerNewURLs}`,
-                `imageFinderNewURLs=${result.imageFinderNewURLs}`,
-                `acceptedCandidates=${result.acceptedCandidates}`,
-                `existingUpgrades=${result.existingUpgrades}`,
-                `visibleImageDelta=${result.visibleImageDelta}`,
-                `visibleNewURLs=${result.visibleNewURLs}`,
-                `visibleWinnersFromBatch=${result.visibleWinnersFromBatch}`,
-                `notVisibleAfterFiltering=${result.notVisibleAfterFiltering}`,
-                `candidatePipelineMs=${result.candidatePipelineMs}`,
-                `visibleImages=${result.visibleImages}`,
-                `scanImagesMs=${diagnostic.scanImagesMs ?? 'unavailable'}`,
-                `carouselPhotoSwipeMs=${diagnostic.carouselPhotoSwipeMs ?? 'unavailable'}`,
-                `newBases=${diagnostic.newBases}`,
-                `queryVariants=${diagnostic.queryVariants}`,
-                `resolutionUpgrades=${diagnostic.resolutionUpgrades}`,
-                `dataURLs=${diagnostic.dataURLs}`,
-                `blobURLs=${diagnostic.blobURLs}`,
-                `zeroDimensions=${diagnostic.zeroDimensions}`,
-                `smallDimensions=${diagnostic.smallDimensions}`,
-                `photoSwipe=${diagnostic.photoSwipe}`
-            );
-            return undefined;
-        }
 
         if (message.action === 'start') {
             Promise.resolve(startIsolatedDeepScan(message)).then(

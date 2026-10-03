@@ -10,9 +10,7 @@ export default class DeepScanController {
     #documentTraverser;
     #diagnostics;
     #deepScanPass = 0;
-    #completedNaturally = false;
     #currentPassRecord = null;
-    #deepScanMutationStart = null;
 
     constructor({lifecycle, collection, traversal, documentTraverser, diagnostics} = {}) {
         this.#lifecycle = lifecycle;
@@ -32,8 +30,6 @@ export default class DeepScanController {
             getKnownScrollContainerCount,
             getCompletedScrollContainerStates,
             getHandledStructureContainers,
-            reportActiveScrollContainer,
-            setDeepScanPass,
             isAborted
         } = this.#lifecycle;
         const {registerTargets, collectSources} = this.#collection;
@@ -45,37 +41,29 @@ export default class DeepScanController {
         } = this.#traversal;
         const {
             createPerformanceMetrics,
-            getMutationSnapshot,
-            getMutationDelta,
             addMetric,
             setCurrentPass,
             clearCurrentPass,
             finalizeCurrentPass,
             logPassSummary,
-            createPerformanceSummary,
-            traceAfterDocumentTraversal,
-            tracePassDecision,
-            logRegressionTraceSummary
+            createPerformanceSummary
         } = this.#diagnostics;
 
         try {
             startMutationObservation();
 
             const readinessStartedAt = performance.now();
-            this.#deepScanMutationStart = getMutationSnapshot();
             await waitForReadiness();
             addMetric(null, 'readinessWaitMs', performance.now() - readinessStartedAt);
 
             registerTargets();
             const initialCollectionStartedAt = performance.now();
-            await collectSources({context: {scope: 'initial'}});
+            await collectSources();
             addMetric(null, 'initialCollectionMs', performance.now() - initialCollectionStartedAt);
             while (isActive()) {
                 const pass = ++this.#deepScanPass;
-                setDeepScanPass(pass);
                 const passStartedAt = performance.now();
                 const passMetrics = createPerformanceMetrics();
-                passMetrics.mutationStart = getMutationSnapshot();
                 this.#currentPassRecord = {
                     pass,
                     startedAt: passStartedAt,
@@ -88,21 +76,16 @@ export default class DeepScanController {
                 this.#diagnostics.addPassRecord(this.#currentPassRecord);
                 const containersAtPassStart = getKnownScrollContainerCount();
                 setCurrentPass(passMetrics, this.#currentPassRecord);
-                console.info('[DeepScan PASS START]', `pass=${pass}`);
-                const photoSwipeActivityAtPassStart = getPhotoSwipeActivityCount();
                 await scanRelevantScrollContainers();
                 if (!isActive()) break;
 
-                await this.#documentTraverser.traverse('up', {metrics: passMetrics, pass});
-                traceAfterDocumentTraversal?.('up');
+                await this.#documentTraverser.traverse('up', {metrics: passMetrics});
                 if (!isActive()) break;
 
-                await this.#documentTraverser.traverse('down', {metrics: passMetrics, pass});
-                traceAfterDocumentTraversal?.('down');
+                await this.#documentTraverser.traverse('down', {metrics: passMetrics});
                 if (!isActive()) break;
 
                 const documentStateAfterDirections = this.#documentTraverser.getTraversalState();
-                const mutationCountAfterDirections = this.#lifecycle.getRelevantMutationCount();
                 await scanRelevantScrollContainers();
                 if (!isActive()) break;
 
@@ -122,22 +105,13 @@ export default class DeepScanController {
 
                 const photoSwipeActivityBeforeFinalCollection = getPhotoSwipeActivityCount();
                 const finalCollectionStartedAt = performance.now();
-                const newCandidates = await collectSources({
-                    metrics: passMetrics,
-                    context: {scope: 'final-settle', pass}
-                });
+                await collectSources({metrics: passMetrics});
                 addMetric(passMetrics, 'finalCollectionMs', performance.now() - finalCollectionStartedAt);
                 const newTargets = registerTargets();
                 addMetric(passMetrics, 'newTargets', newTargets);
                 const documentStateAfterFinalSettle = this.#documentTraverser.getTraversalState();
-                const mutationCountAfterFinalSettle = this.#lifecycle.getRelevantMutationCount();
                 const documentChangedAfterDirections = documentStateAfterDirections !==
                     documentStateAfterFinalSettle;
-                const mutationDetected = mutationCountAfterDirections !== mutationCountAfterFinalSettle;
-                const candidatesDetected = newCandidates > 0;
-                const targetsDetected = newTargets > 0;
-                const photoSwipeActivityDetected = getPhotoSwipeActivityCount() !==
-                    photoSwipeActivityAtPassStart;
                 const photoSwipeActivityDuringFinalCollection = getPhotoSwipeActivityCount() !==
                     photoSwipeActivityBeforeFinalCollection;
 
@@ -156,10 +130,6 @@ export default class DeepScanController {
                         ? !completedScrollContainerStates.has(container)
                         : !handledStructureContainers.has(container)
                 );
-                const containersDetected = pendingContainers.some(({container, isScrollable}) =>
-                    isScrollable && completedScrollContainerStates.has(container)
-                );
-
                 // Discovery work has already been collected and sent to the client. Repeat traversal
                 // only when the reachable document range changed or a container range is unfinished.
                 const repeatPass = documentChangedAfterDirections || pendingContainers.length > 0;
@@ -177,7 +147,6 @@ export default class DeepScanController {
                 this.#currentPassRecord.endPosition = this.#documentTraverser.getMetrics().scrollY;
                 this.#currentPassRecord.durationMs = performance.now() - passStartedAt;
                 this.#currentPassRecord.repeatReason = repeatReason;
-                tracePassDecision?.({repeatReason, pendingContainers});
 
                 logPassSummary(
                     pass,
@@ -191,61 +160,18 @@ export default class DeepScanController {
                 this.#currentPassRecord = null;
 
                 if (!repeatPass) {
-                    console.info('[DeepScan PASS] complete');
-                    this.#completedNaturally = true;
                     break;
                 }
-
-                console.info(
-                    '[DeepScan PASS] repeat',
-                    `pass=${pass}`,
-                    `repeatReasons=${repeatReasons.join(',')}`,
-                    `mutation=${mutationDetected}`,
-                    `candidates=${candidatesDetected}`,
-                    `targets=${targetsDetected}`,
-                    `documentRange=${documentChangedAfterDirections}`,
-                    `containers=${containersDetected}`,
-                    `newContainers=${newContainersDetected}`,
-                    `photoSwipeActivity=${photoSwipeActivityDetected}`
-                );
             }
         } finally {
             stopMutationObservation();
             finalizeCurrentPass(this.#currentPassRecord, isAborted() ? 'aborted' : 'interrupted');
             clearCurrentPass();
             this.#currentPassRecord = null;
-            reportActiveScrollContainer();
         }
 
         const status = isAborted() ? 'cancelled' : 'completed';
-        if (status === 'completed' && this.#completedNaturally) {
-            const mutations = getMutationDelta(this.#deepScanMutationStart ?? getMutationSnapshot());
-            console.info(
-                '[DeepScan END] status=completed',
-                `mutations=${mutations.total}`,
-                `mutationChildList=${mutations.childList}`,
-                `mutationAttributes=${mutations.attributes}`,
-                `mutationAddedElements=${mutations.addedElements}`,
-                `mutationRemovedElements=${mutations.removedElements}`,
-                `relevantMutations=${mutations.relevantTotal}`,
-                'styleClassObserved=false'
-            );
-        } else if (status === 'cancelled') {
-            const mutations = getMutationDelta(this.#deepScanMutationStart ?? getMutationSnapshot());
-            console.info(
-                '[DeepScan END] status=cancelled',
-                `mutations=${mutations.total}`,
-                `mutationChildList=${mutations.childList}`,
-                `mutationAttributes=${mutations.attributes}`,
-                `mutationAddedElements=${mutations.addedElements}`,
-                `mutationRemovedElements=${mutations.removedElements}`,
-                `relevantMutations=${mutations.relevantTotal}`,
-                'styleClassObserved=false'
-            );
-        }
-
         const performanceSummary = createPerformanceSummary(status);
-        logRegressionTraceSummary?.({status, performance: performanceSummary});
         console.info('[DeepScan Performance Hidden]', performanceSummary);
 
         return {

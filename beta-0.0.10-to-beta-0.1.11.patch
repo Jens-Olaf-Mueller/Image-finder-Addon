@@ -1,0 +1,2810 @@
+diff --git a/.githooks/pre-commit b/.githooks/pre-commit
+new file mode 100644
+index 0000000000000000000000000000000000000000..c42c138659dd03bec874ae003d407b961e99ecbf
+--- /dev/null
++++ b/.githooks/pre-commit
+@@ -0,0 +1,5 @@
++#!/usr/bin/env sh
++set -eu
++
++node scripts/bump-manifest-version.mjs
++git add manifest.json
+diff --git a/assets/icons/button-icons.svg b/assets/icons/button-icons.svg
+index ca732d283cf87f7b59b7adcf5ac4a781a5d758d4..20721d86b3d84932f7f0e9d9bf267bb396c69e6a 100644
+--- a/assets/icons/button-icons.svg
++++ b/assets/icons/button-icons.svg
+@@ -80,7 +80,7 @@
+ 
+ 
+ <!-- Icon: SORT-CRONO-ASC -->
+-<symbol id="svgSortCronoAsc" viewBox="0 0 512 512" fill="currentColor">
++<symbol id="svgSortCronoAsc" viewBox="0 0 480 480" fill="currentColor">
+     <circle cx="256" cy="256" r="192" style="fill:none;stroke:currentColor;stroke-miterlimit:10;stroke-width:32px"/>
+     <circle cx="416" cy="256" r="16" fill="currentColor"/>
+     <circle cx="256" cy="416" r="16" fill="currentColor"/>
+@@ -90,7 +90,7 @@
+ </symbol>
+ 
+ <!-- Icon: SORT-CRONO-DESC -->
+-<symbol id="svgSortCronoDesc" viewBox="0 0 512 512" fill="currentColor">
++<symbol id="svgSortCronoDesc" viewBox="0 0 480 480" fill="currentColor">
+     <circle cx="256" cy="256" r="192" style="fill:none;stroke:currentColor;stroke-miterlimit:10;stroke-width:32px"/>
+     <circle cx="256" cy="96" r="16" fill="currentColor"/>
+     <circle cx="416" cy="256" r="16" fill="currentColor"/>
+diff --git a/assets/icons/icon64.png b/assets/icons/icon64.png
+deleted file mode 100644
+index ee17dbb40125425dcdf1968f4db45b7c23414c68..0000000000000000000000000000000000000000
+GIT binary patch
+literal 0
+HcmV?d00001
+
+literal 21146
+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
+ZuX3ta^tVDopnD~OBX%z6=ZEmu{ssSo$EpAT
+
+diff --git a/beta-0.0.09-working-tree.patch b/beta-0.0.09-working-tree.patch
+new file mode 100644
+index 0000000000000000000000000000000000000000..e861dca3b3d90196bb904ccb9659ae694f29f243
+--- /dev/null
++++ b/beta-0.0.09-working-tree.patch
+@@ -0,0 +1,880 @@
++diff --git a/assets/icons/button-icons.svg b/assets/icons/button-icons.svg
++index ca732d283cf87f7b59b7adcf5ac4a781a5d758d4..20721d86b3d84932f7f0e9d9bf267bb396c69e6a 100644
++--- a/assets/icons/button-icons.svg
+++++ b/assets/icons/button-icons.svg
++@@ -80,7 +80,7 @@
++ 
++ 
++ <!-- Icon: SORT-CRONO-ASC -->
++-<symbol id="svgSortCronoAsc" viewBox="0 0 512 512" fill="currentColor">
+++<symbol id="svgSortCronoAsc" viewBox="0 0 480 480" fill="currentColor">
++     <circle cx="256" cy="256" r="192" style="fill:none;stroke:currentColor;stroke-miterlimit:10;stroke-width:32px"/>
++     <circle cx="416" cy="256" r="16" fill="currentColor"/>
++     <circle cx="256" cy="416" r="16" fill="currentColor"/>
++@@ -90,7 +90,7 @@
++ </symbol>
++ 
++ <!-- Icon: SORT-CRONO-DESC -->
++-<symbol id="svgSortCronoDesc" viewBox="0 0 512 512" fill="currentColor">
+++<symbol id="svgSortCronoDesc" viewBox="0 0 480 480" fill="currentColor">
++     <circle cx="256" cy="256" r="192" style="fill:none;stroke:currentColor;stroke-miterlimit:10;stroke-width:32px"/>
++     <circle cx="256" cy="96" r="16" fill="currentColor"/>
++     <circle cx="416" cy="256" r="16" fill="currentColor"/>
++diff --git a/manifest.json b/manifest.json
++index b57059ed0a80182272ce3a3c9a6eb319cc8db297..2be30e2a2a27199cf1253a2cb2174b7c8d65b192 100644
++--- a/manifest.json
+++++ b/manifest.json
++@@ -32,6 +32,7 @@
++                 "https://*/*"
++             ],
++             "js": [
+++                "src/debug-logger.js",
++                 "src/deepscan-frame.js"
++             ],
++             "all_frames": true,
++diff --git a/src/background.js b/src/background.js
++index 58a7d6c0dec2640c41ecb05a53a4ddfddf76fb97..540f32580cc61d438cc9e2840c36275b702053f2 100644
++--- a/src/background.js
+++++ b/src/background.js
++@@ -10,8 +10,17 @@ const EMBED_BLOCKED_OR_LOAD_FAILED = 'EMBED_BLOCKED_OR_LOAD_FAILED';
++ const POPUP_DEEP_SCAN_PORT_NAME = 'image-finder-popup-deepscan';
++ const REOPEN_POPUP_AFTER_RESTART_STORAGE_KEY = 'reopenPopupAfterRestart';
++ const REOPEN_POPUP_AFTER_RESTART_MAX_AGE_MS = 60 * 1000;
+++const DEBUG_LOG_TARGET = 'image-finder-debug-log';
+++const DEBUG_LOG_EXPORT_DELAY_MS = 5000;
+++const DEBUG_LOG_POPUP_FINAL_DELAY_MS = 250;
+++const DEBUG_LOG_SETTINGS_BY_SOURCE = Object.freeze({
+++    popup: 'logpopup',
+++    tab: 'logtab',
+++    'service-worker': 'logserviceworker'
+++});
++ 
++ if (typeof importScripts === 'function') {
+++    importScripts('debug-logger.js');
++     importScripts('isolated-deepscan-host.js');
++     if (typeof JSZip === 'undefined') importScripts('../vendor/jszip.min.js');
++ }
++@@ -26,6 +35,12 @@ let protectedDeepScanFrameRuleOwner = null;
++ let hiddenDeepScanFrameRuleOwner = null;
++ let protectedDeepScanFrameRuleUpdate = Promise.resolve();
++ const popupDeepScanPorts = new Map();
+++const debugCollectorsByScanId = new Map();
+++let activeDebugLogContext = null;
+++const debugBackgroundLogger = globalThis.ImageFinderDebugLogger?.createLogger({
+++    source: 'service-worker',
+++    sendRecords: (records) => collectDebugRecords(records)
+++})?.install();
++ 
++ async function reopenPopupAfterExtensionRestart() {
++     let restartRequestedAt = null;
++@@ -64,6 +79,165 @@ function getErrorMessage(error) {
++     return error instanceof Error ? error.message : String(error);
++ }
++ 
+++function getDebugManifestMeta() {
+++    try {
+++        const manifest = chrome.runtime.getManifest();
+++        return {
+++            version: manifest?.version ?? null,
+++            versionName: manifest?.version_name ?? null
+++        };
+++    } catch {
+++        return {version: null, versionName: null};
+++    }
+++}
+++
+++function getEnabledDebugLogSources(debugSettings) {
+++    const debugModeEnabled = debugSettings?.debugmode === true;
+++
+++    return Object.fromEntries(Object.entries(DEBUG_LOG_SETTINGS_BY_SOURCE).map(
+++        ([source, setting]) => [source, debugModeEnabled && debugSettings?.[setting] === true]
+++    ));
+++}
+++
+++function hasEnabledDebugLogSource(enabledSources) {
+++    return Object.values(enabledSources ?? {}).some((enabled) => enabled === true);
+++}
+++
+++function createDebugCollector(job) {
+++    if (!job?.scanId || debugCollectorsByScanId.has(job.scanId)) return;
+++    activeDebugLogContext = null;
+++    debugBackgroundLogger?.clearContext();
+++
+++    if (!hasEnabledDebugLogSource(job.enabledDebugLogSources)) return;
+++
+++    debugCollectorsByScanId.set(job.scanId, {
+++        meta: {
+++            ...getDebugManifestMeta(),
+++            scanId: job.scanId,
+++            url: job.url ?? null,
+++            startedAt: new Date().toISOString(),
+++            endedAt: null,
+++            status: null,
+++            enabledSources: {...job.enabledDebugLogSources}
+++        },
+++        enabledSources: {...job.enabledDebugLogSources},
+++        records: [],
+++        collectorSequence: 0,
+++        exportTimer: null,
+++        exported: false,
+++        popupComplete: false
+++    });
+++    activeDebugLogContext = {scanId: job.scanId, url: job.url ?? null};
+++    debugBackgroundLogger?.setContext(activeDebugLogContext);
+++}
+++
+++function collectDebugRecords(records) {
+++    if (!Array.isArray(records)) return;
+++
+++    records.forEach((record) => {
+++        if (!record || typeof record.scanId !== 'string' || !record.scanId) return;
+++        const collector = debugCollectorsByScanId.get(record.scanId);
+++        if (!collector || collector.exported) return;
+++
+++        const source = record.source;
+++        if (collector.enabledSources?.[source] !== true) return;
+++
+++        collector.records.push({
+++            timestamp: typeof record.timestamp === 'string' ? record.timestamp : new Date().toISOString(),
+++            source,
+++            level: ['log', 'info', 'warn', 'error'].includes(record.level)
+++                ? record.level
+++                : 'log',
+++            sourceSequence: Number.isInteger(record.sourceSequence) ? record.sourceSequence : null,
+++            collectorSequence: ++collector.collectorSequence,
+++            scanId: record.scanId,
+++            url: typeof record.url === 'string' ? record.url : collector.meta.url,
+++            message: typeof record.message === 'string' ? record.message : '',
+++            arguments: Array.isArray(record.arguments) ? record.arguments : []
+++        });
+++    });
+++}
+++
+++function getDebugFilename(meta) {
+++    let domain = 'unknown-domain';
+++    try {
+++        domain = new URL(meta.url).hostname || domain;
+++    } catch {
+++        // Keep the generic fallback for malformed or unavailable URLs.
+++    }
+++    const safeDomain = domain.replace(/[^a-z0-9.-]+/gi, '-').replace(/^-+|-+$/g, '') ||
+++        'unknown-domain';
+++    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+++    return `image-finder-debug-Beta-0.0.09-${safeDomain}-${timestamp}-${meta.scanId}.json`;
+++}
+++
+++function getDebugLogFolder(date = new Date()) {
+++    const year = String(date.getFullYear());
+++    const month = String(date.getMonth() + 1).padStart(2, '0');
+++    const day = String(date.getDate()).padStart(2, '0');
+++
+++    return `logs/imagefinder/${year}_${month}_${day}`;
+++}
+++
+++async function exportDebugCollector(scanId) {
+++    const collector = debugCollectorsByScanId.get(scanId);
+++    if (!collector || collector.exported) return;
+++
+++    collector.exported = true;
+++    const payload = JSON.stringify({meta: collector.meta, records: collector.records}, null, 2);
+++    try {
+++        await downloadBlob(new Blob([payload], {type: 'application/json'}), {
+++            filename: `${getDebugLogFolder()}/${getDebugFilename(collector.meta)}`,
+++            saveAs: false,
+++            conflictAction: 'uniquify'
+++        });
+++    } catch {
+++        // Export failure must never alter DeepScan completion.
+++    } finally {
+++        debugCollectorsByScanId.delete(scanId);
+++        if (activeDebugLogContext?.scanId === scanId) activeDebugLogContext = null;
+++        debugBackgroundLogger?.clearContext(scanId);
+++    }
+++}
+++
+++function queueDebugCollectorExport(collector, delayMs) {
+++    if (!collector || collector.exported) return;
+++    if (collector.exportTimer !== null) clearTimeout(collector.exportTimer);
+++    collector.exportTimer = setTimeout(() => {
+++        collector.exportTimer = null;
+++        void exportDebugCollector(collector.meta.scanId);
+++    }, delayMs);
+++}
+++
+++function handleDebugContextComplete(message) {
+++    if (message?.source !== 'popup' || typeof message.scanId !== 'string') return;
+++    const collector = debugCollectorsByScanId.get(message.scanId);
+++    if (!collector || collector.exported) return;
+++
+++    collector.popupComplete = true;
+++    if (!collector.meta.status) return;
+++    const flush = debugBackgroundLogger?.flush?.() ?? Promise.resolve();
+++    void flush.finally(() => {
+++        queueDebugCollectorExport(collector, DEBUG_LOG_POPUP_FINAL_DELAY_MS);
+++    });
+++}
+++
+++function scheduleDebugExport(job, status, reason = null) {
+++    const collector = debugCollectorsByScanId.get(job?.scanId);
+++    if (!collector || collector.exported) return;
+++
+++    collector.meta.endedAt = new Date().toISOString();
+++    collector.meta.status = status;
+++    if (typeof reason === 'string' && reason) collector.meta.reason = reason;
+++    const flush = debugBackgroundLogger?.flush?.() ?? Promise.resolve();
+++    void flush.finally(() => {
+++        queueDebugCollectorExport(
+++            collector,
+++            collector.popupComplete ? DEBUG_LOG_POPUP_FINAL_DELAY_MS : DEBUG_LOG_EXPORT_DELAY_MS
+++        );
+++    });
+++}
+++
++ function getPopupDeepScanClientId(port) {
++     const prefix = `${POPUP_DEEP_SCAN_PORT_NAME}:`;
++     if (typeof port?.name !== 'string' || !port.name.startsWith(prefix)) return null;
++@@ -501,7 +675,7 @@ async function probeHiddenDeepScanHost(job) {
++ async function injectHiddenDeepScanHost(job) {
++     await chrome.scripting.executeScript({
++         target: {tabId: job.tabId, frameIds: [job.hostFrameId]},
++-        files: ['src/deepscan-frame.js'],
+++        files: ['src/debug-logger.js', 'src/deepscan-frame.js'],
++         injectImmediately: true
++     });
++ }
++@@ -713,6 +887,7 @@ async function finishIsolatedDeepScan(job, status, reason = null, performance =
++         'clientQueue=drained',
++         `delivered=${delivered}`
++     );
+++    scheduleDebugExport(job, status, reason);
++ }
++ 
++ async function startIsolatedDeepScanHost(job) {
++@@ -833,6 +1008,7 @@ async function cancelIsolatedDeepScan(scanId = null, endReason = 'cancelled') {
++         endReason: normalizedEndReason
++     });
++     if (cancellationSource) console.info('[DeepScan CANCEL COMPLETE]');
+++    scheduleDebugExport(job, 'cancelled', normalizedEndReason);
++     return true;
++ }
++ 
++@@ -856,6 +1032,7 @@ async function startIsolatedDeepScan(request) {
++             ? Math.max(0, Math.round(request.minimumImageHeight))
++             : 200,
++         allowProtectedDeepScan: request.allowProtectedDeepScan === true,
+++        enabledDebugLogSources: getEnabledDebugLogSources(request.debugSettings),
++         popupClientId: typeof request.popupClientId === 'string' && request.popupClientId
++             ? request.popupClientId
++             : null,
++@@ -866,6 +1043,7 @@ async function startIsolatedDeepScan(request) {
++         clientQueuePending: 0
++     };
++     activeIsolatedDeepScan = job;
+++    createDebugCollector(job);
++ 
++     try {
++         const tab = await chrome.tabs.get(job.tabId);
++@@ -1193,6 +1371,13 @@ chrome.runtime.onConnect.addListener((port) => {
++ });
++ 
++ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+++    if (message?.target === DEBUG_LOG_TARGET) {
+++        if (message.action === 'records') collectDebugRecords(message.records);
+++        else if (message.action === 'context-complete') handleDebugContextComplete(message);
+++        sendResponse({success: true});
+++        return undefined;
+++    }
+++
++     if (message?.target === OFFSCREEN_TARGET) {
++         return undefined;
++     }
++diff --git a/src/classes/ImageFinder.js b/src/classes/ImageFinder.js
++index df7aa008f99f8ca1214e0801e78fa854c61d858d..5566d1bb45c8cbd3442270a2751563077003c352 100644
++--- a/src/classes/ImageFinder.js
+++++ b/src/classes/ImageFinder.js
++@@ -966,6 +966,9 @@ export class ImageFinder {
++         item.remove();
++ 
++         this.DOM.imgPreview.removeAttribute('src');
+++        this.DOM.h2_Preview.style.display = 'block';
+++        this.DOM.spnStatusBar.style.display = 'none';
+++        if (this.#activityCounts.deepScan > 0) this.#updateDeepScanTitle();
++         this.DOM.btnDownload.disabled = true;
++         this.DOM.btnDelete.disabled = true;
++         this.DOM.btnSaveAll.disabled = (this.images.size === 0);
++@@ -1601,4 +1604,4 @@ export class ImageFinder {
++         return elapsed;
++     }
++ 
++-}
++\ No newline at end of file
+++}
++diff --git a/src/classes/ImageScanner.js b/src/classes/ImageScanner.js
++index 4e98f65832ea0accce89ae5d178f7df662bdfbd4..f3eb30ffc33a99b99c2750b87ce78b443c937a3e 100644
++--- a/src/classes/ImageScanner.js
+++++ b/src/classes/ImageScanner.js
++@@ -215,6 +215,7 @@ export default class ImageScanner {
++         }
++ 
++         const filters = this.settings.get('filters') ?? {};
+++        const debugSettings = this.settings.get('debug') ?? {};
++         const imageFilter = this.filter;
++         const allowProtectedDeepScan = this.settings.get(
++             'common',
++@@ -225,6 +226,8 @@ export default class ImageScanner {
++         await this.cancelDeepScan();
++ 
++         const scanId = crypto.randomUUID();
+++        const debugLogger = globalThis.imageFinderDebugLogger;
+++        debugLogger?.setContext({scanId, url: scanContext.url});
++         const transportMetrics = {
++             batches: 0,
++             timestampedBatches: 0,
++@@ -445,6 +448,12 @@ export default class ImageScanner {
++                     minimumImageWidth: imageFilter.minWidth,
++                     minimumImageHeight: imageFilter.minHeight,
++                     allowProtectedDeepScan,
+++                    debugSettings: {
+++                        debugmode: debugSettings.debugmode === true,
+++                        logtab: debugSettings.logtab === true,
+++                        logpopup: debugSettings.logpopup === true,
+++                        logserviceworker: debugSettings.logserviceworker === true
+++                    },
++                     ...(this.#deepScanClientId ? {popupClientId: this.#deepScanClientId} : {})
++                 });
++                 if (response?.success !== true) {
++@@ -464,6 +473,25 @@ export default class ImageScanner {
++         } finally {
++             session.finish({status: 'finished'});
++             console.info('[DeepScan Performance]', createTransportSummary(completionResult));
+++            const completeDebugContext = () => {
+++                debugLogger?.clearContext(scanId);
+++                try {
+++                    void window.chrome.runtime.sendMessage({
+++                        target: 'image-finder-debug-log',
+++                        action: 'context-complete',
+++                        source: 'popup',
+++                        scanId
+++                    }).catch(() => undefined);
+++                } catch {
+++                    // The fallback export covers a closed popup.
+++                }
+++            };
+++            const debugFlush = debugLogger?.flush?.();
+++            if (debugFlush && typeof debugFlush.finally === 'function') {
+++                void debugFlush.finally(completeDebugContext);
+++            } else {
+++                completeDebugContext();
+++            }
++         }
++ 
++         return Array.from(candidatesByURL.values());
++@@ -624,4 +652,4 @@ export default class ImageScanner {
++ 
++         return size + UTF8_ENCODER.encode(payload.slice(rawStart)).byteLength;
++     }
++-}
++\ No newline at end of file
+++}
++diff --git a/src/classes/Settings.js b/src/classes/Settings.js
++index 5833f3550712679fb31103c17aa11d70e7fe09bc..bf8b821a5c7edf61ac42c2df35172b34f6b55608 100644
++--- a/src/classes/Settings.js
+++++ b/src/classes/Settings.js
++@@ -526,5 +526,11 @@ export const DEFAULT_SETTINGS = {
++         blurSettingsVersion: PIXEL_BLUR_SETTINGS_VERSION,
++         hasExcludeList: false,
++         excludeList: 'logo, avatar'
+++    },
+++    debug: {
+++        debugmode: false,
+++        logtab: false,
+++        logpopup: false,
+++        logserviceworker: false
++     }
++-};
++\ No newline at end of file
+++};
++diff --git a/src/classes/SettingsForm.js b/src/classes/SettingsForm.js
++index ef592393700d8b1774777dc127448047f8a08917..71e6ea5fa1bbd1d657e6dc29ec76b78116c14924 100644
++--- a/src/classes/SettingsForm.js
+++++ b/src/classes/SettingsForm.js
++@@ -87,6 +87,7 @@ export class SettingsForm {
++ 
++         this.form.addEventListener('change', () => {
++             this.updateDeepScanControls();
+++            this.updateDebugControls();
++             const data = this.getFormData();
++ 
++             this.enqueue(async () => {
++@@ -125,6 +126,7 @@ export class SettingsForm {
++ 
++     async updateUI() {
++         this.updateDeepScanControls();
+++        this.updateDebugControls();
++         this.updateImageSizeControls();
++         this.updateDownloadFolderControls();
++         this.updateExcludeListControls();
++@@ -155,6 +157,21 @@ export class SettingsForm {
++         return !enabled && wasChecked;
++     }
++ 
+++    updateDebugControls() {
+++        const debugMode = this.DOM.chkDebugmode;
+++        if (!debugMode) return;
+++
+++        const disabled = !debugMode.checked;
+++
+++        [
+++            this.DOM.chkLogPopupConsole,
+++            this.DOM.chkLogTabConsole,
+++            this.DOM.chkLogServiceWorkerConsole
+++        ].filter(Boolean).forEach((control) => {
+++            control.disabled = disabled;
+++        });
+++    }
+++
++     updateDownloadFolderControls() {
++         const selected = Array.from(this.downloadFolderRadios)
++             .find((radio) => radio.checked);
++diff --git a/src/deepscan-frame.js b/src/deepscan-frame.js
++index 64a8485127c6f6560382ae6015748e2db73d53ab..fd9a6c4174d506d460df64a3707921ade5292dc6 100644
++--- a/src/deepscan-frame.js
+++++ b/src/deepscan-frame.js
++@@ -16,6 +16,31 @@
++     let activeScan = null;
++     let activeHiddenDeepScanHost = null;
++     let activeHiddenDeepScanFrame = null;
+++    const tabDebugLogger = globalThis.ImageFinderDebugLogger?.createLogger({
+++        source: 'tab',
+++        sendRecords: (records) => {
+++            try {
+++                return chrome.runtime.sendMessage({
+++                    target: 'image-finder-debug-log',
+++                    action: 'records',
+++                    records
+++                }).catch(() => undefined);
+++            } catch {
+++                return Promise.resolve();
+++            }
+++        }
+++    })?.install();
+++    const setTabDebugContext = (scanId) => {
+++        tabDebugLogger?.setContext({scanId, url: window.location.href});
+++    };
+++    const flushTabDebugContext = (scanId) => {
+++        const flush = tabDebugLogger?.flush?.();
+++        if (flush && typeof flush.finally === 'function') {
+++            void flush.finally(() => tabDebugLogger.clearContext(scanId));
+++        } else {
+++            tabDebugLogger?.clearContext(scanId);
+++        }
+++    };
++ 
++     const sendToHost = (message) => {
++         window.parent.postMessage({
++@@ -221,6 +246,7 @@
++             ...(performance && typeof performance === 'object' ? {performance} : {})
++         });
++         if (activeHiddenDeepScanFrame === scan) activeHiddenDeepScanFrame = null;
+++        flushTabDebugContext(scan.scanId);
++     };
++     const sendHiddenDeepScanFrameState = (scan, phase) => {
++         if (!scan || scan.completed) return;
++@@ -355,6 +381,7 @@
++             cleanupDiagnostics: null,
++             stateTimeouts: []
++         };
+++        setTabDebugContext(scan.scanId);
++         scan.cleanupDiagnostics = installHiddenDeepScanFrameDiagnostics(scan);
++         activeHiddenDeepScanFrame = scan;
++         sendHiddenDeepScanFrameState(scan, 'load');
++@@ -479,6 +506,7 @@
++                 `status=${status}`
++             );
++             clearHiddenDeepScanHost(scan);
+++            flushTabDebugContext(scan.scanId);
++         }
++     };
++     const getHiddenDeepScanHandshakeTimeoutReason = (scan) =>
++@@ -607,6 +635,7 @@
++             eventQueue: Promise.resolve(),
++             visibleContainerMarker: null
++         };
+++        setTabDebugContext(scan.scanId);
++         wrapper.setAttribute('aria-hidden', 'true');
++         wrapper.style.cssText = [
++             'position:fixed!important',
++@@ -759,6 +788,7 @@
++             controller: new AbortController(),
++             completed: false
++         };
+++        setTabDebugContext(scan.scanId);
++         activeScan = scan;
++         sendReady(scan);
++ 
++@@ -834,4 +864,4 @@
++         sendResponse({success: false});
++         return undefined;
++     });
++-})();
++\ No newline at end of file
+++})();
++diff --git a/src/popup.js b/src/popup.js
++index 183a11ffa7cdfffb38da4ace684605d3af51c3b0..5bac5965cb8c6dc34faaa9a95521d39e33c25600 100644
++--- a/src/popup.js
+++++ b/src/popup.js
++@@ -1,7 +1,23 @@
++ 
++ import { ImageFinder } from './classes/ImageFinder.js';
++ import { loadSettingsForm, SettingsForm } from './classes/SettingsForm.js';
+++import './debug-logger.js';
++ 
+++const popupDebugLogger = globalThis.ImageFinderDebugLogger?.createLogger({
+++    source: 'popup',
+++    sendRecords: (records) => {
+++        try {
+++            return window.chrome.runtime.sendMessage({
+++                target: 'image-finder-debug-log',
+++                action: 'records',
+++                records
+++            }).catch(() => undefined);
+++        } catch {
+++            return Promise.resolve();
+++        }
+++    }
+++})?.install();
+++globalThis.imageFinderDebugLogger = popupDebugLogger;
++ const imageFinder = new ImageFinder();
++ const POPUP_DEEP_SCAN_PORT_NAME = 'image-finder-popup-deepscan';
++ let popupDeepScanClientId = null;
++diff --git a/ui/settings-form.html b/ui/settings-form.html
++index ad7ab7dbf840fb3d03b769c9ff10e81a18f35cb7..d29d845b107b8be5d0b09884d786b4db017dedf5 100644
++--- a/ui/settings-form.html
+++++ b/ui/settings-form.html
++@@ -63,7 +63,6 @@
++             <input type="checkbox" id="chkDisableDownloadWhenDone" name="disableDownloadWhenDone">
++              Disable download button on done files
++         </label>
++-
++     </fieldset>
++ 
++     <fieldset name="filesizes"><legend>Image Size</legend>
++@@ -163,4 +162,23 @@
++              Blob images
++         </label>
++     </fieldset>
+++
+++    <fieldset name="debug"><legend>Debugging</legend>
+++        <label id="lblDebugmode" class="control">
+++            <input type="checkbox" id="chkDebugmode" name="debugmode">
+++            Enable debugmode
+++        </label>
+++        <label id="lblLogTabConsole" class="control">
+++            <input type="checkbox" id="chkLogTabConsole" name="logtab" disabled style="margin-left: 1rem;">
+++            Log current tab messages into file
+++        </label>
+++        <label id="lblLogPopupConsole" class="control">
+++            <input type="checkbox" id="chkLogPopupConsole" name="logpopup" disabled style="margin-left: 1rem;">
+++            Log popup messages into file
+++        </label>
+++        <label id="lblLogServiceWorkerConsole" class="control">
+++            <input type="checkbox" id="chkLogServiceWorkerConsole" name="logserviceworker" disabled style="margin-left: 1rem;">
+++            Log service worker messages into file
+++        </label>
+++    </fieldset>
++ </form>
++diff --git a/src/debug-logger.js b/src/debug-logger.js
++new file mode 100755
++index 0000000000000000000000000000000000000000..80babe4ffd60132cb7f6221354054f4ee8c1b18b
++--- /dev/null
+++++ b/src/debug-logger.js
++@@ -0,0 +1,233 @@
+++(() => {
+++    const LOGGER_REGISTRY_KEY = '__imageFinderDebugLoggers';
+++    const CONSOLE_LEVELS = ['log', 'info', 'warn', 'error'];
+++    const MAX_DEPTH = 4;
+++    const MAX_ITEMS = 32;
+++    const MAX_STRING_LENGTH = 2000;
+++    const DEFAULT_BATCH_SIZE = 25;
+++    const DEFAULT_FLUSH_DELAY_MS = 250;
+++
+++    const truncate = (value, maximum = MAX_STRING_LENGTH) => {
+++        const text = String(value);
+++        return text.length > maximum ? `${text.slice(0, maximum - 3)}...` : text;
+++    };
+++    const getElementDescription = (element) => {
+++        try {
+++            const className = typeof element.className === 'string'
+++                ? element.className.trim()
+++                : element.getAttribute?.('class')?.trim() ?? '';
+++            return {
+++                type: 'DOMElement',
+++                tag: String(element.tagName ?? 'unknown').toLowerCase(),
+++                id: element.id || null,
+++                class: truncate(className, 240) || null
+++            };
+++        } catch {
+++            return {type: 'DOMElement', tag: 'unavailable'};
+++        }
+++    };
+++    const serializeValue = (value, seen = new WeakSet(), depth = 0) => {
+++        try {
+++            if (value === null) return null;
+++            if (value === undefined) return {type: 'undefined'};
+++            if (typeof value === 'string') return truncate(value);
+++            if (typeof value === 'number' || typeof value === 'boolean') return value;
+++            if (typeof value === 'bigint') return {type: 'bigint', value: String(value)};
+++            if (typeof value === 'symbol') return {type: 'symbol', value: String(value)};
+++            if (typeof value === 'function') {
+++                return {type: 'function', name: value.name || null};
+++            }
+++            if (value?.nodeType === 1 && value?.tagName) return getElementDescription(value);
+++            if (value instanceof Error ||
+++                (typeof value?.name === 'string' && typeof value?.message === 'string' &&
+++                    typeof value?.stack === 'string')) {
+++                return {
+++                    type: 'Error',
+++                    name: value.name || 'Error',
+++                    message: truncate(value.message),
+++                    stack: typeof value.stack === 'string' ? truncate(value.stack, 6000) : null
+++                };
+++            }
+++            if (value instanceof Date) return {type: 'Date', value: value.toISOString()};
+++            if (depth >= MAX_DEPTH) return {type: 'truncated', reason: 'max-depth'};
+++            if (typeof value !== 'object') return truncate(value);
+++            if (seen.has(value)) return {type: 'circular'};
+++            seen.add(value);
+++
+++            if (Array.isArray(value)) {
+++                const items = value.slice(0, MAX_ITEMS).map((item) =>
+++                    serializeValue(item, seen, depth + 1)
+++                );
+++                if (value.length > MAX_ITEMS) items.push({type: 'truncated', remaining: value.length - MAX_ITEMS});
+++                return items;
+++            }
+++            if (value instanceof Map) {
+++                return {
+++                    type: 'Map',
+++                    entries: Array.from(value.entries()).slice(0, MAX_ITEMS).map(([key, item]) => [
+++                        serializeValue(key, seen, depth + 1),
+++                        serializeValue(item, seen, depth + 1)
+++                    ]),
+++                    size: value.size
+++                };
+++            }
+++            if (value instanceof Set) {
+++                return {
+++                    type: 'Set',
+++                    values: Array.from(value.values()).slice(0, MAX_ITEMS).map((item) =>
+++                        serializeValue(item, seen, depth + 1)
+++                    ),
+++                    size: value.size
+++                };
+++            }
+++
+++            const result = {};
+++            const keys = Object.keys(value).slice(0, MAX_ITEMS);
+++            keys.forEach((key) => {
+++                try {
+++                    result[key] = serializeValue(value[key], seen, depth + 1);
+++                } catch {
+++                    result[key] = {type: 'unavailable'};
+++                }
+++            });
+++            if (Object.keys(value).length > MAX_ITEMS) {
+++                result.__truncated__ = Object.keys(value).length - MAX_ITEMS;
+++            }
+++            return result;
+++        } catch (error) {
+++            return {
+++                type: 'serialization-error',
+++                message: error instanceof Error ? truncate(error.message) : 'unknown'
+++            };
+++        }
+++    };
+++    const getMessageText = (argumentsList) => argumentsList.map((value) => {
+++        if (typeof value === 'string') return truncate(value, 400);
+++        if (value && typeof value === 'object' && value.type === 'Error') {
+++            return `${value.name}: ${value.message}`;
+++        }
+++        if (value && typeof value === 'object' && value.type === 'DOMElement') {
+++            return `<${value.tag}>`;
+++        }
+++        if (value === null) return 'null';
+++        if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+++        return '[object]';
+++    }).join(' ');
+++    const serializeConsoleArguments = (argumentsList) => {
+++        const serializedArguments = Array.from(argumentsList, (value) => serializeValue(value));
+++        return {
+++            message: getMessageText(serializedArguments),
+++            arguments: serializedArguments
+++        };
+++    };
+++    const getRegistry = () => {
+++        if (!(globalThis[LOGGER_REGISTRY_KEY] instanceof Map)) {
+++            globalThis[LOGGER_REGISTRY_KEY] = new Map();
+++        }
+++        return globalThis[LOGGER_REGISTRY_KEY];
+++    };
+++    const createLogger = ({
+++        source,
+++        sendRecords = () => Promise.resolve(),
+++        batchSize = DEFAULT_BATCH_SIZE,
+++        flushDelayMs = DEFAULT_FLUSH_DELAY_MS
+++    } = {}) => {
+++        const normalizedSource = ['popup', 'tab', 'service-worker'].includes(source)
+++            ? source
+++            : 'unknown';
+++        const registry = getRegistry();
+++        if (registry.has(normalizedSource)) return registry.get(normalizedSource);
+++
+++        let context = {};
+++        let sourceSequence = 0;
+++        let pendingRecords = [];
+++        let flushTimer = null;
+++        let sendQueue = Promise.resolve();
+++        let installed = false;
+++        const originalMethods = new Map();
+++        const normalizeContext = (nextContext) => ({
+++            scanId: typeof nextContext?.scanId === 'string' && nextContext.scanId
+++                ? nextContext.scanId
+++                : null,
+++            url: typeof nextContext?.url === 'string' && nextContext.url
+++                ? nextContext.url
+++                : null
+++        });
+++        const flush = () => {
+++            if (flushTimer !== null) {
+++                clearTimeout(flushTimer);
+++                flushTimer = null;
+++            }
+++            if (pendingRecords.length === 0) return sendQueue;
+++
+++            const records = pendingRecords;
+++            pendingRecords = [];
+++            sendQueue = sendQueue
+++                .then(() => Promise.resolve(sendRecords(records)))
+++                .catch(() => undefined);
+++            return sendQueue;
+++        };
+++        const queueRecord = (level, args) => {
+++            try {
+++                const serialized = serializeConsoleArguments(args);
+++                pendingRecords.push({
+++                    timestamp: new Date().toISOString(),
+++                    source: normalizedSource,
+++                    level,
+++                    sourceSequence: ++sourceSequence,
+++                    ...context,
+++                    ...serialized
+++                });
+++                if (pendingRecords.length >= Math.max(1, batchSize)) {
+++                    void flush();
+++                } else if (flushTimer === null && typeof setTimeout === 'function') {
+++                    flushTimer = setTimeout(() => {
+++                        flushTimer = null;
+++                        void flush();
+++                    }, Math.max(0, flushDelayMs));
+++                }
+++            } catch {
+++                // Debug logging must never affect the original console call.
+++            }
+++        };
+++        const logger = {
+++            install() {
+++                if (installed || typeof console === 'undefined') return logger;
+++                installed = true;
+++                CONSOLE_LEVELS.forEach((level) => {
+++                    const original = console[level];
+++                    if (typeof original !== 'function') return;
+++                    originalMethods.set(level, original);
+++                    try {
+++                        console[level] = (...args) => {
+++                            original.apply(console, args);
+++                            queueRecord(level, args);
+++                        };
+++                    } catch {
+++                        // A locked console method simply remains unobserved.
+++                    }
+++                });
+++                return logger;
+++            },
+++            setContext(nextContext) {
+++                context = normalizeContext(nextContext);
+++                return logger;
+++            },
+++            clearContext(scanId = null) {
+++                if (!scanId || context.scanId === scanId) context = {};
+++                return logger;
+++            },
+++            flush,
+++            getContext: () => ({...context}),
+++            getOriginalMethod: (level) => originalMethods.get(level) ?? null
+++        };
+++        registry.set(normalizedSource, logger);
+++        return logger;
+++    };
+++
+++    globalThis.ImageFinderDebugLogger = Object.freeze({
+++        createLogger,
+++        serializeConsoleArguments,
+++        serializeValue
+++    });
+++})();
++diff --git a/tests/debug-logger.html b/tests/debug-logger.html
++new file mode 100755
++index 0000000000000000000000000000000000000000..8b10829ac7dd179fb4a5bca16d57fde537d89317
++--- /dev/null
+++++ b/tests/debug-logger.html
++@@ -0,0 +1,49 @@
+++<!DOCTYPE html>
+++<html lang="en">
+++<head>
+++    <meta charset="UTF-8">
+++    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+++    <title>Image Finder – Debug Logger Fixture</title>
+++</head>
+++<body>
+++    <div id="element" class="fixture alpha beta"></div>
+++
+++    <script type="module">
+++        const runFixture = async () => {
+++            if (!new URLSearchParams(location.search).has('runDebugLogger')) return;
+++
+++            await import('../src/debug-logger.js');
+++            const {serializeConsoleArguments} = globalThis.ImageFinderDebugLogger;
+++            const cyclic = {name: 'cycle'};
+++            cyclic.self = cyclic;
+++            const error = new Error('fixture-error');
+++            const serialized = serializeConsoleArguments([
+++                {plain: true, nested: {value: 1}},
+++                ['array', undefined, null],
+++                error,
+++                cyclic,
+++                document.getElementById('element')
+++            ]).arguments;
+++            const passed = serialized[0]?.plain === true &&
+++                Array.isArray(serialized[1]) && serialized[1][1]?.type === 'undefined' &&
+++                serialized[2]?.type === 'Error' && serialized[2]?.message === 'fixture-error' &&
+++                serialized[3]?.self?.type === 'circular' &&
+++                serialized[4]?.type === 'DOMElement' && serialized[4]?.tag === 'div' &&
+++                serialized[4]?.id === 'element' && serialized[4]?.class === 'fixture alpha beta';
+++
+++            document.documentElement.dataset.debugLoggerResult = passed ? 'passed' : 'failed';
+++            document.documentElement.dataset.debugLoggerChecks = JSON.stringify({
+++                object: serialized[0]?.plain === true,
+++                array: Array.isArray(serialized[1]),
+++                error: serialized[2]?.type === 'Error',
+++                cyclic: serialized[3]?.self?.type === 'circular',
+++                element: serialized[4]?.type === 'DOMElement'
+++            });
+++        };
+++
+++        void runFixture().catch(() => {
+++            document.documentElement.dataset.debugLoggerResult = 'failed';
+++        });
+++    </script>
+++</body>
+++</html>
++
+diff --git a/manifest.json b/manifest.json
+index 76624969b7ba9665de5d0b31696a99e73d1a1836..3a9c86762215b460ebb4135841d29adaf0f79555 100644
+--- a/manifest.json
++++ b/manifest.json
+@@ -1,10 +1,11 @@
+ {
+     "manifest_version": 3,
+     "name": "Image Finder",
+-    "version": "0.1.0",
++    "version": "0.1.11",
++    "version_name": "Beta 0.1.11",
+     "description": "Find images on the current website.",
+-        "icons": {
+-        "64": "assets/icons/icon64.png"
++    "icons": {
++        "64": "assets/icons/icon512.png"
+     },
+     "host_permissions": [
+         "http://*/*",
+@@ -32,6 +33,7 @@
+                 "https://*/*"
+             ],
+             "js": [
++                "src/debug-logger.js",
+                 "src/deepscan-frame.js"
+             ],
+             "all_frames": true,
+@@ -56,7 +58,7 @@
+     ],
+     "action": {
+         "default_title": "Image Finder",
+-        "default_icon": "assets/icons/icon64.png",
++        "default_icon": "assets/icons/icon512.png",
+         "default_popup": "ui/popup.html"
+     },
+     "options_ui": {
+diff --git a/scripts/bump-manifest-version.mjs b/scripts/bump-manifest-version.mjs
+new file mode 100644
+index 0000000000000000000000000000000000000000..daf570e517da4f57cc5829da967da04357250480
+--- /dev/null
++++ b/scripts/bump-manifest-version.mjs
+@@ -0,0 +1,44 @@
++import {readFile, writeFile} from 'node:fs/promises';
++import {dirname, resolve} from 'node:path';
++import {fileURLToPath} from 'node:url';
++
++const scriptPath = fileURLToPath(import.meta.url);
++const manifestPath = resolve(dirname(scriptPath), '..', 'manifest.json');
++const VERSION_PATTERN = /^(\d+)\.(\d+)\.(\d+)$/;
++
++export function incrementPatchVersion(version) {
++    const match = VERSION_PATTERN.exec(version);
++    if (!match) {
++        throw new Error(`Expected a three-part numeric version, received: ${version}`);
++    }
++
++    const [major, minor, patch] = match.slice(1).map(Number);
++    if (patch >= 65535) throw new Error('The manifest patch version cannot exceed 65535');
++
++    return `${major}.${minor}.${patch + 1}`;
++}
++
++export function withIncrementedManifestVersion(manifest) {
++    const version = incrementPatchVersion(manifest.version);
++
++    return {
++        ...manifest,
++        version,
++        version_name: `Beta ${version}`
++    };
++}
++
++async function main() {
++    const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
++    const updatedManifest = withIncrementedManifestVersion(manifest);
++
++    await writeFile(manifestPath, `${JSON.stringify(updatedManifest, null, 4)}\n`);
++    console.log(`Manifest version updated to ${updatedManifest.version_name}`);
++}
++
++if (process.argv[1] && resolve(process.argv[1]) === scriptPath) {
++    main().catch((error) => {
++        console.error(`Cannot update manifest version: ${error.message}`);
++        process.exitCode = 1;
++    });
++}
+diff --git a/src/addon-info.js b/src/addon-info.js
+new file mode 100644
+index 0000000000000000000000000000000000000000..953839f2b1131516becff4b7207c6932b53aa185
+--- /dev/null
++++ b/src/addon-info.js
+@@ -0,0 +1,13 @@
++export function getAddonVersionName() {
++    try {
++        const manifest = globalThis.chrome?.runtime?.getManifest?.();
++        const versionName = String(manifest?.version_name ?? '').trim();
++
++        if (versionName) return versionName;
++
++        const version = String(manifest?.version ?? '').trim();
++        return version || 'Version unavailable';
++    } catch {
++        return 'Version unavailable';
++    }
++}
+diff --git a/src/background.js b/src/background.js
+index cfd0df576dd62eaef39b920ddc6ceb4fa374ad2f..98144699f243c36f10aebf9c94692dcc09163d27 100644
+--- a/src/background.js
++++ b/src/background.js
+@@ -10,8 +10,17 @@ const EMBED_BLOCKED_OR_LOAD_FAILED = 'EMBED_BLOCKED_OR_LOAD_FAILED';
+ const POPUP_DEEP_SCAN_PORT_NAME = 'image-finder-popup-deepscan';
+ const REOPEN_POPUP_AFTER_RESTART_STORAGE_KEY = 'reopenPopupAfterRestart';
+ const REOPEN_POPUP_AFTER_RESTART_MAX_AGE_MS = 60 * 1000;
++const DEBUG_LOG_TARGET = 'image-finder-debug-log';
++const DEBUG_LOG_EXPORT_DELAY_MS = 5000;
++const DEBUG_LOG_POPUP_FINAL_DELAY_MS = 250;
++const DEBUG_LOG_SETTINGS_BY_SOURCE = Object.freeze({
++    popup: 'logpopup',
++    tab: 'logtab',
++    'service-worker': 'logserviceworker'
++});
+ 
+ if (typeof importScripts === 'function') {
++    importScripts('debug-logger.js');
+     importScripts('isolated-deepscan-host.js');
+     if (typeof JSZip === 'undefined') importScripts('../vendor/jszip.min.js');
+ }
+@@ -26,6 +35,12 @@ let protectedDeepScanFrameRuleOwner = null;
+ let hiddenDeepScanFrameRuleOwner = null;
+ let protectedDeepScanFrameRuleUpdate = Promise.resolve();
+ const popupDeepScanPorts = new Map();
++const debugCollectorsByScanId = new Map();
++let activeDebugLogContext = null;
++const debugBackgroundLogger = globalThis.ImageFinderDebugLogger?.createLogger({
++    source: 'service-worker',
++    sendRecords: (records) => collectDebugRecords(records)
++})?.install();
+ 
+ async function reopenPopupAfterExtensionRestart() {
+     let restartRequestedAt = null;
+@@ -64,6 +79,167 @@ function getErrorMessage(error) {
+     return error instanceof Error ? error.message : String(error);
+ }
+ 
++function getDebugManifestMeta() {
++    try {
++        const manifest = chrome.runtime.getManifest();
++        return {
++            version: manifest?.version ?? null,
++            versionName: manifest?.version_name ?? null
++        };
++    } catch {
++        return {version: null, versionName: null};
++    }
++}
++
++function getEnabledDebugLogSources(debugSettings) {
++    const debugModeEnabled = debugSettings?.debugmode === true;
++
++    return Object.fromEntries(Object.entries(DEBUG_LOG_SETTINGS_BY_SOURCE).map(
++        ([source, setting]) => [source, debugModeEnabled && debugSettings?.[setting] === true]
++    ));
++}
++
++function hasEnabledDebugLogSource(enabledSources) {
++    return Object.values(enabledSources ?? {}).some((enabled) => enabled === true);
++}
++
++function createDebugCollector(job) {
++    if (!job?.scanId || debugCollectorsByScanId.has(job.scanId)) return;
++    activeDebugLogContext = null;
++    debugBackgroundLogger?.clearContext();
++
++    if (!hasEnabledDebugLogSource(job.enabledDebugLogSources)) return;
++
++    debugCollectorsByScanId.set(job.scanId, {
++        meta: {
++            ...getDebugManifestMeta(),
++            scanId: job.scanId,
++            url: job.url ?? null,
++            startedAt: new Date().toISOString(),
++            endedAt: null,
++            status: null,
++            enabledSources: {...job.enabledDebugLogSources}
++        },
++        enabledSources: {...job.enabledDebugLogSources},
++        records: [],
++        collectorSequence: 0,
++        exportTimer: null,
++        exported: false,
++        popupComplete: false
++    });
++    activeDebugLogContext = {scanId: job.scanId, url: job.url ?? null};
++    debugBackgroundLogger?.setContext(activeDebugLogContext);
++}
++
++function collectDebugRecords(records) {
++    if (!Array.isArray(records)) return;
++
++    records.forEach((record) => {
++        if (!record || typeof record.scanId !== 'string' || !record.scanId) return;
++        const collector = debugCollectorsByScanId.get(record.scanId);
++        if (!collector || collector.exported) return;
++
++        const source = record.source;
++        if (collector.enabledSources?.[source] !== true) return;
++
++        collector.records.push({
++            timestamp: typeof record.timestamp === 'string' ? record.timestamp : new Date().toISOString(),
++            source,
++            level: ['log', 'info', 'warn', 'error'].includes(record.level)
++                ? record.level
++                : 'log',
++            sourceSequence: Number.isInteger(record.sourceSequence) ? record.sourceSequence : null,
++            collectorSequence: ++collector.collectorSequence,
++            scanId: record.scanId,
++            url: typeof record.url === 'string' ? record.url : collector.meta.url,
++            message: typeof record.message === 'string' ? record.message : '',
++            arguments: Array.isArray(record.arguments) ? record.arguments : []
++        });
++    });
++}
++
++function getDebugFilename(meta) {
++    let domain = 'unknown-domain';
++    try {
++        domain = new URL(meta.url).hostname || domain;
++    } catch {
++        // Keep the generic fallback for malformed or unavailable URLs.
++    }
++    const safeDomain = domain.replace(/[^a-z0-9.-]+/gi, '-').replace(/^-+|-+$/g, '') ||
++        'unknown-domain';
++    const safeVersion = String(meta.versionName || meta.version || 'unknown-version')
++        .replace(/[^a-z0-9.-]+/gi, '-').replace(/^-+|-+$/g, '') || 'unknown-version';
++    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
++    return `image-finder-debug-${safeVersion}-${safeDomain}-${timestamp}-${meta.scanId}.json`;
++}
++
++function getDebugLogFolder(date = new Date()) {
++    const year = String(date.getFullYear());
++    const month = String(date.getMonth() + 1).padStart(2, '0');
++    const day = String(date.getDate()).padStart(2, '0');
++
++    return `logs/imagefinder/${year}_${month}_${day}`;
++}
++
++async function exportDebugCollector(scanId) {
++    const collector = debugCollectorsByScanId.get(scanId);
++    if (!collector || collector.exported) return;
++
++    collector.exported = true;
++    const payload = JSON.stringify({meta: collector.meta, records: collector.records}, null, 2);
++    try {
++        await downloadBlob(new Blob([payload], {type: 'application/json'}), {
++            filename: `${getDebugLogFolder()}/${getDebugFilename(collector.meta)}`,
++            saveAs: false,
++            conflictAction: 'uniquify'
++        });
++    } catch {
++        // Export failure must never alter DeepScan completion.
++    } finally {
++        debugCollectorsByScanId.delete(scanId);
++        if (activeDebugLogContext?.scanId === scanId) activeDebugLogContext = null;
++        debugBackgroundLogger?.clearContext(scanId);
++    }
++}
++
++function queueDebugCollectorExport(collector, delayMs) {
++    if (!collector || collector.exported) return;
++    if (collector.exportTimer !== null) clearTimeout(collector.exportTimer);
++    collector.exportTimer = setTimeout(() => {
++        collector.exportTimer = null;
++        void exportDebugCollector(collector.meta.scanId);
++    }, delayMs);
++}
++
++function handleDebugContextComplete(message) {
++    if (message?.source !== 'popup' || typeof message.scanId !== 'string') return;
++    const collector = debugCollectorsByScanId.get(message.scanId);
++    if (!collector || collector.exported) return;
++
++    collector.popupComplete = true;
++    if (!collector.meta.status) return;
++    const flush = debugBackgroundLogger?.flush?.() ?? Promise.resolve();
++    void flush.finally(() => {
++        queueDebugCollectorExport(collector, DEBUG_LOG_POPUP_FINAL_DELAY_MS);
++    });
++}
++
++function scheduleDebugExport(job, status, reason = null) {
++    const collector = debugCollectorsByScanId.get(job?.scanId);
++    if (!collector || collector.exported) return;
++
++    collector.meta.endedAt = new Date().toISOString();
++    collector.meta.status = status;
++    if (typeof reason === 'string' && reason) collector.meta.reason = reason;
++    const flush = debugBackgroundLogger?.flush?.() ?? Promise.resolve();
++    void flush.finally(() => {
++        queueDebugCollectorExport(
++            collector,
++            collector.popupComplete ? DEBUG_LOG_POPUP_FINAL_DELAY_MS : DEBUG_LOG_EXPORT_DELAY_MS
++        );
++    });
++}
++
+ function getPopupDeepScanClientId(port) {
+     const prefix = `${POPUP_DEEP_SCAN_PORT_NAME}:`;
+     if (typeof port?.name !== 'string' || !port.name.startsWith(prefix)) return null;
+@@ -513,7 +689,7 @@ async function probeHiddenDeepScanHost(job) {
+ async function injectHiddenDeepScanHost(job) {
+     await chrome.scripting.executeScript({
+         target: {tabId: job.tabId, frameIds: [job.hostFrameId]},
+-        files: ['src/deepscan-frame.js'],
++        files: ['src/debug-logger.js', 'src/deepscan-frame.js'],
+         injectImmediately: true
+     });
+ }
+@@ -753,6 +929,7 @@ async function finishIsolatedDeepScan(job, status, reason = null, performance =
+         'clientQueue=drained',
+         `delivered=${delivered}`
+     );
++    scheduleDebugExport(job, status, reason);
+ }
+ 
+ async function startIsolatedDeepScanHost(job) {
+@@ -873,6 +1050,7 @@ async function cancelIsolatedDeepScan(scanId = null, endReason = 'cancelled') {
+         endReason: normalizedEndReason
+     });
+     if (cancellationSource) console.info('[DeepScan CANCEL COMPLETE]');
++    scheduleDebugExport(job, 'cancelled', normalizedEndReason);
+     return true;
+ }
+ 
+@@ -896,6 +1074,7 @@ async function startIsolatedDeepScan(request) {
+             ? Math.max(0, Math.round(request.minimumImageHeight))
+             : 200,
+         allowProtectedDeepScan: request.allowProtectedDeepScan === true,
++        enabledDebugLogSources: getEnabledDebugLogSources(request.debugSettings),
+         popupClientId: typeof request.popupClientId === 'string' && request.popupClientId
+             ? request.popupClientId
+             : null,
+@@ -906,6 +1085,7 @@ async function startIsolatedDeepScan(request) {
+         clientQueuePending: 0
+     };
+     activeIsolatedDeepScan = job;
++    createDebugCollector(job);
+ 
+     try {
+         const tab = await chrome.tabs.get(job.tabId);
+@@ -1233,6 +1413,13 @@ chrome.runtime.onConnect.addListener((port) => {
+ });
+ 
+ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
++    if (message?.target === DEBUG_LOG_TARGET) {
++        if (message.action === 'records') collectDebugRecords(message.records);
++        else if (message.action === 'context-complete') handleDebugContextComplete(message);
++        sendResponse({success: true});
++        return undefined;
++    }
++
+     if (message?.target === OFFSCREEN_TARGET) {
+         return undefined;
+     }
+diff --git a/src/classes/ImageFinder.js b/src/classes/ImageFinder.js
+index 0747e4fd87bfcbd9b94dedc7a1db4446ca21e0eb..0016b28dc8857b0a50614ff957ed55c202b1fd7c 100644
+--- a/src/classes/ImageFinder.js
++++ b/src/classes/ImageFinder.js
+@@ -5,6 +5,7 @@ import Progressbar from './Progressbar.js';
+ import BlurScanner from './BlurScanner.js';
+ import ImageMatcher from './ImageMatcher.js';
+ import { ScanContext } from './ScanContext.js';
++import { getAddonVersionName } from '../addon-info.js';
+ 
+ const SORT_BUTTON_TITLES = Object.freeze({
+     filename: 'Sort by filename',
+@@ -102,6 +103,7 @@ export class ImageFinder {
+             this.#handleDownloadChanged(delta);
+         });
+         window.addEventListener('pagehide', () => this.#stopDeepScanTitleTimer(), {once: true});
++        this.#showAddonVersion();
+         this.#updateLED();
+         this.#updateLEDActivity();
+ 
+@@ -343,6 +345,7 @@ export class ImageFinder {
+         }
+ 
+         this.DOM.h2_Preview.style.display = 'none';
++        this.DOM.spnStatusBar.style.display = 'none';
+         this.DOM.btnDelete.disabled = false;
+         const downloadOff = this.downloadButtonState && item.classList.contains('saved');
+         this.DOM.btnDownload.disabled = false || downloadOff;
+@@ -498,6 +501,7 @@ export class ImageFinder {
+         this.DOM.divToolbarActions.hidden = false;
+         this.DOM.divProgressbar.hidden = false;
+         this.DOM.spnStatusBar.hidden = false;
++        this.#showAddonVersion();
+         this.DOM.btnRestart.hidden = true;
+         this.DOM.btnDefaultSettings.hidden = true;
+         this.DOM.btnDefaultSettings.disabled = true;
+@@ -574,6 +578,7 @@ export class ImageFinder {
+         this.DOM.imgPreview.removeAttribute('src');
+         this.DOM.h2_Preview.style.display = 'block';
+         this.info = 'Image preview';
++        this.#showAddonVersion();
+         this.DOM.btnDownload.disabled = true;
+         this.DOM.btnSaveAll.disabled = true;
+         this.DOM.btnDelete.disabled = true;
+@@ -637,13 +642,13 @@ export class ImageFinder {
+             this.clear({invalidateScan: false});
+             this.sortState = {criterion: null, direction: 'asc'};
+             this.#updateSortButtons();
+-            this.DOM.spnStatusBar.style.display = 'none';
++            this.#showAddonVersion();
+             this.progressbar.backgroundColor = SCAN_PROGRESS_COLOR;
+             this.progressbar.reset();
+ 
+             const normalScannerStartedAt = performance.now();
+             const scanResults = await this.scanner.scan({
+-                onStart: count => this.progressbar.show(count),
++                onStart: count => this.#showProgressbar(count),
+                 onProgress: () => this.progressbar.update(),
+                 signal: scanController.signal,
+                 onTrace: traceNormalScan
+@@ -812,6 +817,7 @@ export class ImageFinder {
+             }
+             this.#finalizeDeepScanUI(scanGeneration);
+             if (this.#isCurrentScan(scanGeneration)) {
++                this.#hideProgressbar();
+                 if (this.#scanController === scanController) {
+                     this.#scanController = null;
+                 }
+@@ -996,6 +1002,9 @@ export class ImageFinder {
+         item.remove();
+ 
+         this.DOM.imgPreview.removeAttribute('src');
++        this.DOM.h2_Preview.style.display = 'block';
++        this.#showAddonVersion();
++        if (this.#activityCounts.deepScan > 0) this.#updateDeepScanTitle();
+         this.DOM.btnDownload.disabled = true;
+         this.DOM.btnDelete.disabled = true;
+         this.DOM.btnSaveAll.disabled = (this.images.size === 0);
+@@ -1173,7 +1182,7 @@ export class ImageFinder {
+             this.currentBlobPreview = null;
+             this.DOM.imgPreview.removeAttribute('src');
+             this.DOM.h2_Preview.style.display = 'block';
+-            this.DOM.spnStatusBar.style.display = 'none';
++            this.#showAddonVersion();
+             this.DOM.btnDownload.disabled = true;
+             this.DOM.btnDelete.disabled = true;
+         }
+@@ -1233,7 +1242,7 @@ export class ImageFinder {
+         if (stages.length === 0) return null;
+ 
+         this.progressbar.backgroundColor = FILTER_PROGRESS_COLOR;
+-        this.progressbar.show(100);
++        this.#showProgressbar(100);
+ 
+         const progressByStage = Object.fromEntries(stages.map((stage, index) => [
+             stage,
+@@ -1261,10 +1270,20 @@ export class ImageFinder {
+ 
+     #finishFilteringProgress() {
+         this.progressbar.setValue(this.progressbar.max);
+-        this.progressbar.hide();
++        this.#hideProgressbar();
+         this.progressbar.backgroundColor = SCAN_PROGRESS_COLOR;
+     }
+ 
++    #showProgressbar(max) {
++        this.DOM.spnStatusBar.style.display = 'none';
++        this.progressbar.show(max);
++    }
++
++    #hideProgressbar() {
++        this.progressbar.hide();
++        this.#showAddonVersion();
++    }
++
+     async #setVisibleImages(scanGeneration, {showFilteringProgress = false} = {}) {
+         const previousVisibleImageIds = new Set(this.images.keys());
+         const candidates = Array.from(this.candidates);
+@@ -1525,6 +1544,13 @@ export class ImageFinder {
+         );
+     }
+ 
++    #showAddonVersion() {
++        if (this.selectedItem) return;
++
++        this.DOM.spnStatusBar.textContent = `Image Finder – ${getAddonVersionName()}`;
++        this.DOM.spnStatusBar.style.display = 'flex';
++    }
++
+     #finalizeDeepScanUI(scanGeneration) {
+         if (!this.#isCurrentScan(scanGeneration) || this.#activityCounts.deepScan > 0) return;
+ 
+diff --git a/src/classes/ImageScanner.js b/src/classes/ImageScanner.js
+index cb37b648f060ad980cf0606aa361e3ff8f6ccd17..557aa1a36a1078b6266a83a378984c34996185b5 100644
+--- a/src/classes/ImageScanner.js
++++ b/src/classes/ImageScanner.js
+@@ -249,6 +249,7 @@ export default class ImageScanner {
+         };
+         trace('scan-deep-images-call');
+         const filters = this.settings.get('filters') ?? {};
++        const debugSettings = this.settings.get('debug') ?? {};
+         const imageFilter = this.filter;
+         const allowProtectedDeepScan = this.settings.get(
+             'common',
+@@ -259,6 +260,8 @@ export default class ImageScanner {
+         await this.cancelDeepScan();
+ 
+         const scanId = crypto.randomUUID();
++        const debugLogger = globalThis.imageFinderDebugLogger;
++        debugLogger?.setContext({scanId, url: scanContext.url});
+         const transportMetrics = {
+             batches: 0,
+             timestampedBatches: 0,
+@@ -479,6 +482,12 @@ export default class ImageScanner {
+                     minimumImageWidth: imageFilter.minWidth,
+                     minimumImageHeight: imageFilter.minHeight,
+                     allowProtectedDeepScan,
++                    debugSettings: {
++                        debugmode: debugSettings.debugmode === true,
++                        logtab: debugSettings.logtab === true,
++                        logpopup: debugSettings.logpopup === true,
++                        logserviceworker: debugSettings.logserviceworker === true
++                    },
+                     ...(this.#deepScanClientId ? {popupClientId: this.#deepScanClientId} : {})
+                 });
+                 if (response?.success !== true) {
+@@ -502,6 +511,25 @@ export default class ImageScanner {
+         } finally {
+             session.finish({status: 'finished'});
+             console.info('[DeepScan Performance]', createTransportSummary(completionResult));
++            const completeDebugContext = () => {
++                debugLogger?.clearContext(scanId);
++                try {
++                    void window.chrome.runtime.sendMessage({
++                        target: 'image-finder-debug-log',
++                        action: 'context-complete',
++                        source: 'popup',
++                        scanId
++                    }).catch(() => undefined);
++                } catch {
++                    // The fallback export covers a closed popup.
++                }
++            };
++            const debugFlush = debugLogger?.flush?.();
++            if (debugFlush && typeof debugFlush.finally === 'function') {
++                void debugFlush.finally(completeDebugContext);
++            } else {
++                completeDebugContext();
++            }
+         }
+ 
+         return Array.from(candidatesByURL.values());
+diff --git a/src/classes/Settings.js b/src/classes/Settings.js
+index 5833f3550712679fb31103c17aa11d70e7fe09bc..4f9e12dc39e9e782e66c8d6f5975c225b3c74348 100644
+--- a/src/classes/Settings.js
++++ b/src/classes/Settings.js
+@@ -526,5 +526,11 @@ export const DEFAULT_SETTINGS = {
+         blurSettingsVersion: PIXEL_BLUR_SETTINGS_VERSION,
+         hasExcludeList: false,
+         excludeList: 'logo, avatar'
++    },
++    debug: {
++        debugmode: false,
++        logtab: false,
++        logpopup: false,
++        logserviceworker: false
+     }
+ };
+\ No newline at end of file
+diff --git a/src/classes/SettingsForm.js b/src/classes/SettingsForm.js
+index ef592393700d8b1774777dc127448047f8a08917..71e6ea5fa1bbd1d657e6dc29ec76b78116c14924 100644
+--- a/src/classes/SettingsForm.js
++++ b/src/classes/SettingsForm.js
+@@ -87,6 +87,7 @@ export class SettingsForm {
+ 
+         this.form.addEventListener('change', () => {
+             this.updateDeepScanControls();
++            this.updateDebugControls();
+             const data = this.getFormData();
+ 
+             this.enqueue(async () => {
+@@ -125,6 +126,7 @@ export class SettingsForm {
+ 
+     async updateUI() {
+         this.updateDeepScanControls();
++        this.updateDebugControls();
+         this.updateImageSizeControls();
+         this.updateDownloadFolderControls();
+         this.updateExcludeListControls();
+@@ -155,6 +157,21 @@ export class SettingsForm {
+         return !enabled && wasChecked;
+     }
+ 
++    updateDebugControls() {
++        const debugMode = this.DOM.chkDebugmode;
++        if (!debugMode) return;
++
++        const disabled = !debugMode.checked;
++
++        [
++            this.DOM.chkLogPopupConsole,
++            this.DOM.chkLogTabConsole,
++            this.DOM.chkLogServiceWorkerConsole
++        ].filter(Boolean).forEach((control) => {
++            control.disabled = disabled;
++        });
++    }
++
+     updateDownloadFolderControls() {
+         const selected = Array.from(this.downloadFolderRadios)
+             .find((radio) => radio.checked);
+diff --git a/src/debug-logger.js b/src/debug-logger.js
+new file mode 100644
+index 0000000000000000000000000000000000000000..80babe4ffd60132cb7f6221354054f4ee8c1b18b
+--- /dev/null
++++ b/src/debug-logger.js
+@@ -0,0 +1,233 @@
++(() => {
++    const LOGGER_REGISTRY_KEY = '__imageFinderDebugLoggers';
++    const CONSOLE_LEVELS = ['log', 'info', 'warn', 'error'];
++    const MAX_DEPTH = 4;
++    const MAX_ITEMS = 32;
++    const MAX_STRING_LENGTH = 2000;
++    const DEFAULT_BATCH_SIZE = 25;
++    const DEFAULT_FLUSH_DELAY_MS = 250;
++
++    const truncate = (value, maximum = MAX_STRING_LENGTH) => {
++        const text = String(value);
++        return text.length > maximum ? `${text.slice(0, maximum - 3)}...` : text;
++    };
++    const getElementDescription = (element) => {
++        try {
++            const className = typeof element.className === 'string'
++                ? element.className.trim()
++                : element.getAttribute?.('class')?.trim() ?? '';
++            return {
++                type: 'DOMElement',
++                tag: String(element.tagName ?? 'unknown').toLowerCase(),
++                id: element.id || null,
++                class: truncate(className, 240) || null
++            };
++        } catch {
++            return {type: 'DOMElement', tag: 'unavailable'};
++        }
++    };
++    const serializeValue = (value, seen = new WeakSet(), depth = 0) => {
++        try {
++            if (value === null) return null;
++            if (value === undefined) return {type: 'undefined'};
++            if (typeof value === 'string') return truncate(value);
++            if (typeof value === 'number' || typeof value === 'boolean') return value;
++            if (typeof value === 'bigint') return {type: 'bigint', value: String(value)};
++            if (typeof value === 'symbol') return {type: 'symbol', value: String(value)};
++            if (typeof value === 'function') {
++                return {type: 'function', name: value.name || null};
++            }
++            if (value?.nodeType === 1 && value?.tagName) return getElementDescription(value);
++            if (value instanceof Error ||
++                (typeof value?.name === 'string' && typeof value?.message === 'string' &&
++                    typeof value?.stack === 'string')) {
++                return {
++                    type: 'Error',
++                    name: value.name || 'Error',
++                    message: truncate(value.message),
++                    stack: typeof value.stack === 'string' ? truncate(value.stack, 6000) : null
++                };
++            }
++            if (value instanceof Date) return {type: 'Date', value: value.toISOString()};
++            if (depth >= MAX_DEPTH) return {type: 'truncated', reason: 'max-depth'};
++            if (typeof value !== 'object') return truncate(value);
++            if (seen.has(value)) return {type: 'circular'};
++            seen.add(value);
++
++            if (Array.isArray(value)) {
++                const items = value.slice(0, MAX_ITEMS).map((item) =>
++                    serializeValue(item, seen, depth + 1)
++                );
++                if (value.length > MAX_ITEMS) items.push({type: 'truncated', remaining: value.length - MAX_ITEMS});
++                return items;
++            }
++            if (value instanceof Map) {
++                return {
++                    type: 'Map',
++                    entries: Array.from(value.entries()).slice(0, MAX_ITEMS).map(([key, item]) => [
++                        serializeValue(key, seen, depth + 1),
++                        serializeValue(item, seen, depth + 1)
++                    ]),
++                    size: value.size
++                };
++            }
++            if (value instanceof Set) {
++                return {
++                    type: 'Set',
++                    values: Array.from(value.values()).slice(0, MAX_ITEMS).map((item) =>
++                        serializeValue(item, seen, depth + 1)
++                    ),
++                    size: value.size
++                };
++            }
++
++            const result = {};
++            const keys = Object.keys(value).slice(0, MAX_ITEMS);
++            keys.forEach((key) => {
++                try {
++                    result[key] = serializeValue(value[key], seen, depth + 1);
++                } catch {
++                    result[key] = {type: 'unavailable'};
++                }
++            });
++            if (Object.keys(value).length > MAX_ITEMS) {
++                result.__truncated__ = Object.keys(value).length - MAX_ITEMS;
++            }
++            return result;
++        } catch (error) {
++            return {
++                type: 'serialization-error',
++                message: error instanceof Error ? truncate(error.message) : 'unknown'
++            };
++        }
++    };
++    const getMessageText = (argumentsList) => argumentsList.map((value) => {
++        if (typeof value === 'string') return truncate(value, 400);
++        if (value && typeof value === 'object' && value.type === 'Error') {
++            return `${value.name}: ${value.message}`;
++        }
++        if (value && typeof value === 'object' && value.type === 'DOMElement') {
++            return `<${value.tag}>`;
++        }
++        if (value === null) return 'null';
++        if (typeof value === 'number' || typeof value === 'boolean') return String(value);
++        return '[object]';
++    }).join(' ');
++    const serializeConsoleArguments = (argumentsList) => {
++        const serializedArguments = Array.from(argumentsList, (value) => serializeValue(value));
++        return {
++            message: getMessageText(serializedArguments),
++            arguments: serializedArguments
++        };
++    };
++    const getRegistry = () => {
++        if (!(globalThis[LOGGER_REGISTRY_KEY] instanceof Map)) {
++            globalThis[LOGGER_REGISTRY_KEY] = new Map();
++        }
++        return globalThis[LOGGER_REGISTRY_KEY];
++    };
++    const createLogger = ({
++        source,
++        sendRecords = () => Promise.resolve(),
++        batchSize = DEFAULT_BATCH_SIZE,
++        flushDelayMs = DEFAULT_FLUSH_DELAY_MS
++    } = {}) => {
++        const normalizedSource = ['popup', 'tab', 'service-worker'].includes(source)
++            ? source
++            : 'unknown';
++        const registry = getRegistry();
++        if (registry.has(normalizedSource)) return registry.get(normalizedSource);
++
++        let context = {};
++        let sourceSequence = 0;
++        let pendingRecords = [];
++        let flushTimer = null;
++        let sendQueue = Promise.resolve();
++        let installed = false;
++        const originalMethods = new Map();
++        const normalizeContext = (nextContext) => ({
++            scanId: typeof nextContext?.scanId === 'string' && nextContext.scanId
++                ? nextContext.scanId
++                : null,
++            url: typeof nextContext?.url === 'string' && nextContext.url
++                ? nextContext.url
++                : null
++        });
++        const flush = () => {
++            if (flushTimer !== null) {
++                clearTimeout(flushTimer);
++                flushTimer = null;
++            }
++            if (pendingRecords.length === 0) return sendQueue;
++
++            const records = pendingRecords;
++            pendingRecords = [];
++            sendQueue = sendQueue
++                .then(() => Promise.resolve(sendRecords(records)))
++                .catch(() => undefined);
++            return sendQueue;
++        };
++        const queueRecord = (level, args) => {
++            try {
++                const serialized = serializeConsoleArguments(args);
++                pendingRecords.push({
++                    timestamp: new Date().toISOString(),
++                    source: normalizedSource,
++                    level,
++                    sourceSequence: ++sourceSequence,
++                    ...context,
++                    ...serialized
++                });
++                if (pendingRecords.length >= Math.max(1, batchSize)) {
++                    void flush();
++                } else if (flushTimer === null && typeof setTimeout === 'function') {
++                    flushTimer = setTimeout(() => {
++                        flushTimer = null;
++                        void flush();
++                    }, Math.max(0, flushDelayMs));
++                }
++            } catch {
++                // Debug logging must never affect the original console call.
++            }
++        };
++        const logger = {
++            install() {
++                if (installed || typeof console === 'undefined') return logger;
++                installed = true;
++                CONSOLE_LEVELS.forEach((level) => {
++                    const original = console[level];
++                    if (typeof original !== 'function') return;
++                    originalMethods.set(level, original);
++                    try {
++                        console[level] = (...args) => {
++                            original.apply(console, args);
++                            queueRecord(level, args);
++                        };
++                    } catch {
++                        // A locked console method simply remains unobserved.
++                    }
++                });
++                return logger;
++            },
++            setContext(nextContext) {
++                context = normalizeContext(nextContext);
++                return logger;
++            },
++            clearContext(scanId = null) {
++                if (!scanId || context.scanId === scanId) context = {};
++                return logger;
++            },
++            flush,
++            getContext: () => ({...context}),
++            getOriginalMethod: (level) => originalMethods.get(level) ?? null
++        };
++        registry.set(normalizedSource, logger);
++        return logger;
++    };
++
++    globalThis.ImageFinderDebugLogger = Object.freeze({
++        createLogger,
++        serializeConsoleArguments,
++        serializeValue
++    });
++})();
+diff --git a/src/deepscan-frame.js b/src/deepscan-frame.js
+index 64a8485127c6f6560382ae6015748e2db73d53ab..fd9a6c4174d506d460df64a3707921ade5292dc6 100644
+--- a/src/deepscan-frame.js
++++ b/src/deepscan-frame.js
+@@ -16,6 +16,31 @@
+     let activeScan = null;
+     let activeHiddenDeepScanHost = null;
+     let activeHiddenDeepScanFrame = null;
++    const tabDebugLogger = globalThis.ImageFinderDebugLogger?.createLogger({
++        source: 'tab',
++        sendRecords: (records) => {
++            try {
++                return chrome.runtime.sendMessage({
++                    target: 'image-finder-debug-log',
++                    action: 'records',
++                    records
++                }).catch(() => undefined);
++            } catch {
++                return Promise.resolve();
++            }
++        }
++    })?.install();
++    const setTabDebugContext = (scanId) => {
++        tabDebugLogger?.setContext({scanId, url: window.location.href});
++    };
++    const flushTabDebugContext = (scanId) => {
++        const flush = tabDebugLogger?.flush?.();
++        if (flush && typeof flush.finally === 'function') {
++            void flush.finally(() => tabDebugLogger.clearContext(scanId));
++        } else {
++            tabDebugLogger?.clearContext(scanId);
++        }
++    };
+ 
+     const sendToHost = (message) => {
+         window.parent.postMessage({
+@@ -221,6 +246,7 @@
+             ...(performance && typeof performance === 'object' ? {performance} : {})
+         });
+         if (activeHiddenDeepScanFrame === scan) activeHiddenDeepScanFrame = null;
++        flushTabDebugContext(scan.scanId);
+     };
+     const sendHiddenDeepScanFrameState = (scan, phase) => {
+         if (!scan || scan.completed) return;
+@@ -355,6 +381,7 @@
+             cleanupDiagnostics: null,
+             stateTimeouts: []
+         };
++        setTabDebugContext(scan.scanId);
+         scan.cleanupDiagnostics = installHiddenDeepScanFrameDiagnostics(scan);
+         activeHiddenDeepScanFrame = scan;
+         sendHiddenDeepScanFrameState(scan, 'load');
+@@ -479,6 +506,7 @@
+                 `status=${status}`
+             );
+             clearHiddenDeepScanHost(scan);
++            flushTabDebugContext(scan.scanId);
+         }
+     };
+     const getHiddenDeepScanHandshakeTimeoutReason = (scan) =>
+@@ -607,6 +635,7 @@
+             eventQueue: Promise.resolve(),
+             visibleContainerMarker: null
+         };
++        setTabDebugContext(scan.scanId);
+         wrapper.setAttribute('aria-hidden', 'true');
+         wrapper.style.cssText = [
+             'position:fixed!important',
+@@ -759,6 +788,7 @@
+             controller: new AbortController(),
+             completed: false
+         };
++        setTabDebugContext(scan.scanId);
+         activeScan = scan;
+         sendReady(scan);
+ 
+@@ -834,4 +864,4 @@
+         sendResponse({success: false});
+         return undefined;
+     });
+-})();
+\ No newline at end of file
++})();
+diff --git a/src/popup.js b/src/popup.js
+index 183a11ffa7cdfffb38da4ace684605d3af51c3b0..5bac5965cb8c6dc34faaa9a95521d39e33c25600 100644
+--- a/src/popup.js
++++ b/src/popup.js
+@@ -1,7 +1,23 @@
+ 
+ import { ImageFinder } from './classes/ImageFinder.js';
+ import { loadSettingsForm, SettingsForm } from './classes/SettingsForm.js';
++import './debug-logger.js';
+ 
++const popupDebugLogger = globalThis.ImageFinderDebugLogger?.createLogger({
++    source: 'popup',
++    sendRecords: (records) => {
++        try {
++            return window.chrome.runtime.sendMessage({
++                target: 'image-finder-debug-log',
++                action: 'records',
++                records
++            }).catch(() => undefined);
++        } catch {
++            return Promise.resolve();
++        }
++    }
++})?.install();
++globalThis.imageFinderDebugLogger = popupDebugLogger;
+ const imageFinder = new ImageFinder();
+ const POPUP_DEEP_SCAN_PORT_NAME = 'image-finder-popup-deepscan';
+ let popupDeepScanClientId = null;
+diff --git a/tests/carousel.html b/tests/carousel.html
+index b0a688eee89a2380ab63eac0f9cd31335d283792..49686c2c7ac154fc199dfac0e88ac6d48e09c81b 100644
+--- a/tests/carousel.html
++++ b/tests/carousel.html
+@@ -686,14 +686,14 @@
+         };
+ 
+         const menuItems = [
+-            ['Home', '../assets/icons/icon64.png'],
+-            ['Messages', '../assets/icons/search.png'],
+-            ['Media', '../assets/icons/jpeg.png'],
+-            ['Notifications', '../assets/icons/reload-sync-icon.png'],
+-            ['Bookmarks', '../assets/icons/folder.png'],
+-            ['Downloads', '../assets/icons/download.png'],
+-            ['Settings', '../assets/icons/settings.png'],
+-            ['Saved', '../assets/icons/saveall.png']
++            ['Home', '../assets/icons/deprecated/_icon64.png'],
++            ['Messages', '../assets/icons/deprecated/search.svg'],
++            ['Media', '../assets/icons/deprecated/folder-open.svg'],
++            ['Notifications', '../assets/icons/deprecated/reload-tab.svg'],
++            ['Bookmarks', '../assets/icons/deprecated/folder.svg'],
++            ['Downloads', '../assets/icons/deprecated/download.svg'],
++            ['Settings', '../assets/icons/deprecated/settings.svg'],
++            ['Saved', '../assets/icons/deprecated/saveall.svg']
+         ];
+         const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
+         const initials = [
+diff --git a/tests/debug-logger.html b/tests/debug-logger.html
+new file mode 100644
+index 0000000000000000000000000000000000000000..8b10829ac7dd179fb4a5bca16d57fde537d89317
+--- /dev/null
++++ b/tests/debug-logger.html
+@@ -0,0 +1,49 @@
++<!DOCTYPE html>
++<html lang="en">
++<head>
++    <meta charset="UTF-8">
++    <meta name="viewport" content="width=device-width, initial-scale=1.0">
++    <title>Image Finder – Debug Logger Fixture</title>
++</head>
++<body>
++    <div id="element" class="fixture alpha beta"></div>
++
++    <script type="module">
++        const runFixture = async () => {
++            if (!new URLSearchParams(location.search).has('runDebugLogger')) return;
++
++            await import('../src/debug-logger.js');
++            const {serializeConsoleArguments} = globalThis.ImageFinderDebugLogger;
++            const cyclic = {name: 'cycle'};
++            cyclic.self = cyclic;
++            const error = new Error('fixture-error');
++            const serialized = serializeConsoleArguments([
++                {plain: true, nested: {value: 1}},
++                ['array', undefined, null],
++                error,
++                cyclic,
++                document.getElementById('element')
++            ]).arguments;
++            const passed = serialized[0]?.plain === true &&
++                Array.isArray(serialized[1]) && serialized[1][1]?.type === 'undefined' &&
++                serialized[2]?.type === 'Error' && serialized[2]?.message === 'fixture-error' &&
++                serialized[3]?.self?.type === 'circular' &&
++                serialized[4]?.type === 'DOMElement' && serialized[4]?.tag === 'div' &&
++                serialized[4]?.id === 'element' && serialized[4]?.class === 'fixture alpha beta';
++
++            document.documentElement.dataset.debugLoggerResult = passed ? 'passed' : 'failed';
++            document.documentElement.dataset.debugLoggerChecks = JSON.stringify({
++                object: serialized[0]?.plain === true,
++                array: Array.isArray(serialized[1]),
++                error: serialized[2]?.type === 'Error',
++                cyclic: serialized[3]?.self?.type === 'circular',
++                element: serialized[4]?.type === 'DOMElement'
++            });
++        };
++
++        void runFixture().catch(() => {
++            document.documentElement.dataset.debugLoggerResult = 'failed';
++        });
++    </script>
++</body>
++</html>
+diff --git a/ui/settings-form.html b/ui/settings-form.html
+index ad7ab7dbf840fb3d03b769c9ff10e81a18f35cb7..d29d845b107b8be5d0b09884d786b4db017dedf5 100644
+--- a/ui/settings-form.html
++++ b/ui/settings-form.html
+@@ -63,7 +63,6 @@
+             <input type="checkbox" id="chkDisableDownloadWhenDone" name="disableDownloadWhenDone">
+              Disable download button on done files
+         </label>
+-
+     </fieldset>
+ 
+     <fieldset name="filesizes"><legend>Image Size</legend>
+@@ -163,4 +162,23 @@
+              Blob images
+         </label>
+     </fieldset>
++
++    <fieldset name="debug"><legend>Debugging</legend>
++        <label id="lblDebugmode" class="control">
++            <input type="checkbox" id="chkDebugmode" name="debugmode">
++            Enable debugmode
++        </label>
++        <label id="lblLogTabConsole" class="control">
++            <input type="checkbox" id="chkLogTabConsole" name="logtab" disabled style="margin-left: 1rem;">
++            Log current tab messages into file
++        </label>
++        <label id="lblLogPopupConsole" class="control">
++            <input type="checkbox" id="chkLogPopupConsole" name="logpopup" disabled style="margin-left: 1rem;">
++            Log popup messages into file
++        </label>
++        <label id="lblLogServiceWorkerConsole" class="control">
++            <input type="checkbox" id="chkLogServiceWorkerConsole" name="logserviceworker" disabled style="margin-left: 1rem;">
++            Log service worker messages into file
++        </label>
++    </fieldset>
+ </form>
+diff --git a/ui/settings.css b/ui/settings.css
+index 431026fb1f65e926440a915ef703e5e8fa4ff83a..5ab9b0e1337f5e510487032b83f36c85cbdd6190 100644
+--- a/ui/settings.css
++++ b/ui/settings.css
+@@ -75,15 +75,15 @@ form#frmSettings {
+     display: flex;
+     align-items: center;
+     justify-content: center;
+-    height: 1.15rem;
++    height: 1.2rem;
+     width: 1.5rem;
+     padding: 0;
+     cursor: pointer;
+ }
+ 
+ .folder-button__icon {
+-    height: 90%;
+-    width: 90%;
++    height: 91%;
++    width: 91%;
+     display: block;
+     color: var(--adn-icon-color);
+ }
+diff --git a/assets/icons/icon512.png b/assets/icons/icon512.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..ee17dbb40125425dcdf1968f4db45b7c23414c68
+GIT binary patch
+literal 21146
+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
+ZuX3ta^tVDopnD~OBX%z6=ZEmu{ssSo$EpAT
+
+literal 0
+HcmV?d00001
+
