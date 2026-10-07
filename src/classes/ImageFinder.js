@@ -2,8 +2,7 @@ import { Settings } from './Settings.js';
 import ImageScanner from './ImageScanner.js';
 import { MediaType } from './MediaType.js';
 import Progressbar from './Progressbar.js';
-import BlurScanner from './BlurScanner.js';
-import DuplicateFinder from './DuplicateFinder.js';
+import Analyzer from './Analyzer.js';
 import ResultStore from './ResultStore.js';
 import { ScanContext } from './ScanContext.js';
 import { getAddonVersionName } from '../addon-info.js';
@@ -96,11 +95,7 @@ export class ImageFinder {
         this.scanContext = new ScanContext();
         this.scanner = new ImageScanner(this.settings);
         this.resultStore = new ResultStore();
-        // Shared session-scoped cache for future image analysis.
-        this.analysisStore = new Map();
-        this.blurScanner = new BlurScanner(this.analysisStore);
-        this.duplicateFinder = new DuplicateFinder(this.analysisStore);
-        this.duplicateFinder.mode = 'strict';
+        this.analyzer = new Analyzer();
         this.progressbar = new Progressbar(this.DOM.divProgressbar);
         this.settingsPanel = null;
         this.isSavingAll = false;
@@ -576,7 +571,7 @@ export class ImageFinder {
         }
 
         this.resultStore.clear();
-        this.analysisStore.clear();
+        this.analyzer.clear();
         this.currentBlobPreview = null;
         this.DOM.lstImages.innerHTML = '';
         this.DOM.imgPreview.removeAttribute('src');
@@ -1176,164 +1171,33 @@ export class ImageFinder {
         const filteringProgress = showFilteringProgress
             ? this.#createFilteringProgress(candidates)
             : null;
-        const blurAcceptedCandidates = await this.#getBlurAcceptedCandidates(
-            candidates,
-            scanGeneration,
-            filteringProgress?.onBlurProgress
-        );
-        if (!blurAcceptedCandidates || !this.#isCurrentScan(scanGeneration)) return false;
+        const analyzedCandidates = await this.analyzer.filterCandidates(candidates, {
+            filters: this.settings.get('filters') ?? {},
+            previousVisibleImageIds,
+            isCurrent: () => this.#isCurrentScan(scanGeneration),
+            onActivityChange: (activity, isActive) => {
+                if (isActive) {
+                    this.startActivity(activity, scanGeneration);
+                } else {
+                    this.stopActivity(activity, scanGeneration);
+                }
+            },
+            onBlurProgress: filteringProgress?.onBlurProgress,
+            onDuplicateFinderProgress: filteringProgress?.onDuplicateFinderProgress
+        });
+        if (!analyzedCandidates || !this.#isCurrentScan(scanGeneration)) return false;
 
-        const visibleCandidates = await this.#getDuplicateWinners(
-            blurAcceptedCandidates,
-            scanGeneration,
-            filteringProgress?.onDuplicateFinderProgress,
-            previousVisibleImageIds
-        );
-        if (!visibleCandidates || !this.#isCurrentScan(scanGeneration)) return false;
+        const visibleCandidates = analyzedCandidates.map(({
+            candidateEntry,
+            replacesExistingResult
+        }) => {
+            this.resultStore.resolvePendingResultMarker(candidateEntry, replacesExistingResult);
+            return candidateEntry;
+        });
 
         this.resultStore.replaceVisibleResults(visibleCandidates);
 
         return true;
-    }
-
-    async #getBlurAcceptedCandidates(candidates, scanGeneration, onProgress = null) {
-        const filters = this.settings.get('filters') ?? {};
-
-        if (filters.ignoreBlurredImages !== true) return candidates;
-
-        const acceptedCandidateIds = new Set();
-
-        if (candidates.length === 0) return candidates;
-
-        this.startActivity('blurScanner', scanGeneration);
-        try {
-            for (let index = 0; index < candidates.length; index++) {
-                const [candidateId, candidate] = candidates[index];
-                if (!this.#isCurrentScan(scanGeneration)) return null;
-
-                try {
-                    const measurement = await this.blurScanner.measure(candidate.url, candidateId);
-                    const classification = this.blurScanner.classify(measurement);
-
-                    if (classification !== 'blurred') {
-                        acceptedCandidateIds.add(candidateId);
-                    }
-                } catch (error) {
-                    console.warn('Cannot analyze image blur:', candidate.url, error);
-                    acceptedCandidateIds.add(candidateId);
-                }
-
-                onProgress?.(index + 1, candidates.length);
-            }
-        } finally {
-            this.stopActivity('blurScanner', scanGeneration);
-        }
-
-        return candidates.filter(([candidateId]) => acceptedCandidateIds.has(candidateId));
-    }
-
-    async #getDuplicateWinners(
-        acceptedCandidates,
-        scanGeneration,
-        onProgress = null,
-        previousVisibleImageIds = new Set()
-    ) {
-        const filters = this.settings.get('filters') ?? {};
-
-        if (filters.ignoreDuplicates !== true || acceptedCandidates.length < 2) {
-            acceptedCandidates.forEach((candidateEntry) => {
-                this.resultStore.resolvePendingResultMarker(candidateEntry, false);
-            });
-            return acceptedCandidates;
-        }
-
-        this.startActivity('duplicateFinder', scanGeneration);
-        try {
-            const duplicateGroups = [];
-
-            for (let index = 0; index < acceptedCandidates.length; index++) {
-                const candidateEntry = acceptedCandidates[index];
-                if (!this.#isCurrentScan(scanGeneration)) return null;
-
-                const matchingGroups = [];
-
-                for (const group of duplicateGroups) {
-                    if (await this.#matchesDuplicateGroup(candidateEntry, group)) {
-                        matchingGroups.push(group);
-                    }
-                }
-
-                if (matchingGroups.length === 0) {
-                    duplicateGroups.push([candidateEntry]);
-                } else {
-                    const [targetGroup, ...groupsToMerge] = matchingGroups;
-
-                    targetGroup.push(candidateEntry);
-                    groupsToMerge.forEach((group) => {
-                        targetGroup.push(...group);
-                        duplicateGroups.splice(duplicateGroups.indexOf(group), 1);
-                    });
-                }
-
-                onProgress?.(index + 1, acceptedCandidates.length);
-            }
-
-            return duplicateGroups.map((group) => {
-                const winner = this.#selectDuplicateWinner(group);
-                const replacedResult = group.find(([candidateId]) =>
-                    previousVisibleImageIds.has(candidateId) && candidateId !== winner[0]
-                );
-                const replacesExistingResult = Boolean(replacedResult);
-
-                if (replacedResult && Number.isInteger(replacedResult[1].discoveryOrder)) {
-                    winner[1].discoveryOrder = replacedResult[1].discoveryOrder;
-                }
-
-                this.resultStore.resolvePendingResultMarker(winner, replacesExistingResult);
-                return winner;
-            });
-        } finally {
-            this.stopActivity('duplicateFinder', scanGeneration);
-        }
-    }
-
-    async #matchesDuplicateGroup([candidateId, candidate], group) {
-        for (const [groupCandidateId, groupCandidate] of group) {
-            if (candidate.url === groupCandidate.url) {
-                if (candidate.visuallyBlurred === false) {
-                    groupCandidate.visuallyBlurred = false;
-                }
-                return true;
-            }
-
-            try {
-                const comparison = await this.duplicateFinder.compare(
-                    candidate.url,
-                    candidateId,
-                    groupCandidate.url,
-                    groupCandidateId
-                );
-
-                if (this.duplicateFinder.isStrictMatch(comparison)) return true;
-            } catch (error) {
-                console.error(
-                    'Cannot compare possible duplicate images:',
-                    candidate.url,
-                    groupCandidate.url,
-                    error
-                );
-            }
-        }
-
-        return false;
-    }
-
-    #selectDuplicateWinner(group) {
-        return group.reduce((winner, candidateEntry) =>
-            this.resultStore.getPixelCount(candidateEntry[1]) > this.resultStore.getPixelCount(winner[1])
-                ? candidateEntry
-                : winner
-        );
     }
 
     #updateLED() {
