@@ -1,14 +1,14 @@
-import ImageMatcher, {STRICT_MATCH_THRESHOLD} from '../src/classes/ImageMatcher.js';
+import DuplicateFinder, {STRICT_MATCH_THRESHOLD} from '../src/classes/DuplicateFinder.js';
 
-const TEST_PAIRS = [
+const DUPLICATE_TEST_PAIRS = [
     {referenceId: 'imgTest1Reference', candidateId: 'imgTest1Candidate'},
     {referenceId: 'imgTest2Reference', candidateId: 'imgTest2Candidate'},
     {referenceId: 'imgTest3Reference', candidateId: 'imgTest3Candidate'}
 ];
 const analysisStore = new Map();
-const matcher = new ImageMatcher(analysisStore);
+const duplicateFinder = new DuplicateFinder(analysisStore);
 
-matcher.mode = 'strict';
+duplicateFinder.mode = 'strict';
 
 async function waitForImage(image) {
     if (!image.complete) {
@@ -49,7 +49,7 @@ function formatDifference(value) {
 
 function renderResult(container, result) {
     const definitions = document.createElement('dl');
-    const classification = matcher.isStrictMatch(result) ? 'SAME' : 'DIFFERENT';
+    const classification = duplicateFinder.isStrictMatch(result) ? 'SAME' : 'DIFFERENT';
 
     definitions.className = 'analysis-summary';
     addMeasurement(definitions, 'Reference dimensions', formatDimensions(result.reference));
@@ -78,13 +78,13 @@ async function comparePair(pair) {
     const container = reference?.closest('.test-group')?.querySelector('[data-analysis-result]');
 
     if (!reference || !candidate || !container) {
-        console.error(`Cannot find ImageMatcher test elements for ${pair.referenceId}`);
+        console.error(`Cannot find DuplicateFinder test elements for ${pair.referenceId}`);
         return;
     }
 
     try {
         await Promise.all([waitForImage(reference), waitForImage(candidate)]);
-        const result = await matcher.compare(
+        const result = await duplicateFinder.compare(
             reference,
             getAnalysisKey(reference),
             candidate,
@@ -93,12 +93,12 @@ async function comparePair(pair) {
 
         renderResult(container, result);
     } catch (error) {
-        console.error(`ImageMatcher comparison failed for ${pair.referenceId}`, error);
+        console.error(`DuplicateFinder comparison failed for ${pair.referenceId}`, error);
         renderFailure(container);
     }
 }
 
-async function runMatcherTests(button) {
+async function runDuplicateFinderTests(button) {
     button.disabled = true;
     button.textContent = 'Comparing…';
     document.querySelectorAll('[data-analysis-result]').forEach(container => {
@@ -107,19 +107,19 @@ async function runMatcherTests(button) {
     });
 
     try {
-        for (const pair of TEST_PAIRS) {
+        for (const pair of DUPLICATE_TEST_PAIRS) {
             await comparePair(pair);
         }
     } finally {
         button.disabled = false;
-        button.textContent = 'Run matcher tests';
+        button.textContent = 'Run duplicate finder tests';
     }
 }
 
-const runButton = document.getElementById('btnRunMatcherTests');
+const runButton = document.getElementById('btnRunDuplicateFinderTests');
 
 if (!runButton) {
-    console.error('Cannot find ImageMatcher test button');
+    console.error('Cannot find DuplicateFinder test button');
 } else {
-    runButton.addEventListener('click', () => runMatcherTests(runButton));
+    runButton.addEventListener('click', () => runDuplicateFinderTests(runButton));
 }

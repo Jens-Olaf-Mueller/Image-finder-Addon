@@ -1,9 +1,9 @@
 import { Settings } from './Settings.js';
 import ImageScanner from './ImageScanner.js';
-import { IMAGE_TYPES } from '../image-types.js';
+import { MediaType } from './MediaType.js';
 import Progressbar from './Progressbar.js';
 import BlurScanner from './BlurScanner.js';
-import ImageMatcher from './ImageMatcher.js';
+import DuplicateFinder from './DuplicateFinder.js';
 import { ScanContext } from './ScanContext.js';
 import { getAddonVersionName } from '../addon-info.js';
 
@@ -19,8 +19,9 @@ const SORT_DIRECTION_TITLES = Object.freeze({
     desc: 'descending'
 });
 const REOPEN_POPUP_AFTER_RESTART_STORAGE_KEY = 'reopenPopupAfterRestart';
-const SCAN_PROGRESS_COLOR = '#32CD32';
-const FILTER_PROGRESS_COLOR = '#FF6347';
+// ✏️ EDIT 2026-10-05: Resolve progress colors through theme variables.
+const SCAN_PROGRESS_COLOR = 'var(--adn-progressbar-bg-scan, #32CD32)';
+const FILTER_PROGRESS_COLOR = 'var(--adn-progressbar-bg-filter, tomato)';
 const RESULT_MARKER_PRIORITIES = Object.freeze({
     normal: 0,
     new: 1,
@@ -30,7 +31,7 @@ const RESULT_MARKER_PRIORITIES = Object.freeze({
 export class ImageFinder {
     #activityCounts = {
         scanner: 0,
-        matcher: 0,
+        duplicateFinder: 0,
         blurScanner: 0,
         deepScan: 0
     };
@@ -99,10 +100,10 @@ export class ImageFinder {
         // Shared session-scoped cache for future image analysis.
         this.analysisStore = new Map();
         this.blurScanner = new BlurScanner(this.analysisStore);
-        this.imageMatcher = new ImageMatcher(this.analysisStore);
-        this.imageMatcher.mode = 'strict';
+        this.duplicateFinder = new DuplicateFinder(this.analysisStore);
+        this.duplicateFinder.mode = 'strict';
         this.progressbar = new Progressbar(this.DOM.divProgressbar);
-        this.settingsForm = null;
+        this.settingsPanel = null;
         this.isSavingAll = false;
         this.currentBlobPreview = null;
         window.chrome?.downloads?.onChanged?.addListener((delta) => {
@@ -126,8 +127,8 @@ export class ImageFinder {
         if (this.settings.get('common', 'scanOnStart', true)) await this.scan();
     }
 
-    setSettingsForm(settingsForm) {
-        this.settingsForm = settingsForm;
+    setSettingsPanel(settingsPanel) {
+        this.settingsPanel = settingsPanel;
     }
 
     async setWebsiteURLFromActiveTab() {
@@ -137,11 +138,11 @@ export class ImageFinder {
                 currentWindow: true
             });
 
-            this.scanContext.setTab(tab);
-            this.settings.setWebsiteURL(tab?.url);
+            this.scanContext.tab = tab;
+            this.settings.websiteURL = tab?.url;
         } catch {
             this.scanContext.clear();
-            this.settings.setWebsiteURL(null);
+            this.settings.websiteURL = null;
         }
     }
 
@@ -377,10 +378,12 @@ export class ImageFinder {
         const exactSize = Number.isFinite(image.fileSize) && image.fileSize > 0
             ? ` (${image.fileSize.toLocaleString()} bytes)`
             : '';
-        const icon = IMAGE_TYPES[image.imageType].icon;
+        const mediaType = MediaType.getType(image.imageType);
+        const icon = mediaType?.icon ?? '../assets/icons/icon512.png';
+        const mediaTypeName = mediaType?.type ?? image.mediaType ?? 'image';
         const dims = `${image.width} × ${image.height} px`;
         this.statusBar = `
-            <img id="imgTypeInfoIcon" src="${icon}" alt="${image.imageType}" style="height: 1.25rem;" title="${image.imageType.toUpperCase()} image, Resolution: ${dims}, Size: ${size}${exactSize}">
+            <img id="imgTypeInfoIcon" src="${icon}" alt="${image.imageType}" style="height: 1.25rem;" title="${image.imageType.toUpperCase()} ${mediaTypeName}, Resolution: ${dims}, Size: ${size}${exactSize}">
                ${dims} [${size}]`;
         this.DOM.spnStatusBar.style.display = 'flex';
     }
@@ -495,7 +498,7 @@ export class ImageFinder {
         this.DOM.btnDefaultSettings.hidden = false;
         this.DOM.btnDefaultSettings.disabled = false;
 
-        await this.settingsForm?.refresh();
+        await this.settingsPanel?.refresh();
     }
 
     async #closeSettingsPanel() {
@@ -511,7 +514,7 @@ export class ImageFinder {
         this.DOM.btnDefaultSettings.hidden = true;
         this.DOM.btnDefaultSettings.disabled = true;
 
-        await this.settingsForm?.waitForPendingSave();
+        await this.settingsPanel?.waitForPendingSave();
         this.updateDownloadTitles();
         this.#updateLEDActivity();
     }
@@ -531,10 +534,10 @@ export class ImageFinder {
     async resetSettingsToDefaults() {
         if (this.DOM.btnSettings.value !== 'true') return;
 
-        await this.settingsForm?.waitForPendingSave();
+        await this.settingsPanel?.waitForPendingSave();
         await this.settings.resetToDefaults();
         this.#applyThemeMode();
-        await this.settingsForm?.refresh();
+        await this.settingsPanel?.refresh();
         this.updateDownloadTitles();
     }
 
@@ -645,7 +648,7 @@ export class ImageFinder {
             });
             if (!this.#isCurrentScan(scanGeneration)) return;
 
-            this.scanContext.setTab(this.scanner.currentTab);
+            this.scanContext.tab = this.scanner.currentTab;
 
             this.#setScanResults(scanResults);
             let visibleImagesUpdated = false;
@@ -1218,10 +1221,10 @@ export class ImageFinder {
     #createFilteringProgress(candidates) {
         const filters = this.settings.get('filters') ?? {};
         const runsBlurScanner = filters.ignoreBlurredImages === true && candidates.length > 0;
-        const runsImageMatcher = filters.ignoreDuplicates === true && candidates.length >= 2;
+        const runsDuplicateFinder = filters.ignoreDuplicates === true && candidates.length >= 2;
         const stages = [
             ...(runsBlurScanner ? ['blurScanner'] : []),
-            ...(runsImageMatcher ? ['matcher'] : [])
+            ...(runsDuplicateFinder ? ['duplicateFinder'] : [])
         ];
 
         if (stages.length === 0) return null;
@@ -1249,7 +1252,7 @@ export class ImageFinder {
 
         return {
             onBlurProgress: (completed, total) => updateStage('blurScanner', completed, total),
-            onMatcherProgress: (completed, total) => updateStage('matcher', completed, total)
+            onDuplicateFinderProgress: (completed, total) => updateStage('duplicateFinder', completed, total)
         };
     }
 
@@ -1285,7 +1288,7 @@ export class ImageFinder {
         const visibleCandidates = await this.#getDuplicateWinners(
             blurAcceptedCandidates,
             scanGeneration,
-            filteringProgress?.onMatcherProgress,
+            filteringProgress?.onDuplicateFinderProgress,
             previousVisibleImageIds
         );
         if (!visibleCandidates || !this.#isCurrentScan(scanGeneration)) return false;
@@ -1349,7 +1352,7 @@ export class ImageFinder {
             return acceptedCandidates;
         }
 
-        this.startActivity('matcher', scanGeneration);
+        this.startActivity('duplicateFinder', scanGeneration);
         try {
             const duplicateGroups = [];
 
@@ -1395,7 +1398,7 @@ export class ImageFinder {
                 return winner;
             });
         } finally {
-            this.stopActivity('matcher', scanGeneration);
+            this.stopActivity('duplicateFinder', scanGeneration);
         }
     }
 
@@ -1409,14 +1412,14 @@ export class ImageFinder {
             }
 
             try {
-                const comparison = await this.imageMatcher.compare(
+                const comparison = await this.duplicateFinder.compare(
                     candidate.url,
                     candidateId,
                     groupCandidate.url,
                     groupCandidateId
                 );
 
-                if (this.imageMatcher.isStrictMatch(comparison)) return true;
+                if (this.duplicateFinder.isStrictMatch(comparison)) return true;
             } catch (error) {
                 console.error(
                     'Cannot compare possible duplicate images:',
@@ -1564,8 +1567,8 @@ export class ImageFinder {
             ? 'deepScan'
             : this.#activityCounts.blurScanner > 0
                 ? 'blurScanner'
-                : this.#activityCounts.matcher > 0
-                    ? 'matcher'
+            : this.#activityCounts.duplicateFinder > 0
+                ? 'duplicateFinder'
                     : this.#activityCounts.scanner > 0
                         ? 'scanner'
                         : 'none';
@@ -1585,7 +1588,7 @@ export class ImageFinder {
         }
         if (activity === 'scanner') {
             this.info = 'Scanning...';
-        } else if (activity === 'blurScanner' || activity === 'matcher') {
+        } else if (activity === 'blurScanner' || activity === 'duplicateFinder') {
             this.info = 'Applying filters...';
         }
     }

@@ -1,8 +1,41 @@
+/**
+ * @file Progressbar.js
+ * @module Progressbar
+ * @version 0.1.12
+ * @date 2026-10-05
+ * @author Jens-Olaf-Mueller
+ *
+ * Progressbar - Controls the popup progress indicator.
+ * ===============================================================
+ *
+ * Connects a progress-bar element to a compact public API for displaying,
+ * hiding, resetting, and incrementing bounded progress. Its color is
+ * CSS-variable-aware and its render cache avoids redundant DOM updates.
+ * - Key Features:
+ * - Theme-aware color:   Uses CSS variables with explicit fallback colors.
+ * - Efficient rendering: Updates the DOM only when the visible percentage changes.
+ * - Bounded progress:    Clamps values safely between zero and the configured maximum.
+ * - DOM binding:         Accepts a progress-bar element or its element ID.
+ *
+ * ---------------------------------------------------------------
+ * I. Public Methods
+ * ---------------------------------------------------------------
+ * - {@link show}     - Sets the maximum, resets, and displays the progress bar.
+ * - {@link hide}     - Hides the progress bar.
+ * - {@link reset}    - Resets the current progress value to zero.
+ * - {@link update}   - Increments the current progress value by a step.
+ * - {@link setValue} - Sets the current progress value within its allowed range.
+ *
+ * ---------------------------------------------------------------
+ * II. Private Methods
+ * ---------------------------------------------------------------
+ * - {@link #renderBackgroundColor} - Applies the configured color to the bound element.
+ * - {@link #render}                - Renders the percentage, width, and progress text.
+ */
 export default class Progressbar {
-    #bar = null;
-    #backgroundColor = '#32CD32';
     #lastPercent = null;
 
+    #bar = null;
     get bar() { return this.#bar; }
     set bar(newBar) {
         if (newBar instanceof HTMLDivElement) {
@@ -16,6 +49,7 @@ export default class Progressbar {
         this.#renderBackgroundColor();
     }
 
+    #backgroundColor = 'var(--adn-progressbar-bg-scan, #32CD32)';
     get backgroundColor() { return this.#backgroundColor; }
     set backgroundColor(value) {
         if (typeof value !== 'string' || !value.trim()) return;

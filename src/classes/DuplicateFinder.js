@@ -3,7 +3,7 @@ import Heuristik from './Heuristik.js';
 const PHASH_SAMPLE_SIZE = 32;
 const PHASH_SIZE = 8;
 const PHASH_BIT_COUNT = PHASH_SIZE ** 2;
-const MATCHER_MODES = new Set(['strict', 'alike']);
+const DUPLICATE_FINDER_MODES = new Set(['strict', 'alike']);
 export const STRICT_MATCH_THRESHOLD = 4;
 const DCT_COSINES = Array.from({length: PHASH_SIZE}, (_, frequency) =>
     Array.from({length: PHASH_SAMPLE_SIZE}, (_, position) =>
@@ -12,11 +12,9 @@ const DCT_COSINES = Array.from({length: PHASH_SIZE}, (_, frequency) =>
 );
 
 /**
- * Measures visual image identity with a compact perceptual hash.
- * Pipeline grouping and representative selection deliberately remain outside
- * this class while its measurements are calibrated.
+ * Finds visual image duplicates by comparing compact perceptual hashes.
  */
-export default class ImageMatcher extends Heuristik {
+export default class DuplicateFinder extends Heuristik {
     #mode = 'strict';
 
     get mode() {
@@ -24,8 +22,8 @@ export default class ImageMatcher extends Heuristik {
     }
 
     set mode(value) {
-        if (!MATCHER_MODES.has(value)) {
-            throw new RangeError(`Unsupported ImageMatcher mode: ${String(value)}`);
+        if (!DUPLICATE_FINDER_MODES.has(value)) {
+            throw new RangeError(`Unsupported DuplicateFinder mode: ${String(value)}`);
         }
 
         this.#mode = value;
@@ -33,7 +31,7 @@ export default class ImageMatcher extends Heuristik {
 
     async compare(imageA, keyA, imageB, keyB) {
         if (this.mode !== 'strict') {
-            throw new Error(`ImageMatcher mode "${this.mode}" is not implemented yet`);
+            throw new Error(`DuplicateFinder mode "${this.mode}" is not implemented yet`);
         }
 
         const analysisA = await this.prepareAnalysis(imageA, keyA);
@@ -67,7 +65,7 @@ export default class ImageMatcher extends Heuristik {
     }
 
     #getStrictFeatures(analysis) {
-        const cachedFeatures = analysis.strictImageMatcher;
+        const cachedFeatures = analysis.strictDuplicateFinder;
 
         if (typeof cachedFeatures?.hashValue === 'bigint' &&
             cachedFeatures.normalizedLuminance instanceof Float64Array) {
@@ -80,7 +78,7 @@ export default class ImageMatcher extends Heuristik {
             normalizedLuminance
         };
 
-        analysis.strictImageMatcher = strictFeatures;
+        analysis.strictDuplicateFinder = strictFeatures;
         return strictFeatures;
     }
 

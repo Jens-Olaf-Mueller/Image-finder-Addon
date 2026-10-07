@@ -8,13 +8,40 @@ export const BLUR_CLASSIFICATIONS = Object.freeze({
     uncertain: 'uncertain'
 });
 
+// ✴️ NEW 2026-10-04: Add the required class module JSDoc header.
 /**
- * @version 1.0.0
- * @date '2026-08-26'
- */
-
-/**
- * Measures blur-related image detail and provides a conservative classification.
+ * @file BlurScanner.js
+ * @module BlurScanner
+ * @extends Heuristik
+ * @version 0.1.12
+ * @date 2026-10-04
+ * @author Jens-Olaf-Mueller
+ *
+ * BlurScanner - Measures image detail for conservative blur classification.
+ * ===============================================================
+ *
+ * Uses the shared normalized luminance analysis supplied by Heuristik to
+ * measure global and tile-level image detail. Its adaptive grid and two
+ * complementary sharpness metrics provide stable data for later filtering
+ * without treating an uncertain image as sharp.
+ * - Key Features:
+ * - Adaptive grid selection:     Chooses a grid that respects the image aspect ratio.
+ * - Dual sharpness metrics:      Calculates Tenengrad energy and Laplacian variance.
+ * - Conservative classification: Marks only values below the threshold as blurred.
+ * - Tile-level detail:           Returns per-tile and global measurement results.
+ *
+ * ---------------------------------------------------------------
+ * I. Public Methods
+ * ---------------------------------------------------------------
+ * - {@link measure}  - Measures global and tile-level sharpness information.
+ * - {@link classify} - Classifies a measurement as blurred or uncertain.
+ *
+ * ---------------------------------------------------------------
+ * II. Private Methods
+ * ---------------------------------------------------------------
+ * - {@link #selectGrid}    - Selects an aspect-ratio-aware analysis grid.
+ * - {@link #measureRegion} - Calculates sharpness metrics for one image region.
+ * - {@link #median}        - Returns the median value of a numeric collection.
  */
 export default class BlurScanner extends Heuristik {
     async measure(imageSource, key) {

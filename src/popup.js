@@ -1,6 +1,6 @@
 
 import { ImageFinder } from './classes/ImageFinder.js';
-import { loadSettingsForm, SettingsForm } from './classes/SettingsForm.js';
+import { SettingsPanel } from './classes/SettingsPanel.js';
 import './debug-logger.js';
 
 const popupDebugLogger = globalThis.ImageFinderDebugLogger?.createLogger({
@@ -51,7 +51,7 @@ async function runPopup() {
     let form = null;
 
     try {
-        form = await loadSettingsForm('divSettingsContentPopup');
+        form = await SettingsPanel.load('divSettingsContentPopup');
     } catch (error) {
         console.warn('Cannot load settings form:', error);
     }
@@ -59,10 +59,10 @@ async function runPopup() {
     await imageFinder.run(async () => {
         if (!form) return;
 
-        const settingsForm = new SettingsForm(imageFinder.settings, form, {
+        const settingsPanel = new SettingsPanel(imageFinder.settings, form, {
             onSettingsChanged: () => imageFinder.updateDownloadTitles()
         });
-        imageFinder.setSettingsForm(settingsForm);
-        await settingsForm.run({loadSettings: false});
+        imageFinder.setSettingsPanel(settingsPanel);
+        await settingsPanel.run({loadSettings: false});
     });
 }

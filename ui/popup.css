@@ -259,7 +259,7 @@ img.preview:not([src]) {
     background-color: var(--adn-led-scanner);
 }
 
-.toolbar-button.scanner-led.active[data-activity="matcher"] {
+.toolbar-button.scanner-led.active[data-activity="duplicateFinder"] {
     background-color: var(--adn-led-filter);
 }
 

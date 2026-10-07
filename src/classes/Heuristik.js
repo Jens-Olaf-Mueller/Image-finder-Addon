@@ -1,8 +1,39 @@
 export const MAX_ANALYSIS_DIMENSION = 384;
 
 /**
- * Base class for shared image preparation used by BlurScanner and ImageMatcher.
- * The injected store contains session-scoped normalized luminance data.
+ * @file Heuristik.js
+ * @module Heuristik
+ * @version 0.1.12
+ * @date 2026-10-04
+ * @author Jens-Olaf-Mueller
+ *
+ * Heuristik - Shared image-analysis preparation and cache access.
+ * ===============================================================
+ *
+ * Provides BlurScanner and DuplicateFinder with a shared, session-scoped cache
+ * of normalized luminance data. Source images are decoded, proportionally
+ * reduced to the analysis limit, and converted to a Float32Array once per
+ * explicit cache key.
+ * - Key Features:
+ * - Shared analysis cache:  Reuses the injected Map across heuristic consumers.
+ * - Normalized preparation: Scales source images to the maximum analysis dimension.
+ * - Luminance conversion:   Stores perceptual RGB luminance in a Float32Array.
+ * - Input validation:       Rejects missing keys, invalid sources, and unusable images.
+ *
+ * ---------------------------------------------------------------
+ * I. Public Methods
+ * ---------------------------------------------------------------
+ * - {@link hasAnalysis}     - Checks whether a cache key already has analysis data.
+ * - {@link getAnalysis}     - Returns the cached analysis data for a key.
+ * - {@link setAnalysis}     - Stores analysis data for a key.
+ * - {@link deleteAnalysis}  - Removes analysis data for a key.
+ * - {@link clearAnalysis}   - Clears the complete shared analysis cache.
+ * - {@link prepareAnalysis} - Decodes, normalizes, converts, and caches an image source.
+ *
+ * ---------------------------------------------------------------
+ * II. Private Methods
+ * ---------------------------------------------------------------
+ * - {@link #loadImage} - Resolves and validates an image element or source URL.
  */
 export default class Heuristik {
     #analysisStore;
@@ -35,13 +66,13 @@ export default class Heuristik {
         this.#analysisStore.clear();
     }
 
-    async prepareAnalysis(imageSource, key) {
+    async prepareAnalysis(source, key) {
         if (key === null || key === undefined || key === '') {
             throw new TypeError('An explicit analysis cache key is required');
         }
         if (this.hasAnalysis(key)) return this.getAnalysis(key);
 
-        const image = await this.#loadImage(imageSource);
+        const image = await this.#loadImage(source);
         const sourceWidth = image.naturalWidth;
         const sourceHeight = image.naturalHeight;
         const scale = Math.min(
@@ -84,19 +115,19 @@ export default class Heuristik {
         return analysis;
     }
 
-    async #loadImage(imageSource) {
+    async #loadImage(source) {
         const isImageElement = typeof HTMLImageElement !== 'undefined' &&
-            imageSource instanceof HTMLImageElement;
+            source instanceof HTMLImageElement;
         const image = isImageElement
-            ? imageSource
-            : typeof imageSource === 'string' && imageSource
+            ? source
+            : typeof source === 'string' && source
                 ? new Image()
                 : null;
 
         if (!image) {
             throw new TypeError('Image source must be an HTMLImageElement or source URL');
         }
-        if (!isImageElement) image.src = imageSource;
+        if (!isImageElement) image.src = source;
 
         if (typeof image.decode === 'function') {
             await image.decode();

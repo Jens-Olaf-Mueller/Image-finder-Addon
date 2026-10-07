@@ -1,14 +1,14 @@
 import { Settings } from './classes/Settings.js';
-import { loadSettingsForm, SettingsForm } from './classes/SettingsForm.js';
+import { SettingsPanel } from './classes/SettingsPanel.js';
 
 runSettings();
 
 async function runSettings() {
-    const form = await loadSettingsForm('divSettingsContent');
+    const form = await SettingsPanel.load('divSettingsContent');
     const settings = new Settings();
     await settings.run();
     document.documentElement.dataset.mode = settings.getThemeMode();
 
-    const settingsForm = new SettingsForm(settings, form);
-    await settingsForm.run({loadSettings: false});
+    const settingsPanel = new SettingsPanel(settings, form);
+    await settingsPanel.run({loadSettings: false});
 }

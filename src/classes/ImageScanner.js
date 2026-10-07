@@ -1,5 +1,5 @@
 import { scanImages } from '../content.js';
-import { getImageType } from '../image-types.js';
+import { MediaType } from './MediaType.js';
 
 const DEFAULT_BYTES_PER_PIXEL = 0.1;
 const UTF8_ENCODER = new TextEncoder();
@@ -93,13 +93,13 @@ export default class ImageScanner {
                 if (image.source === 'dataimages' && !dataImage) continue;
 
                 const blobImage = image.source === 'blobimages';
-                const blobImageType = blobImage && typeof image.mimeType === 'string'
-                    ? getImageType(image.mimeType)
+                const blobMediaType = blobImage && typeof image.mimeType === 'string'
+                    ? MediaType.getType(image.mimeType)
                     : null;
 
                 const url = dataImage || blobImage ? null : new URL(image.url);
                 const candidateFileName = dataImage
-                    ? `data-image.${dataImage.imageType}`
+                    ? `data-image.${dataImage.mediaType.format}`
                     : blobImage
                         ? 'blob-image'
                         : decodeURIComponent(url.pathname.split('/').pop());
@@ -110,11 +110,11 @@ export default class ImageScanner {
                         : blobImage
                             ? {size: image.fileSize ?? null, type: image.mimeType ?? null}
                             : null,
-                    imageType = dataImage?.imageType ?? blobImageType ??
+                    mediaType = dataImage?.mediaType ?? blobMediaType ??
                         (!blobImage && candidateFileName.includes('.')
-                            ? candidateFileName.split('.').pop().toLowerCase()
+                            ? MediaType.getType(candidateFileName.split('.').pop())
                             : null);
-                if (imageType === 'jpeg') imageType = 'jpg';
+                let imageType = mediaType?.type === 'image' ? mediaType.format : null;
 
                 // Keine oder unbekannte Extension → MIME-Type ermitteln
                 if (!imageType || !filter.extensions.has(imageType)) {
@@ -123,7 +123,8 @@ export default class ImageScanner {
                     fileInfo = await this.getFileInfo(image.url, signal);
                     if (!isActive()) break;
                     if (!fileInfo?.type) continue;
-                    imageType = getImageType(fileInfo.type);
+                    mediaType = MediaType.getType(fileInfo.type);
+                    imageType = mediaType?.type === 'image' ? mediaType.format : null;
                     if (!imageType || !filter.extensions.has(imageType)) continue;
                 }
 
@@ -165,6 +166,7 @@ export default class ImageScanner {
                     id: imageId,
                     url: image.url,
                     fileName,
+                    mediaType: mediaType.type,
                     imageType,
                     width,
                     height,
@@ -545,8 +547,8 @@ export default class ImageScanner {
 
         const metadata = url.slice(5, commaIndex);
         const [mime, ...parameters] = metadata.split(';');
-        const imageType = getImageType(mime);
-        if (!imageType) return null;
+        const mediaType = MediaType.getType(mime);
+        if (!mediaType || mediaType.type !== 'image') return null;
 
         const payload = url.slice(commaIndex + 1);
         const isBase64 = parameters.some(
@@ -554,7 +556,7 @@ export default class ImageScanner {
         );
 
         return {
-            imageType,
+            mediaType,
             size: isBase64
                 ? this.getBase64PayloadSize(payload)
                 : this.getPercentEncodedPayloadSize(payload)

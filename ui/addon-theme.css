@@ -20,7 +20,9 @@
     --adn-button-inset-border: silver;
     --adn-disabled-text: #777;
 
-    --adn-progressbar-bg: navy;
+    /* --adn-progressbar-bg: navy; */
+    --adn-progressbar-bg-scan: #32CD32;
+    --adn-progressbar-bg-filter: tomato;
     --adn-progressbar-border: silver;
     --adn-progressbar-text: whitesmoke;
     --adn-control-accent: #006000; /* #32CD32 */
