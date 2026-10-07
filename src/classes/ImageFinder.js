@@ -2,7 +2,7 @@ import { Settings } from './Settings.js';
 import ImageScanner from './ImageScanner.js';
 import { MediaType } from './MediaType.js';
 import Progressbar from './Progressbar.js';
-import Analyzer from './Analyzer.js';
+import AnalyzerClient from './AnalyzerClient.js';
 import ResultStore from './ResultStore.js';
 import { ScanContext } from './ScanContext.js';
 import { getAddonVersionName } from '../addon-info.js';
@@ -95,7 +95,7 @@ export class ImageFinder {
         this.scanContext = new ScanContext();
         this.scanner = new ImageScanner(this.settings);
         this.resultStore = new ResultStore();
-        this.analyzer = new Analyzer();
+        this.analyzerClient = new AnalyzerClient();
         this.progressbar = new Progressbar(this.DOM.divProgressbar);
         this.settingsPanel = null;
         this.isSavingAll = false;
@@ -172,6 +172,7 @@ export class ImageFinder {
         this.#scanGeneration += 1;
         this.#scanController?.abort();
         this.#scanController = null;
+        this.analyzerClient.clear();
         this.#resetScanActivities();
         this.#setSearchButtonActive(false);
         this.info = 'Image preview';
@@ -571,7 +572,7 @@ export class ImageFinder {
         }
 
         this.resultStore.clear();
-        this.analyzer.clear();
+        this.analyzerClient.clear();
         this.currentBlobPreview = null;
         this.DOM.lstImages.innerHTML = '';
         this.DOM.imgPreview.removeAttribute('src');
@@ -1171,7 +1172,7 @@ export class ImageFinder {
         const filteringProgress = showFilteringProgress
             ? this.#createFilteringProgress(candidates)
             : null;
-        const analyzedCandidates = await this.analyzer.filterCandidates(candidates, {
+        const analyzedCandidates = await this.analyzerClient.filterCandidates(candidates, {
             filters: this.settings.get('filters') ?? {},
             previousVisibleImageIds,
             isCurrent: () => this.#isCurrentScan(scanGeneration),

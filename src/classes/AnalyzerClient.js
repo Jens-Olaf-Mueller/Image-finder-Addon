@@ -1,0 +1,194 @@
+const OFFSCREEN_TARGET = 'image-finder-offscreen';
+const OFFSCREEN_ANALYZER_CONTROL_TARGET = 'image-finder-offscreen-analyzer-control';
+const OFFSCREEN_ANALYZER_EVENT_TARGET = 'image-finder-offscreen-analyzer-event';
+
+/**
+ * Coordinates media analysis through the offscreen document.
+ */
+export default class AnalyzerClient {
+    #sessionId = crypto.randomUUID();
+    #analysisGeneration = 0;
+    #offscreenReady = false;
+    #remoteSessionInitialized = false;
+    #pendingRequests = new Map();
+    #onMessage;
+    #disposed = false;
+
+    constructor() {
+        this.#onMessage = (message) => this.#handleOffscreenEvent(message);
+        window.chrome.runtime.onMessage.addListener(this.#onMessage);
+        window.addEventListener('pagehide', () => this.dispose(), {once: true});
+    }
+
+    clear() {
+        if (this.#disposed) return;
+
+        this.#analysisGeneration += 1;
+        if (!this.#remoteSessionInitialized) return;
+
+        void this.#resetRemoteSession();
+    }
+
+    dispose() {
+        if (this.#disposed) return;
+
+        this.#disposed = true;
+        window.chrome.runtime.onMessage.removeListener(this.#onMessage);
+        if (!this.#remoteSessionInitialized) return;
+
+        void this.#requestOffscreen('releaseAnalyzerSession', {
+            sessionId: this.#sessionId
+        }).catch(() => undefined);
+    }
+
+    async filterCandidates(candidates, {
+        filters = {},
+        previousVisibleImageIds = new Set(),
+        isCurrent = () => true,
+        onActivityChange = null,
+        onBlurProgress = null,
+        onDuplicateFinderProgress = null
+    } = {}) {
+        const runsBlurScanner = filters.ignoreBlurredImages === true && candidates.length > 0;
+        const runsDuplicateFinder = filters.ignoreDuplicates === true && candidates.length >= 2;
+        if (!runsBlurScanner && !runsDuplicateFinder) {
+            return candidates.map((candidateEntry) => ({
+                candidateEntry,
+                replacesExistingResult: false
+            }));
+        }
+        if (!isCurrent()) return null;
+
+        await this.#ensureOffscreenDocument();
+        if (!isCurrent()) return null;
+
+        this.#remoteSessionInitialized = true;
+        const requestId = crypto.randomUUID();
+        this.#pendingRequests.set(requestId, {
+            isCurrent,
+            onActivityChange,
+            onBlurProgress,
+            onDuplicateFinderProgress
+        });
+
+        try {
+            const response = await this.#requestOffscreen('analyzeCandidates', {
+                sessionId: this.#sessionId,
+                analysisGeneration: this.#analysisGeneration,
+                requestId,
+                candidates,
+                filters,
+                previousVisibleImageIds: Array.from(previousVisibleImageIds)
+            });
+            if (!isCurrent()) return null;
+
+            return this.#applyAnalysisResult(candidates, response);
+        } finally {
+            this.#pendingRequests.delete(requestId);
+        }
+    }
+
+    async #resetRemoteSession() {
+        try {
+            await this.#requestOffscreen('resetAnalyzerSession', {
+                sessionId: this.#sessionId,
+                analysisGeneration: this.#analysisGeneration
+            });
+        } catch (error) {
+            console.warn('Cannot reset offscreen analyzer:', error);
+        }
+    }
+
+    async #ensureOffscreenDocument() {
+        if (this.#offscreenReady) return;
+
+        const response = await window.chrome.runtime.sendMessage({
+            target: OFFSCREEN_ANALYZER_CONTROL_TARGET,
+            action: 'ensureOffscreenDocument'
+        });
+        if (response?.success !== true) {
+            throw new Error(response?.error || 'Cannot create the offscreen analyzer document');
+        }
+
+        this.#offscreenReady = true;
+    }
+
+    async #requestOffscreen(action, payload) {
+        try {
+            return await this.#sendOffscreenRequest(action, payload);
+        } catch (error) {
+            this.#offscreenReady = false;
+            await this.#ensureOffscreenDocument();
+            return this.#sendOffscreenRequest(action, payload, error);
+        }
+    }
+
+    async #sendOffscreenRequest(action, payload, previousError = null) {
+        const response = await window.chrome.runtime.sendMessage({
+            target: OFFSCREEN_TARGET,
+            action,
+            ...payload
+        });
+        if (response?.success === true) return response;
+
+        const reason = response?.error || previousError?.message ||
+            `Offscreen request "${action}" failed`;
+        throw new Error(reason);
+    }
+
+    #handleOffscreenEvent(message) {
+        if (message?.target !== OFFSCREEN_ANALYZER_EVENT_TARGET ||
+            message.sessionId !== this.#sessionId) {
+            return;
+        }
+
+        const request = this.#pendingRequests.get(message.requestId);
+        if (!request || !request.isCurrent()) return;
+
+        if (message.action === 'activity') {
+            request.onActivityChange?.(message.activity, message.isActive === true);
+            return;
+        }
+        if (message.action !== 'progress') return;
+
+        if (message.stage === 'blurScanner') {
+            request.onBlurProgress?.(message.completed, message.total);
+        } else if (message.stage === 'duplicateFinder') {
+            request.onDuplicateFinderProgress?.(message.completed, message.total);
+        }
+    }
+
+    #applyAnalysisResult(candidates, response) {
+        if (!Array.isArray(response?.results)) {
+            throw new Error('The offscreen analyzer returned invalid results');
+        }
+
+        const candidateEntriesById = new Map(candidates.map((candidateEntry) => [
+            candidateEntry[0],
+            candidateEntry
+        ]));
+        response.candidateUpdates?.forEach((update) => {
+            const candidate = candidateEntriesById.get(update?.candidateId)?.[1];
+            if (!candidate) return;
+
+            if (Object.hasOwn(update, 'visuallyBlurred')) {
+                candidate.visuallyBlurred = update.visuallyBlurred;
+            }
+            if (Object.hasOwn(update, 'discoveryOrder')) {
+                candidate.discoveryOrder = update.discoveryOrder;
+            }
+        });
+
+        return response.results.map((result) => {
+            const candidateEntry = candidateEntriesById.get(result?.candidateId);
+            if (!candidateEntry) {
+                throw new Error('The offscreen analyzer returned an unknown candidate');
+            }
+
+            return {
+                candidateEntry,
+                replacesExistingResult: result.replacesExistingResult === true
+            };
+        });
+    }
+}

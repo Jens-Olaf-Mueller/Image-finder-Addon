@@ -2,12 +2,13 @@ import BlurScanner from './BlurScanner.js';
 import DuplicateFinder from './DuplicateFinder.js';
 
 /**
- * Coordinates media analysis and will route work to media-specific analyzers.
+ * Analyzes image candidates in the offscreen document.
  */
 export default class Analyzer {
     #analysisStore = new Map();
     #blurScanner;
     #duplicateFinder;
+    #cancelled = false;
 
     constructor() {
         this.#blurScanner = new BlurScanner(this.#analysisStore);
@@ -19,14 +20,18 @@ export default class Analyzer {
         this.#analysisStore.clear();
     }
 
+    cancel() {
+        this.#cancelled = true;
+    }
+
     async filterCandidates(candidates, {
         filters = {},
         previousVisibleImageIds = new Set(),
-        isCurrent = () => true,
         onActivityChange = null,
         onBlurProgress = null,
         onDuplicateFinderProgress = null
     } = {}) {
+        const isCurrent = () => !this.#cancelled;
         const blurAcceptedCandidates = await this.#getBlurAcceptedCandidates(candidates, {
             filters,
             isCurrent,

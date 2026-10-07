@@ -1,5 +1,6 @@
 const OFFSCREEN_DOCUMENT_PATH = 'offscreen.html';
 const OFFSCREEN_TARGET = 'image-finder-offscreen';
+const OFFSCREEN_ANALYZER_CONTROL_TARGET = 'image-finder-offscreen-analyzer-control';
 const ISOLATED_DEEP_SCAN_TARGET = 'image-finder-isolated-deepscan';
 const HIDDEN_DEEP_SCAN_TARGET = 'image-finder-hidden-deepscan';
 const TERMINAL_DOWNLOAD_STATES = new Set(['complete', 'interrupted']);
@@ -563,7 +564,7 @@ async function ensureOffscreenDocument() {
     creatingOffscreenDocument = chrome.offscreen.createDocument({
         url: OFFSCREEN_DOCUMENT_PATH,
         reasons: ['BLOBS', 'IFRAME_SCRIPTING', 'DOM_SCRAPING'],
-        justification: 'Create durable Blob URLs and host an isolated iframe for background image discovery.'
+        justification: 'Create durable Blob URLs, host an isolated iframe, and analyze image content outside the popup.'
     });
 
     try {
@@ -1383,6 +1384,16 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
     if (message?.target === OFFSCREEN_TARGET) {
         return undefined;
+    }
+
+    if (message?.target === OFFSCREEN_ANALYZER_CONTROL_TARGET) {
+        if (message.action !== 'ensureOffscreenDocument') return undefined;
+
+        Promise.resolve(ensureOffscreenDocument()).then(
+            () => sendResponse({success: true}),
+            (error) => sendResponse({success: false, error: getErrorMessage(error)})
+        );
+        return true;
     }
 
     if (message?.target === HIDDEN_DEEP_SCAN_TARGET) {
