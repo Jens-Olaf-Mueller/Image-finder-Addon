@@ -4,6 +4,7 @@ import { MediaType } from './MediaType.js';
 import Progressbar from './Progressbar.js';
 import BlurScanner from './BlurScanner.js';
 import DuplicateFinder from './DuplicateFinder.js';
+import ResultStore from './ResultStore.js';
 import { ScanContext } from './ScanContext.js';
 import { getAddonVersionName } from '../addon-info.js';
 
@@ -22,12 +23,6 @@ const REOPEN_POPUP_AFTER_RESTART_STORAGE_KEY = 'reopenPopupAfterRestart';
 // ✏️ EDIT 2026-10-05: Resolve progress colors through theme variables.
 const SCAN_PROGRESS_COLOR = 'var(--adn-progressbar-bg-scan, #32CD32)';
 const FILTER_PROGRESS_COLOR = 'var(--adn-progressbar-bg-filter, tomato)';
-const RESULT_MARKER_PRIORITIES = Object.freeze({
-    normal: 0,
-    new: 1,
-    upgrade: 2
-});
-
 export class ImageFinder {
     #activityCounts = {
         scanner: 0,
@@ -36,10 +31,8 @@ export class ImageFinder {
         deepScan: 0
     };
     #scanGeneration = 0;
-    #downloadStates = new Map();
     #deepScanTitleInterval = null;
     #scanController = null;
-    #nextDiscoveryOrder = 0;
 
     #deepScanStartedAt = null;
     get deepScanElapsedTime() {
@@ -55,6 +48,14 @@ export class ImageFinder {
     get selectedImage() {
         const imageId = this.selectedItem?.dataset.imageId;
         return imageId ? this.images.get(imageId) ?? null : null;
+    }
+
+    get candidates() {
+        return this.resultStore.candidates;
+    }
+
+    get images() {
+        return this.resultStore.images;
     }
 
     get listItems() {
@@ -94,9 +95,7 @@ export class ImageFinder {
         this.settings = new Settings();
         this.scanContext = new ScanContext();
         this.scanner = new ImageScanner(this.settings);
-        // Internal scan candidates may later remain available for analysis when excluded from the visible image list.
-        this.candidates = new Map();
-        this.images = new Map();
+        this.resultStore = new ResultStore();
         // Shared session-scoped cache for future image analysis.
         this.analysisStore = new Map();
         this.blurScanner = new BlurScanner(this.analysisStore);
@@ -576,11 +575,8 @@ export class ImageFinder {
             this.#setSearchButtonActive(false);
         }
 
-        this.candidates.clear();
-        this.images.clear();
-        this.#nextDiscoveryOrder = 0;
+        this.resultStore.clear();
         this.analysisStore.clear();
-        this.#downloadStates.clear();
         this.currentBlobPreview = null;
         this.DOM.lstImages.innerHTML = '';
         this.DOM.imgPreview.removeAttribute('src');
@@ -650,7 +646,7 @@ export class ImageFinder {
 
             this.scanContext.tab = this.scanner.currentTab;
 
-            this.#setScanResults(scanResults);
+            this.resultStore.addCandidates(scanResults);
             let visibleImagesUpdated = false;
             try {
                 visibleImagesUpdated = await this.#refreshVisibleImages(scanGeneration, {
@@ -698,7 +694,7 @@ export class ImageFinder {
                             existingCandidatesUpdated,
                             existingCandidateUpgradeCount
                         } =
-                            this.#getNewURLCandidates(rawCandidates);
+                            this.resultStore.getNewURLCandidates(rawCandidates);
                         if (newCandidates.length === 0 && !existingCandidatesUpdated) {
                             return diagnostic
                                 ? {
@@ -735,7 +731,7 @@ export class ImageFinder {
                                 : true;
                         }
 
-                        this.#setScanResults(candidates, {markerOrigin: 'deepScan'});
+                        this.resultStore.addCandidates(candidates, {markerOrigin: 'deepScan'});
                         const visibleImagesUpdated = await this.#refreshVisibleImages(
                             scanGeneration
                         );
@@ -960,7 +956,7 @@ export class ImageFinder {
 
     async openSelectedDownloadFolder() {
         const imageId = this.selectedItem?.dataset.imageId;
-        const download = imageId ? this.#downloadStates.get(imageId) : null;
+        const download = imageId ? this.resultStore.getDownload(imageId) : null;
         if (!imageId || !download?.completed || !Number.isInteger(download.downloadId)) {
             this.#updateOpenDownloadFolderButton();
             return;
@@ -987,9 +983,7 @@ export class ImageFinder {
             this.currentBlobPreview = null;
         }
 
-        this.images.delete(item.dataset.imageId);
-        this.candidates.delete(item.dataset.imageId);
-        this.#downloadStates.delete(item.dataset.imageId);
+        this.resultStore.deleteResult(item.dataset.imageId);
         item.remove();
 
         this.DOM.imgPreview.removeAttribute('src');
@@ -1002,37 +996,6 @@ export class ImageFinder {
         this.DOM.btnClear.disabled = (this.images.size === 0);
         this.#updateOpenDownloadFolderButton();
         this.#updateLED();
-    }
-
-    #setScanResults(scanResults, {markerOrigin = 'normal'} = {}) {
-        scanResults.forEach((image) => {
-            if (!Number.isInteger(image.discoveryOrder)) {
-                image.discoveryOrder = this.#nextDiscoveryOrder;
-                this.#nextDiscoveryOrder += 1;
-            }
-            if (markerOrigin === 'deepScan') {
-                image.pendingMarkerState = 'new';
-            } else {
-                this.#setResultMarker(image, 'normal');
-            }
-            this.candidates.set(image.id, image);
-        });
-    }
-
-    #setResultMarker(image, markerState) {
-        const currentMarkerState = image.markerState ?? 'normal';
-        const currentPriority = RESULT_MARKER_PRIORITIES[currentMarkerState] ?? 0;
-        const nextPriority = RESULT_MARKER_PRIORITIES[markerState] ?? 0;
-
-        if (nextPriority >= currentPriority) image.markerState = markerState;
-    }
-
-    #getVisibleResultMarkerState(imageId, image, savedImageIds) {
-        if (this.#downloadStates.get(imageId)?.completed === true || savedImageIds.has(imageId)) {
-            return 'downloaded';
-        }
-
-        return image.markerState ?? 'normal';
     }
 
     #isCurrentScan(scanGeneration) {
@@ -1053,71 +1016,6 @@ export class ImageFinder {
         button.value = isActive ? 'true' : 'false';
         button.title = isActive ? 'Stop scan' : 'Find images';
         button.setAttribute('aria-label', button.title);
-    }
-
-    #getNewURLCandidates(rawCandidates) {
-        if (!Array.isArray(rawCandidates)) {
-            return {newCandidates: [], existingCandidatesUpdated: false};
-        }
-
-        const candidatesByURL = new Map();
-        this.candidates.forEach((candidate) => {
-            if (typeof candidate?.url !== 'string') return;
-
-            const matchingCandidates = candidatesByURL.get(candidate.url) ?? [];
-            matchingCandidates.push(candidate);
-            candidatesByURL.set(candidate.url, matchingCandidates);
-        });
-
-        const newCandidatesByURL = new Map();
-        let existingCandidatesUpdated = false;
-        let existingCandidateUpgradeCount = 0;
-        rawCandidates.forEach((candidate) => {
-            if (typeof candidate?.url !== 'string' || !candidate.url) return;
-
-            const matchingCandidates = candidatesByURL.get(candidate.url);
-            if (matchingCandidates) {
-                matchingCandidates.forEach((existingCandidate) => {
-                    if (candidate.visuallyBlurred === false) {
-                        existingCandidate.visuallyBlurred = false;
-                    }
-                    if (this.#getPixelCount(candidate) <= this.#getPixelCount(existingCandidate)) {
-                        return;
-                    }
-
-                    existingCandidate.width = candidate.width;
-                    existingCandidate.height = candidate.height;
-                    existingCandidate.pendingMarkerState = 'upgrade';
-                    existingCandidatesUpdated = true;
-                    existingCandidateUpgradeCount += 1;
-                });
-                return;
-            }
-
-            const alreadyAddedCandidate = newCandidatesByURL.get(candidate.url);
-            if (alreadyAddedCandidate) {
-                if (candidate.visuallyBlurred === false) {
-                    alreadyAddedCandidate.visuallyBlurred = false;
-                }
-                if (this.#getPixelCount(candidate) > this.#getPixelCount(alreadyAddedCandidate)) {
-                    newCandidatesByURL.set(candidate.url, {
-                        ...candidate,
-                        visuallyBlurred: alreadyAddedCandidate.visuallyBlurred === false
-                            ? false
-                            : candidate.visuallyBlurred === true
-                    });
-                }
-                return;
-            }
-
-            newCandidatesByURL.set(candidate.url, candidate);
-        });
-
-        return {
-            newCandidates: Array.from(newCandidatesByURL.values()),
-            existingCandidatesUpdated,
-            existingCandidateUpgradeCount
-        };
     }
 
     #captureRenderState() {
@@ -1148,7 +1046,7 @@ export class ImageFinder {
             item.dataset.imageId = imageId;
             item.dataset.url = image.url;
             marker.className = 'result-marker';
-            marker.dataset.state = this.#getVisibleResultMarkerState(
+            marker.dataset.state = this.resultStore.getVisibleResultMarkerState(
                 imageId,
                 image,
                 renderState.savedImageIds
@@ -1293,10 +1191,7 @@ export class ImageFinder {
         );
         if (!visibleCandidates || !this.#isCurrentScan(scanGeneration)) return false;
 
-        this.images.clear();
-        visibleCandidates.forEach(([candidateId, candidate]) => {
-            this.images.set(candidateId, candidate);
-        });
+        this.resultStore.replaceVisibleResults(visibleCandidates);
 
         return true;
     }
@@ -1347,7 +1242,7 @@ export class ImageFinder {
 
         if (filters.ignoreDuplicates !== true || acceptedCandidates.length < 2) {
             acceptedCandidates.forEach((candidateEntry) => {
-                this.#resolvePendingResultMarker(candidateEntry, false);
+                this.resultStore.resolvePendingResultMarker(candidateEntry, false);
             });
             return acceptedCandidates;
         }
@@ -1394,7 +1289,7 @@ export class ImageFinder {
                     winner[1].discoveryOrder = replacedResult[1].discoveryOrder;
                 }
 
-                this.#resolvePendingResultMarker(winner, replacesExistingResult);
+                this.resultStore.resolvePendingResultMarker(winner, replacesExistingResult);
                 return winner;
             });
         } finally {
@@ -1435,30 +1330,10 @@ export class ImageFinder {
 
     #selectDuplicateWinner(group) {
         return group.reduce((winner, candidateEntry) =>
-            this.#getPixelCount(candidateEntry[1]) > this.#getPixelCount(winner[1])
+            this.resultStore.getPixelCount(candidateEntry[1]) > this.resultStore.getPixelCount(winner[1])
                 ? candidateEntry
                 : winner
         );
-    }
-
-    #resolvePendingResultMarker([_candidateId, candidate], replacesExistingResult) {
-        const pendingMarkerState = candidate.pendingMarkerState;
-        if (!pendingMarkerState) return;
-
-        const markerState = pendingMarkerState === 'upgrade' || replacesExistingResult
-            ? 'upgrade'
-            : 'new';
-        this.#setResultMarker(candidate, markerState);
-        delete candidate.pendingMarkerState;
-    }
-
-    #getPixelCount(candidate) {
-        const width = Number(candidate?.width);
-        const height = Number(candidate?.height);
-
-        return Number.isFinite(width) && Number.isFinite(height)
-            ? Math.max(0, width) * Math.max(0, height)
-            : 0;
     }
 
     #updateLED() {
@@ -1468,11 +1343,7 @@ export class ImageFinder {
     #trackDownload(imageId, downloadId) {
         if (!imageId || !Number.isInteger(downloadId)) return;
 
-        this.#downloadStates.set(imageId, {
-            downloadId,
-            state: 'in_progress',
-            completed: false
-        });
+        if (!this.resultStore.trackDownload(imageId, downloadId)) return;
         this.#updateOpenDownloadFolderButton();
         void this.#refreshDownloadState(imageId, downloadId);
     }
@@ -1491,23 +1362,16 @@ export class ImageFinder {
         const state = delta?.state?.current;
         if (!Number.isInteger(delta?.id) || !state) return;
 
-        this.#downloadStates.forEach((download, imageId) => {
-            if (download.downloadId === delta.id) {
-                this.#setDownloadState(imageId, delta.id, state);
-            }
+        this.resultStore.getImageIdsForDownload(delta.id).forEach((imageId) => {
+            this.#setDownloadState(imageId, delta.id, state);
         });
     }
 
     #setDownloadState(imageId, downloadId, state) {
-        const download = this.#downloadStates.get(imageId);
-        if (!download || download.downloadId !== downloadId) return;
+        const download = this.resultStore.updateDownloadState(imageId, downloadId, state);
+        if (!download) return;
 
-        const completed = download.completed === true || state === 'complete';
-        this.#downloadStates.set(imageId, {
-            ...download,
-            state,
-            completed
-        });
+        const completed = download.completed;
 
         const item = this.listItems.find(li => li.dataset.imageId === imageId);
         if (completed) {
@@ -1526,7 +1390,7 @@ export class ImageFinder {
         if (!button) return;
 
         const imageId = this.selectedItem?.dataset.imageId;
-        const download = imageId ? this.#downloadStates.get(imageId) : null;
+        const download = imageId ? this.resultStore.getDownload(imageId) : null;
         button.disabled = !(
             Number.isInteger(download?.downloadId) && download.completed === true
         );
