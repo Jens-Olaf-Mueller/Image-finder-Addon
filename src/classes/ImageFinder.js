@@ -4,6 +4,7 @@ import { MediaType } from './MediaType.js';
 import Progressbar from './Progressbar.js';
 import AnalyzerClient from './AnalyzerClient.js';
 import ResultStore from './ResultStore.js';
+import MediaList from './MediaList.js';
 import { ScanContext } from './ScanContext.js';
 import { getAddonVersionName } from '../addon-info.js';
 
@@ -41,7 +42,7 @@ export class ImageFinder {
     }
 
     get selectedItem() {
-        return this.DOM.lstImages.querySelector('.selected') || null;
+        return this.mediaList.selectedItem;
     }
 
     get selectedImage() {
@@ -58,12 +59,11 @@ export class ImageFinder {
     }
 
     get listItems() {
-        return Array.from(this.DOM.lstImages.querySelectorAll('li')) || [];
+        return this.mediaList.items;
     }
 
     get listIndex() {
-        const items = Array.from(this.DOM.lstImages.querySelectorAll('li'));
-        return items.indexOf(this.selectedItem);
+        return this.mediaList.selectedIndex;
     }
 
     get downloadButtonState() {
@@ -95,6 +95,7 @@ export class ImageFinder {
         this.scanContext = new ScanContext();
         this.scanner = new ImageScanner(this.settings);
         this.resultStore = new ResultStore();
+        this.mediaList = new MediaList(this.DOM.lstImages);
         this.analyzerClient = new AnalyzerClient();
         this.progressbar = new Progressbar(this.DOM.divProgressbar);
         this.settingsPanel = null;
@@ -574,7 +575,7 @@ export class ImageFinder {
         this.resultStore.clear();
         this.analyzerClient.clear();
         this.currentBlobPreview = null;
-        this.DOM.lstImages.innerHTML = '';
+        this.mediaList.clear();
         this.DOM.imgPreview.removeAttribute('src');
         this.DOM.h2_Preview.style.display = 'block';
         this.info = 'Image preview';
@@ -1023,56 +1024,14 @@ export class ImageFinder {
         button.setAttribute('aria-label', button.title);
     }
 
-    #captureRenderState() {
-        const selectedItem = this.selectedItem;
-
-        return {
-            selectedImageId: selectedItem?.dataset.imageId ?? null,
-            selectedImageURL: selectedItem?.dataset.url ?? null,
-            savedImageIds: new Set(
-                this.listItems
-                    .filter(item => item.classList.contains('saved'))
-                    .map(item => item.dataset.imageId)
-            )
-        };
-    }
-
-    #renderImages(renderState) {
-        let selectedItem = null;
-        let selectedItemByURL = null;
-
-        this.DOM.lstImages.innerHTML = '';
-        this.images.forEach((image, imageId) => {
-            const item = document.createElement('li');
-            const marker = document.createElement('span');
-            const label = document.createElement('span');
-
-            item.title = image.fileName;
-            item.dataset.imageId = imageId;
-            item.dataset.url = image.url;
-            marker.className = 'result-marker';
-            marker.dataset.state = this.resultStore.getVisibleResultMarkerState(
-                imageId,
-                image,
-                renderState.savedImageIds
-            );
-            marker.setAttribute('aria-hidden', 'true');
-            label.className = 'result-label';
-            label.textContent = image.fileName;
-            item.append(marker, label);
-            if (renderState.savedImageIds.has(imageId)) item.classList.add('saved');
-            if (imageId === renderState.selectedImageId) selectedItem = item;
-            if (!selectedItemByURL && image.url === renderState.selectedImageURL) {
-                selectedItemByURL = item;
-            }
-
-            this.DOM.lstImages.appendChild(item);
+    // ✏️ EDIT 2026-10-08: Delegates full list rendering to MediaList without changing UI behavior.
+    #renderImages() {
+        const renderResult = this.mediaList.render(this.images, {
+            getMarkerState: (imageId, image, savedImageIds) =>
+                this.resultStore.getVisibleResultMarkerState(imageId, image, savedImageIds)
         });
 
-        selectedItem ??= selectedItemByURL;
-        if (selectedItem) {
-            selectedItem.classList.add('selected');
-        } else if (renderState.selectedImageId) {
+        if (renderResult.selectionRemoved) {
             this.currentBlobPreview = null;
             this.DOM.imgPreview.removeAttribute('src');
             this.DOM.h2_Preview.style.display = 'block';
@@ -1083,7 +1042,7 @@ export class ImageFinder {
 
         this.#updateOpenDownloadFolderButton();
 
-        return selectedItem;
+        return renderResult;
     }
 
     async #refreshVisibleImages(scanGeneration, {
@@ -1099,8 +1058,7 @@ export class ImageFinder {
         });
         if (!visibleImagesUpdated || !this.#isCurrentScan(scanGeneration)) return false;
 
-        const renderState = this.#captureRenderState();
-        const selectedItem = this.#renderImages(renderState);
+        const {selectedItem, previousSelectedImageId} = this.#renderImages();
         if (!this.#isCurrentScan(scanGeneration)) return false;
 
         if (initialSort && !this.sortState.criterion) {
@@ -1110,7 +1068,7 @@ export class ImageFinder {
         }
 
         this.#updateImageListState();
-        if (selectedItem && selectedItem.dataset.imageId !== renderState.selectedImageId) {
+        if (selectedItem && selectedItem.dataset.imageId !== previousSelectedImageId) {
             try {
                 await this.#showImage(selectedItem, scanGeneration);
             } catch (error) {
