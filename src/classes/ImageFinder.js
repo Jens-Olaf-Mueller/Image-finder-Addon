@@ -990,7 +990,7 @@ export class ImageFinder {
         }
 
         this.resultStore.deleteResult(item.dataset.imageId);
-        item.remove();
+        this.mediaList.remove(item.dataset.imageId);
 
         this.DOM.imgPreview.removeAttribute('src');
         this.DOM.h2_Preview.style.display = 'block';
@@ -1024,9 +1024,9 @@ export class ImageFinder {
         button.setAttribute('aria-label', button.title);
     }
 
-    // ✏️ EDIT 2026-10-08: Delegates full list rendering to MediaList without changing UI behavior.
-    #renderImages() {
-        const renderResult = this.mediaList.render(this.images, {
+    // ✏️ EDIT 2026-10-08: Reconciles only visible result changes through MediaList.
+    #renderImages(resultChanges) {
+        const renderResult = this.mediaList.reconcile(this.images, resultChanges, {
             getMarkerState: (imageId, image, savedImageIds) =>
                 this.resultStore.getVisibleResultMarkerState(imageId, image, savedImageIds)
         });
@@ -1051,14 +1051,14 @@ export class ImageFinder {
         incrementalAnalysis = false,
         analysisCandidateIds = null
     } = {}) {
-        const visibleImagesUpdated = await this.#setVisibleImages(scanGeneration, {
+        const visibleResultChanges = await this.#setVisibleImages(scanGeneration, {
             showFilteringProgress,
             incrementalAnalysis,
             analysisCandidateIds
         });
-        if (!visibleImagesUpdated || !this.#isCurrentScan(scanGeneration)) return false;
+        if (!visibleResultChanges || !this.#isCurrentScan(scanGeneration)) return false;
 
-        const {selectedItem, previousSelectedImageId} = this.#renderImages();
+        const {selectedItem, previousSelectedImageId} = this.#renderImages(visibleResultChanges);
         if (!this.#isCurrentScan(scanGeneration)) return false;
 
         if (initialSort && !this.sortState.criterion) {
@@ -1183,9 +1183,7 @@ export class ImageFinder {
             return candidateEntry;
         });
 
-        this.resultStore.replaceVisibleResults(visibleCandidates);
-
-        return true;
+        return this.resultStore.replaceVisibleResults(visibleCandidates);
     }
 
     #updateLED() {

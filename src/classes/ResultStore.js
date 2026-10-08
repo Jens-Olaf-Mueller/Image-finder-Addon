@@ -11,6 +11,7 @@ export default class ResultStore {
     #candidates = new Map();
     #images = new Map();
     #downloadStates = new Map();
+    #visibleResultStates = new Map();
     #nextDiscoveryOrder = 0;
 
     get candidates() {
@@ -25,6 +26,7 @@ export default class ResultStore {
         this.#candidates.clear();
         this.#images.clear();
         this.#downloadStates.clear();
+        this.#visibleResultStates.clear();
         this.#nextDiscoveryOrder = 0;
     }
 
@@ -119,10 +121,34 @@ export default class ResultStore {
     }
 
     replaceVisibleResults(entries) {
+        const nextImages = new Map(entries ?? []);
+        const nextVisibleResultStates = new Map();
+        const addedImageIds = new Set();
+        const updatedImageIds = new Set();
+        const removedImageIds = new Set();
+
+        this.#images.forEach((_image, imageId) => {
+            if (!nextImages.has(imageId)) removedImageIds.add(imageId);
+        });
+        nextImages.forEach((image, imageId) => {
+            const nextState = this.#getVisibleResultState(image);
+            const previousState = this.#visibleResultStates.get(imageId);
+
+            if (!previousState) {
+                addedImageIds.add(imageId);
+            } else if (!this.#isSameVisibleResultState(previousState, nextState)) {
+                updatedImageIds.add(imageId);
+            }
+            nextVisibleResultStates.set(imageId, nextState);
+        });
+
         this.#images.clear();
-        entries?.forEach(([candidateId, candidate]) => {
+        nextImages.forEach((candidate, candidateId) => {
             this.#images.set(candidateId, candidate);
         });
+        this.#visibleResultStates = nextVisibleResultStates;
+
+        return {addedImageIds, updatedImageIds, removedImageIds};
     }
 
     deleteResult(imageId) {
@@ -130,6 +156,7 @@ export default class ResultStore {
         const deletedFromCandidates = this.#candidates.delete(imageId);
 
         this.#downloadStates.delete(imageId);
+        this.#visibleResultStates.delete(imageId);
         return deletedFromImages || deletedFromCandidates;
     }
 
@@ -167,6 +194,22 @@ export default class ResultStore {
         return Number.isFinite(width) && Number.isFinite(height)
             ? Math.max(0, width) * Math.max(0, height)
             : 0;
+    }
+
+    // ✴️ NEW 2026-10-08: Stores only fields that change a rendered list entry.
+    #getVisibleResultState(image) {
+        return {
+            fileName: image?.fileName ?? '',
+            markerState: image?.markerState ?? 'normal',
+            url: image?.url ?? ''
+        };
+    }
+
+    // ✴️ NEW 2026-10-08: Prevents unchanged media entries from being rendered again.
+    #isSameVisibleResultState(first, second) {
+        return first.fileName === second.fileName &&
+            first.markerState === second.markerState &&
+            first.url === second.url;
     }
 
     trackDownload(imageId, downloadId) {
