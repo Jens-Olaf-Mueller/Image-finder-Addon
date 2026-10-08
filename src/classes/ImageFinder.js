@@ -688,7 +688,8 @@ export class ImageFinder {
                         const {
                             newCandidates,
                             existingCandidatesUpdated,
-                            existingCandidateUpgradeCount
+                            existingCandidateUpgradeCount,
+                            updatedCandidateIds
                         } =
                             this.resultStore.getNewURLCandidates(rawCandidates);
                         if (newCandidates.length === 0 && !existingCandidatesUpdated) {
@@ -728,8 +729,16 @@ export class ImageFinder {
                         }
 
                         this.resultStore.addCandidates(candidates, {markerOrigin: 'deepScan'});
+                        const analysisCandidateIds = new Set([
+                            ...updatedCandidateIds,
+                            ...candidates.map((candidate) => candidate.id)
+                        ]);
                         const visibleImagesUpdated = await this.#refreshVisibleImages(
-                            scanGeneration
+                            scanGeneration,
+                            {
+                                incrementalAnalysis: true,
+                                analysisCandidateIds
+                            }
                         );
 
                         if (!diagnostic) return visibleImagesUpdated;
@@ -1077,9 +1086,16 @@ export class ImageFinder {
         return selectedItem;
     }
 
-    async #refreshVisibleImages(scanGeneration, {initialSort = false, showFilteringProgress = false} = {}) {
+    async #refreshVisibleImages(scanGeneration, {
+        initialSort = false,
+        showFilteringProgress = false,
+        incrementalAnalysis = false,
+        analysisCandidateIds = null
+    } = {}) {
         const visibleImagesUpdated = await this.#setVisibleImages(scanGeneration, {
-            showFilteringProgress
+            showFilteringProgress,
+            incrementalAnalysis,
+            analysisCandidateIds
         });
         if (!visibleImagesUpdated || !this.#isCurrentScan(scanGeneration)) return false;
 
@@ -1166,14 +1182,27 @@ export class ImageFinder {
         this.#showAddonVersion();
     }
 
-    async #setVisibleImages(scanGeneration, {showFilteringProgress = false} = {}) {
+    async #setVisibleImages(scanGeneration, {
+        showFilteringProgress = false,
+        incrementalAnalysis = false,
+        analysisCandidateIds = null
+    } = {}) {
         const previousVisibleImageIds = new Set(this.images.keys());
-        const candidates = Array.from(this.candidates);
+        const allCandidates = Array.from(this.candidates);
+        const filters = this.settings.get('filters') ?? {};
+        const appliesAnalysisFilter = filters.ignoreBlurredImages === true ||
+            filters.ignoreDuplicates === true;
+        const usesIncrementalAnalysis = incrementalAnalysis === true && appliesAnalysisFilter;
+        const candidates = usesIncrementalAnalysis
+            ? allCandidates.filter(([candidateId]) => analysisCandidateIds?.has(candidateId))
+            : allCandidates;
         const filteringProgress = showFilteringProgress
             ? this.#createFilteringProgress(candidates)
             : null;
         const analyzedCandidates = await this.analyzerClient.filterCandidates(candidates, {
-            filters: this.settings.get('filters') ?? {},
+            allCandidates,
+            filters,
+            incremental: usesIncrementalAnalysis,
             previousVisibleImageIds,
             isCurrent: () => this.#isCurrentScan(scanGeneration),
             onActivityChange: (activity, isActive) => {

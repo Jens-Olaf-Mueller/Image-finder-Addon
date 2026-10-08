@@ -47,7 +47,12 @@ export default class ResultStore {
 
     getNewURLCandidates(rawCandidates) {
         if (!Array.isArray(rawCandidates)) {
-            return {newCandidates: [], existingCandidatesUpdated: false};
+            return {
+                newCandidates: [],
+                existingCandidatesUpdated: false,
+                existingCandidateUpgradeCount: 0,
+                updatedCandidateIds: []
+            };
         }
 
         const candidatesByURL = new Map();
@@ -62,6 +67,7 @@ export default class ResultStore {
         const newCandidatesByURL = new Map();
         let existingCandidatesUpdated = false;
         let existingCandidateUpgradeCount = 0;
+        const updatedCandidateIds = new Set();
         rawCandidates.forEach((candidate) => {
             if (typeof candidate?.url !== 'string' || !candidate.url) return;
 
@@ -80,6 +86,7 @@ export default class ResultStore {
                     existingCandidate.pendingMarkerState = 'upgrade';
                     existingCandidatesUpdated = true;
                     existingCandidateUpgradeCount += 1;
+                    updatedCandidateIds.add(existingCandidate.id);
                 });
                 return;
             }
@@ -106,7 +113,8 @@ export default class ResultStore {
         return {
             newCandidates: Array.from(newCandidatesByURL.values()),
             existingCandidatesUpdated,
-            existingCandidateUpgradeCount
+            existingCandidateUpgradeCount,
+            updatedCandidateIds: Array.from(updatedCandidateIds)
         };
     }
 

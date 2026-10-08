@@ -58,6 +58,30 @@ export default class DuplicateFinder extends Heuristik {
         };
     }
 
+    async getStrictHash(image, key, {
+        onPreparationTiming = null,
+        onCalculationTiming = null
+    } = {}) {
+        if (this.mode !== 'strict') {
+            throw new Error(`DuplicateFinder mode "${this.mode}" is not implemented yet`);
+        }
+
+        const analysis = await this.prepareAnalysis(image, key, {
+            onTiming: onPreparationTiming
+        });
+        const calculationStartedAt = performance.now();
+        try {
+            return this.#getStrictFeatures(analysis).hashValue;
+        } finally {
+            onCalculationTiming?.(performance.now() - calculationStartedAt);
+        }
+    }
+
+    isStrictHashMatch(hashA, hashB) {
+        return typeof hashA === 'bigint' && typeof hashB === 'bigint' &&
+            this.#getHammingDistance(hashA, hashB) <= STRICT_MATCH_THRESHOLD;
+    }
+
     isStrictMatch(comparison) {
         return Number.isInteger(comparison?.hammingDistance) &&
             comparison.hammingDistance >= 0 &&

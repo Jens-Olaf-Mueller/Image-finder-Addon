@@ -44,62 +44,72 @@ export const BLUR_CLASSIFICATIONS = Object.freeze({
  * - {@link #median}        - Returns the median value of a numeric collection.
  */
 export default class BlurScanner extends Heuristik {
-    async measure(imageSource, key) {
-        const analysis = await this.prepareAnalysis(imageSource, key);
-        const grid = this.#selectGrid(analysis.width, analysis.height);
-        const tiles = [];
+    async measure(imageSource, key, {
+        onPreparationTiming = null,
+        onCalculationTiming = null
+    } = {}) {
+        const analysis = await this.prepareAnalysis(imageSource, key, {
+            onTiming: onPreparationTiming
+        });
+        const calculationStartedAt = performance.now();
+        try {
+            const grid = this.#selectGrid(analysis.width, analysis.height);
+            const tiles = [];
 
-        for (let row = 0; row < grid.rows; row++) {
-            const startY = Math.floor(row * analysis.height / grid.rows);
-            const endY = Math.floor((row + 1) * analysis.height / grid.rows);
+            for (let row = 0; row < grid.rows; row++) {
+                const startY = Math.floor(row * analysis.height / grid.rows);
+                const endY = Math.floor((row + 1) * analysis.height / grid.rows);
 
-            for (let column = 0; column < grid.columns; column++) {
-                const startX = Math.floor(column * analysis.width / grid.columns);
-                const endX = Math.floor((column + 1) * analysis.width / grid.columns);
-                const measurement = this.#measureRegion(
-                    analysis.luminance,
-                    analysis.width,
-                    analysis.height,
-                    startX,
-                    endX,
-                    startY,
-                    endY
-                );
+                for (let column = 0; column < grid.columns; column++) {
+                    const startX = Math.floor(column * analysis.width / grid.columns);
+                    const endX = Math.floor((column + 1) * analysis.width / grid.columns);
+                    const measurement = this.#measureRegion(
+                        analysis.luminance,
+                        analysis.width,
+                        analysis.height,
+                        startX,
+                        endX,
+                        startY,
+                        endY
+                    );
 
-                tiles.push({
-                    row: row + 1,
-                    column: column + 1,
-                    ...measurement
-                });
+                    tiles.push({
+                        row: row + 1,
+                        column: column + 1,
+                        ...measurement
+                    });
+                }
             }
+
+            const globalMeasurement = this.#measureRegion(
+                analysis.luminance,
+                analysis.width,
+                analysis.height,
+                0,
+                analysis.width,
+                0,
+                analysis.height
+            );
+            const tenengradValues = tiles.map(tile => tile.tenengrad);
+            const laplacianValues = tiles.map(tile => tile.laplacian);
+
+            return {
+                sourceWidth: analysis.sourceWidth,
+                sourceHeight: analysis.sourceHeight,
+                analysisWidth: analysis.width,
+                analysisHeight: analysis.height,
+                grid,
+                globalTenengrad: globalMeasurement.tenengrad,
+                globalLaplacian: globalMeasurement.laplacian,
+                medianTenengrad: this.#median(tenengradValues),
+                maxTenengrad: Math.max(...tenengradValues),
+                medianLaplacian: this.#median(laplacianValues),
+                maxLaplacian: Math.max(...laplacianValues),
+                tiles
+            };
+        } finally {
+            onCalculationTiming?.(performance.now() - calculationStartedAt);
         }
-
-        const globalMeasurement = this.#measureRegion(
-            analysis.luminance,
-            analysis.width,
-            analysis.height,
-            0,
-            analysis.width,
-            0,
-            analysis.height
-        );
-        const tenengradValues = tiles.map(tile => tile.tenengrad);
-        const laplacianValues = tiles.map(tile => tile.laplacian);
-
-        return {
-            sourceWidth: analysis.sourceWidth,
-            sourceHeight: analysis.sourceHeight,
-            analysisWidth: analysis.width,
-            analysisHeight: analysis.height,
-            grid,
-            globalTenengrad: globalMeasurement.tenengrad,
-            globalLaplacian: globalMeasurement.laplacian,
-            medianTenengrad: this.#median(tenengradValues),
-            maxTenengrad: Math.max(...tenengradValues),
-            medianLaplacian: this.#median(laplacianValues),
-            maxLaplacian: Math.max(...laplacianValues),
-            tiles
-        };
     }
 
     classify(measurement) {

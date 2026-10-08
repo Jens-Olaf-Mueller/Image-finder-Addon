@@ -10,6 +10,8 @@ export default class AnalyzerClient {
     #analysisGeneration = 0;
     #offscreenReady = false;
     #remoteSessionInitialized = false;
+    #analysisInitialized = false;
+    #filterKey = null;
     #pendingRequests = new Map();
     #onMessage;
     #disposed = false;
@@ -24,6 +26,8 @@ export default class AnalyzerClient {
         if (this.#disposed) return;
 
         this.#analysisGeneration += 1;
+        this.#analysisInitialized = false;
+        this.#filterKey = null;
         if (!this.#remoteSessionInitialized) return;
 
         void this.#resetRemoteSession();
@@ -42,7 +46,9 @@ export default class AnalyzerClient {
     }
 
     async filterCandidates(candidates, {
+        allCandidates = candidates,
         filters = {},
+        incremental = false,
         previousVisibleImageIds = new Set(),
         isCurrent = () => true,
         onActivityChange = null,
@@ -50,9 +56,11 @@ export default class AnalyzerClient {
         onDuplicateFinderProgress = null
     } = {}) {
         const runsBlurScanner = filters.ignoreBlurredImages === true && candidates.length > 0;
-        const runsDuplicateFinder = filters.ignoreDuplicates === true && candidates.length >= 2;
+        const runsDuplicateFinder = filters.ignoreDuplicates === true && candidates.length > 0;
         if (!runsBlurScanner && !runsDuplicateFinder) {
-            return candidates.map((candidateEntry) => ({
+            this.#analysisInitialized = false;
+            this.#filterKey = null;
+            return allCandidates.map((candidateEntry) => ({
                 candidateEntry,
                 replacesExistingResult: false
             }));
@@ -63,6 +71,10 @@ export default class AnalyzerClient {
         if (!isCurrent()) return null;
 
         this.#remoteSessionInitialized = true;
+        const filterKey = this.#getFilterKey(filters);
+        const usesIncrementalAnalysis = incremental === true &&
+            this.#analysisInitialized && this.#filterKey === filterKey;
+        const analysisCandidates = usesIncrementalAnalysis ? candidates : allCandidates;
         const requestId = crypto.randomUUID();
         this.#pendingRequests.set(requestId, {
             isCurrent,
@@ -76,13 +88,20 @@ export default class AnalyzerClient {
                 sessionId: this.#sessionId,
                 analysisGeneration: this.#analysisGeneration,
                 requestId,
-                candidates,
+                candidates: analysisCandidates,
                 filters,
+                incremental: usesIncrementalAnalysis,
                 previousVisibleImageIds: Array.from(previousVisibleImageIds)
             });
             if (!isCurrent()) return null;
 
-            return this.#applyAnalysisResult(candidates, response);
+            this.#analysisInitialized = true;
+            this.#filterKey = filterKey;
+            // ✴️ NEW 2026-10-08: Keep phase metrics with the popup where real scans are inspected.
+            if (response.performanceSummary) {
+                console.info('[Analyzer Performance]', response.performanceSummary);
+            }
+            return this.#applyAnalysisResult(allCandidates, response);
         } finally {
             this.#pendingRequests.delete(requestId);
         }
@@ -97,6 +116,13 @@ export default class AnalyzerClient {
         } catch (error) {
             console.warn('Cannot reset offscreen analyzer:', error);
         }
+    }
+
+    #getFilterKey(filters) {
+        return JSON.stringify({
+            ignoreBlurredImages: filters.ignoreBlurredImages === true,
+            ignoreDuplicates: filters.ignoreDuplicates === true
+        });
     }
 
     async #ensureOffscreenDocument() {

@@ -1,4 +1,5 @@
 export const MAX_ANALYSIS_DIMENSION = 384;
+const IMAGE_LOAD_TIMEOUT_MS = 1000;
 
 /**
  * @file Heuristik.js
@@ -66,53 +67,88 @@ export default class Heuristik {
         this.#analysisStore.clear();
     }
 
-    async prepareAnalysis(source, key) {
+    async prepareAnalysis(source, key, {onTiming = null} = {}) {
         if (key === null || key === undefined || key === '') {
             throw new TypeError('An explicit analysis cache key is required');
         }
-        if (this.hasAnalysis(key)) return this.getAnalysis(key);
-
-        const image = await this.#loadImage(source);
-        const sourceWidth = image.naturalWidth;
-        const sourceHeight = image.naturalHeight;
-        const scale = Math.min(
-            1,
-            MAX_ANALYSIS_DIMENSION / Math.max(sourceWidth, sourceHeight)
-        );
-        const width = Math.max(1, Math.round(sourceWidth * scale));
-        const height = Math.max(1, Math.round(sourceHeight * scale));
-        const canvas = document.createElement('canvas');
-
-        canvas.width = width;
-        canvas.height = height;
-
-        const context = canvas.getContext('2d', {willReadFrequently: true});
-        if (!context) throw new Error('Cannot create analysis canvas context');
-
-        context.drawImage(image, 0, 0, width, height);
-
-        const {data} = context.getImageData(0, 0, width, height);
-        const luminance = new Float32Array(width * height);
-
-        for (let pixelIndex = 0, luminanceIndex = 0;
-            pixelIndex < data.length;
-            pixelIndex += 4, luminanceIndex += 1) {
-            luminance[luminanceIndex] =
-                data[pixelIndex] * 0.2126 +
-                data[pixelIndex + 1] * 0.7152 +
-                data[pixelIndex + 2] * 0.0722;
+        if (this.hasAnalysis(key)) {
+            onTiming?.({stage: 'cache'});
+            return this.getAnalysis(key);
         }
 
-        const analysis = {
-            sourceWidth,
-            sourceHeight,
-            width,
-            height,
-            luminance
-        };
+        const imageLoadStartedAt = performance.now();
+        let image;
+        try {
+            image = await this.#loadImage(source);
+            onTiming?.({
+                stage: 'imageLoad',
+                durationMs: performance.now() - imageLoadStartedAt,
+                failed: false
+            });
+        } catch (error) {
+            onTiming?.({
+                stage: 'imageLoad',
+                durationMs: performance.now() - imageLoadStartedAt,
+                failed: true
+            });
+            throw error;
+        }
 
-        this.setAnalysis(key, analysis);
-        return analysis;
+        const preparationStartedAt = performance.now();
+        try {
+            const sourceWidth = image.naturalWidth;
+            const sourceHeight = image.naturalHeight;
+            const scale = Math.min(
+                1,
+                MAX_ANALYSIS_DIMENSION / Math.max(sourceWidth, sourceHeight)
+            );
+            const width = Math.max(1, Math.round(sourceWidth * scale));
+            const height = Math.max(1, Math.round(sourceHeight * scale));
+            const canvas = document.createElement('canvas');
+
+            canvas.width = width;
+            canvas.height = height;
+
+            const context = canvas.getContext('2d', {willReadFrequently: true});
+            if (!context) throw new Error('Cannot create analysis canvas context');
+
+            context.drawImage(image, 0, 0, width, height);
+
+            const {data} = context.getImageData(0, 0, width, height);
+            const luminance = new Float32Array(width * height);
+
+            for (let pixelIndex = 0, luminanceIndex = 0;
+                pixelIndex < data.length;
+                pixelIndex += 4, luminanceIndex += 1) {
+                luminance[luminanceIndex] =
+                    data[pixelIndex] * 0.2126 +
+                    data[pixelIndex + 1] * 0.7152 +
+                    data[pixelIndex + 2] * 0.0722;
+            }
+
+            const analysis = {
+                sourceWidth,
+                sourceHeight,
+                width,
+                height,
+                luminance
+            };
+
+            this.setAnalysis(key, analysis);
+            onTiming?.({
+                stage: 'preparation',
+                durationMs: performance.now() - preparationStartedAt,
+                failed: false
+            });
+            return analysis;
+        } catch (error) {
+            onTiming?.({
+                stage: 'preparation',
+                durationMs: performance.now() - preparationStartedAt,
+                failed: true
+            });
+            throw error;
+        }
     }
 
     async #loadImage(source) {
@@ -127,23 +163,53 @@ export default class Heuristik {
         if (!image) {
             throw new TypeError('Image source must be an HTMLImageElement or source URL');
         }
-        if (!isImageElement) image.src = source;
-
-        if (typeof image.decode === 'function') {
-            await image.decode();
-        } else if (!image.complete) {
-            await new Promise((resolve, reject) => {
-                image.addEventListener('load', resolve, {once: true});
-                image.addEventListener('error', () => {
-                    reject(new Error('Cannot load image for analysis'));
-                }, {once: true});
-            });
-        }
+        // ✏️ EDIT 2026-10-08: Offscreen image.decode() may never settle for a valid source.
+        await this.#waitForImageLoad(image, {
+            source: isImageElement ? null : source,
+            cancelOnTimeout: !isImageElement
+        });
 
         if (image.naturalWidth <= 0 || image.naturalHeight <= 0) {
             throw new Error('Image has no analyzable dimensions');
         }
 
         return image;
+    }
+
+    async #waitForImageLoad(image, {source = null, cancelOnTimeout = false} = {}) {
+        await new Promise((resolve, reject) => {
+            let settled = false;
+            let timeoutId = null;
+            const finish = (callback) => {
+                if (settled) return;
+
+                settled = true;
+                window.clearTimeout(timeoutId);
+                image.removeEventListener('load', onLoad);
+                image.removeEventListener('error', onError);
+                callback();
+            };
+            const onLoad = () => finish(resolve);
+            const onError = () => finish(() => reject(new Error('Cannot load image for analysis')));
+
+            image.addEventListener('load', onLoad, {once: true});
+            image.addEventListener('error', onError, {once: true});
+            timeoutId = window.setTimeout(() => {
+                // ✴️ NEW 2026-10-08: Do not let one source delay the whole offscreen pipeline.
+                if (cancelOnTimeout) image.removeAttribute('src');
+                finish(() => reject(new Error(
+                    `Image loading timed out after ${IMAGE_LOAD_TIMEOUT_MS} ms`
+                )));
+            }, IMAGE_LOAD_TIMEOUT_MS);
+
+            if (source !== null) image.src = source;
+
+            if (!image.complete) return;
+            if (image.naturalWidth > 0 && image.naturalHeight > 0) {
+                finish(resolve);
+            } else {
+                finish(() => reject(new Error('Image has no analyzable dimensions')));
+            }
+        });
     }
 }

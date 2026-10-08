@@ -97,26 +97,6 @@ function releaseAnalyzerSession(sessionId) {
     return true;
 }
 
-function getCandidateUpdates(candidates, originalStates) {
-    return candidates.flatMap(([candidateId, candidate]) => {
-        const original = originalStates.get(candidateId);
-        if (!original) return [];
-
-        const update = {candidateId};
-        let changed = false;
-        if (candidate?.visuallyBlurred !== original.visuallyBlurred) {
-            update.visuallyBlurred = candidate?.visuallyBlurred;
-            changed = true;
-        }
-        if (candidate?.discoveryOrder !== original.discoveryOrder) {
-            update.discoveryOrder = candidate?.discoveryOrder;
-            changed = true;
-        }
-
-        return changed ? [update] : [];
-    });
-}
-
 function createAnalysisEventEmitter({sessionId, requestId}) {
     const deliveries = [];
     const progressByStage = new Map();
@@ -139,7 +119,8 @@ function createAnalysisEventEmitter({sessionId, requestId}) {
         emitProgress: (stage, completed, total) => {
             const step = Math.max(1, Math.ceil(total / 100));
             const previous = progressByStage.get(stage) ?? 0;
-            if (completed < total && completed - previous < step) return;
+            const isFirstUpdate = completed === 1 && previous === 0;
+            if (completed < total && !isFirstUpdate && completed - previous < step) return;
 
             progressByStage.set(stage, completed);
             emit({action: 'progress', stage, completed, total});
@@ -215,29 +196,32 @@ window.chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => 
     }
 
     if (message.action === 'analyzeCandidates') {
-        const {sessionId, analysisGeneration, requestId, candidates, filters, previousVisibleImageIds} = message;
+        const {
+            sessionId,
+            analysisGeneration,
+            requestId,
+            candidates,
+            filters,
+            incremental,
+            previousVisibleImageIds
+        } = message;
         if (typeof requestId !== 'string' || !requestId || !Array.isArray(candidates)) {
             sendResponse({success: false, error: 'The offscreen analyzer request is invalid'});
             return undefined;
         }
 
-        const originalStates = new Map(candidates.map(([candidateId, candidate]) => [candidateId, {
-            visuallyBlurred: candidate?.visuallyBlurred,
-            discoveryOrder: candidate?.discoveryOrder
-        }]));
         const emitter = createAnalysisEventEmitter({sessionId, requestId});
-        Promise.resolve().then(() => getAnalyzer(sessionId, analysisGeneration).filterCandidates(
-            candidates,
-            {
-                filters: filters ?? {},
-                previousVisibleImageIds: new Set(previousVisibleImageIds),
-                onActivityChange: emitter.emitActivity,
-                onBlurProgress: (completed, total) =>
-                    emitter.emitProgress('blurScanner', completed, total),
-                onDuplicateFinderProgress: (completed, total) =>
-                    emitter.emitProgress('duplicateFinder', completed, total)
-            }
-        )).then(
+        const analyzer = getAnalyzer(sessionId, analysisGeneration);
+        Promise.resolve().then(() => analyzer.filterCandidates(candidates, {
+            filters: filters ?? {},
+            incremental: incremental === true,
+            previousVisibleImageIds: new Set(previousVisibleImageIds),
+            onActivityChange: emitter.emitActivity,
+            onBlurProgress: (completed, total) =>
+                emitter.emitProgress('blurScanner', completed, total),
+            onDuplicateFinderProgress: (completed, total) =>
+                emitter.emitProgress('duplicateFinder', completed, total)
+        })).then(
             async (results) => {
                 await emitter.flush();
                 if (!results) {
@@ -251,7 +235,8 @@ window.chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => 
                         candidateId: candidateEntry[0],
                         replacesExistingResult
                     })),
-                    candidateUpdates: getCandidateUpdates(candidates, originalStates)
+                    candidateUpdates: analyzer.getCandidateUpdates(),
+                    performanceSummary: analyzer.getPerformanceSummary()
                 });
             },
             async (error) => {
