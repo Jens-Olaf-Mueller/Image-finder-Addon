@@ -1,29 +1,11 @@
 import { Settings } from './Settings.js';
 import ImageScanner from './ImageScanner.js';
-import { MediaType } from './MediaType.js';
-import Progressbar from './Progressbar.js';
 import AnalyzerClient from './AnalyzerClient.js';
 import ResultStore from './ResultStore.js';
-import MediaList from './MediaList.js';
+import Popup from './Popup.js';
 import { ScanContext } from './ScanContext.js';
-import { getAddonVersionName } from '../addon-info.js';
 
-const SORT_BUTTON_TITLES = Object.freeze({
-    filename: 'Sort by filename',
-    type: 'Sort by image type',
-    size: 'Sort by file size',
-    dimensions: 'Sort by dimensions',
-    cronologic: 'Sort chronologically'
-});
-const SORT_DIRECTION_TITLES = Object.freeze({
-    asc: 'ascending',
-    desc: 'descending'
-});
-const REOPEN_POPUP_AFTER_RESTART_STORAGE_KEY = 'reopenPopupAfterRestart';
-// ✏️ EDIT 2026-10-05: Resolve progress colors through theme variables.
-const SCAN_PROGRESS_COLOR = 'var(--adn-progressbar-bg-scan, #32CD32)';
-const FILTER_PROGRESS_COLOR = 'var(--adn-progressbar-bg-filter, tomato)';
-export class ImageFinder {
+export class MediaController {
     #activityCounts = {
         scanner: 0,
         duplicateFinder: 0,
@@ -31,24 +13,7 @@ export class ImageFinder {
         deepScan: 0
     };
     #scanGeneration = 0;
-    #deepScanTitleInterval = null;
     #scanController = null;
-
-    #deepScanStartedAt = null;
-    get deepScanElapsedTime() {
-        if (this.#deepScanStartedAt === null) return '0:00';
-        const seconds = Math.max(0, Math.floor((Date.now() - this.#deepScanStartedAt) / 1000));
-        return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
-    }
-
-    get selectedItem() {
-        return this.mediaList.selectedItem;
-    }
-
-    get selectedImage() {
-        const imageId = this.selectedItem?.dataset.imageId;
-        return imageId ? this.images.get(imageId) ?? null : null;
-    }
 
     get candidates() {
         return this.resultStore.candidates;
@@ -58,54 +23,41 @@ export class ImageFinder {
         return this.resultStore.images;
     }
 
-    get listItems() {
-        return this.mediaList.items;
-    }
-
-    get listIndex() {
-        return this.mediaList.selectedIndex;
-    }
-
-    get downloadButtonState() {
+    get shouldDisableDownloadWhenCompleted() {
         return (this.settings.get('downloads') ?? {}).disableDownloadWhenDone === true;
     }
 
-    get statusBar() { return this.DOM.spnStatusBar?.innerHTML; }
-    set statusBar(text) {
-        if (typeof text === 'string') this.DOM.spnStatusBar.innerHTML = text;
-    }
-
-    get info() { return this.DOM.h2_Preview.textContent; }
-    set info(text) {
-        if (typeof text === 'string') this.DOM.h2_Preview.textContent = text;
-    }
-
-    DOM = {};
-    sortState = {
-        criterion: null,
-        direction: 'asc'
-    };
-
     constructor() {
-        // register all DOM elements with ID
-        document.querySelectorAll('[id]').forEach(elmt => {
-            this.DOM[elmt.id] = elmt;
-        });
+        this.popup = new Popup();
         this.settings = new Settings();
         this.scanContext = new ScanContext();
         this.scanner = new ImageScanner(this.settings);
         this.resultStore = new ResultStore();
-        this.mediaList = new MediaList(this.DOM.lstImages);
         this.analyzerClient = new AnalyzerClient();
-        this.progressbar = new Progressbar(this.DOM.divProgressbar);
-        this.settingsPanel = null;
         this.isSavingAll = false;
         this.currentBlobPreview = null;
+        this.popup.setEventHandlers({
+            getVisibleMedia: () => this.images,
+            onScan: () => this.scan(),
+            onStopScan: (options) => this.stopScan(options),
+            onMediaSelected: (imageId) => this.#showMediaPreviewSafely(imageId),
+            onDeleteMedia: (imageId) => this.deleteMedia(imageId),
+            onDownloadMedia: (imageId) => this.downloadMedia(imageId),
+            onDownloadAllMedia: () => this.downloadAllMedia(),
+            onOpenDownloadFolder: (imageId) => this.openMediaDownloadFolder(imageId),
+            onClearMedia: () => this.clearMedia(),
+            onReloadCurrentTab: () => this.reloadCurrentTab(),
+            onThemeChange: (mode) => this.#setThemeMode(mode),
+            onSettingsClosed: () => {
+                this.updateDownloadTitles();
+                this.#updateLEDActivity();
+            },
+            onResetSettings: () => this.resetSettingsToDefaults()
+        });
         window.chrome?.downloads?.onChanged?.addListener((delta) => {
             this.#handleDownloadChanged(delta);
         });
-        window.addEventListener('pagehide', () => this.#stopDeepScanTitleTimer(), {once: true});
-        this.#showAddonVersion();
+        this.popup.showAddonVersion();
         this.#updateLED();
         this.#updateLEDActivity();
 
@@ -115,15 +67,10 @@ export class ImageFinder {
     async run(onSettingsReady = null) {
         await this.setWebsiteURLFromActiveTab();
         await this.settings.run();
-        this.#applyThemeMode();
+        this.popup.applyThemeMode(this.settings.getThemeMode());
         if (typeof onSettingsReady === 'function') await onSettingsReady();
         this.updateDownloadTitles();
-        this.setEventListeners();
         if (this.settings.get('common', 'scanOnStart', true)) await this.scan();
-    }
-
-    setSettingsPanel(settingsPanel) {
-        this.settingsPanel = settingsPanel;
     }
 
     async setWebsiteURLFromActiveTab() {
@@ -141,26 +88,6 @@ export class ImageFinder {
         }
     }
 
-    setEventListeners() {
-        this.DOM.divToolbar.addEventListener('click', e => this.onButtonClick(e));
-        this.DOM.divToolbarTopLeft.addEventListener('click', e => this.onSortButtonClick(e));
-        this.DOM.lstImages.addEventListener('click', e => this.onListItemClick(e));
-        this.DOM.lstImages.addEventListener('keydown', e => this.onKeyPress(e));
-        this.DOM.chkTheme?.addEventListener('change', () => {
-            void this.#setThemeMode(this.DOM.chkTheme.checked ? 'dark' : 'light');
-        });
-        document.addEventListener('keydown', e => {
-            this.#onSettingsKeyDown(e);
-        }, true);
-    }
-
-    onSortButtonClick(e) {
-        const button = e.target.closest('button');
-        if (!button || !button.dataset.sort || !this.DOM.divToolbarTopLeft.contains(button)) return;
-
-        this.sort(button.dataset.sort);
-    }
-
     async stopDeepScan({endReason = 'cancelled'} = {}) {
         if (this.#activityCounts.deepScan === 0 && !this.isDeepScanRunning) return false;
 
@@ -175,8 +102,8 @@ export class ImageFinder {
         this.#scanController = null;
         this.analyzerClient.clear();
         this.#resetScanActivities();
-        this.#setSearchButtonActive(false);
-        this.info = 'Image preview';
+        this.#setScanRunning(false);
+        this.popup.setInfo('Image preview');
         await this.cancelDeepScan({endReason});
         return true;
     }
@@ -187,8 +114,7 @@ export class ImageFinder {
 
     get isScanRunning() {
         return this.#scanController !== null || this.isDeepScanRunning ||
-            Object.values(this.#activityCounts).some((count) => count > 0) ||
-            this.DOM.btnSearch?.value === 'true';
+            Object.values(this.#activityCounts).some((count) => count > 0);
     }
 
     async cancelDeepScan({endReason = 'cancelled'} = {}) {
@@ -199,133 +125,25 @@ export class ImageFinder {
         this.scanner.setDeepScanClientId(clientId);
     }
 
-    sort(criterion, initialDirection = null) {
-        if (!['filename', 'type', 'size', 'dimensions', 'cronologic'].includes(criterion)) return;
-
-        const direction = initialDirection ?? (this.sortState.criterion === criterion &&
-            this.sortState.direction === 'asc'
-            ? 'desc'
-            : 'asc');
-        if (!['asc', 'desc'].includes(direction)) return;
-        const directionFactor = direction === 'asc' ? 1 : -1;
-        const selectedItem = this.selectedItem;
-        const compareFileNames = (first, second) => String(first.fileName ?? '')
-            .localeCompare(String(second.fileName ?? ''), undefined, {sensitivity: 'base'});
-        const getKnownSize = image => {
-            const size = image.fileSize ?? image.estimatedSize;
-            return Number.isFinite(size) ? size : null;
-        };
-
-        const items = this.listItems;
-        items.sort((firstItem, secondItem) => {
-            const first = this.images.get(firstItem.dataset.imageId);
-            const second = this.images.get(secondItem.dataset.imageId);
-            if (!first || !second) return 0;
-
-            let comparison = 0;
-
-            switch (criterion) {
-                case 'filename':
-                    comparison = compareFileNames(first, second);
-                    break;
-
-                case 'type':
-                    comparison = String(first.imageType ?? '')
-                        .localeCompare(String(second.imageType ?? ''), undefined, {sensitivity: 'base'}) ||
-                        compareFileNames(first, second);
-                    break;
-
-                case 'size': {
-                    const firstSize = getKnownSize(first);
-                    const secondSize = getKnownSize(second);
-                    const firstSizeUnknown = firstSize === null;
-                    const secondSizeUnknown = secondSize === null;
-
-                    if (firstSizeUnknown || secondSizeUnknown) {
-                        if (firstSizeUnknown && secondSizeUnknown) return 0;
-                        return firstSizeUnknown ? 1 : -1;
-                    }
-
-                    comparison = firstSize - secondSize;
-                    break;
-                }
-
-                case 'dimensions':
-                    comparison = (first.width * first.height) - (second.width * second.height) ||
-                        compareFileNames(first, second);
-                    break;
-
-                case 'cronologic':
-                    comparison = first.discoveryOrder - second.discoveryOrder;
-                    break;
-            }
-
-            return comparison * directionFactor;
-        });
-
-        this.DOM.lstImages.append(...items);
-        this.sortState = {criterion, direction};
-        this.#updateSortButtons();
-        selectedItem?.scrollIntoView({block: 'nearest'});
-    }
-
-    async onKeyPress(e) {
-        const items = this.listItems;
-        if (!items.length) return;
-
-        e.preventDefault();
-        let index = this.listIndex;
-        switch (e.key) {
-            case 'ArrowUp':
-                index = index <= 0 ? items.length - 1 : index - 1;
-                break;
-            case 'ArrowDown':
-                index = index < 0 || index >= items.length - 1 ? 0 : index + 1;
-                break;
-            case 'Home':
-                index = 0;
-                break;
-            case 'End':
-                index = items.length - 1;
-                break;
-            case 'Delete':
-                this.deleteImage(this.selectedItem);
-                return;
-            case 'Enter':
-                await this.saveImage(this.selectedItem);
-                return;
-            default:
-                return;
-        }
-
-        const item = items[index];
-        this.selectedItem?.classList.remove('selected');
-        item.classList.add('selected');
-        this.#updateOpenDownloadFolderButton();
-
-        item.scrollIntoView({ block: 'nearest' });
-        await this.#showImage(item);
-    }
-
-    async #showImage(item, scanGeneration = null) {
+    async #showMediaPreview(imageId, scanGeneration = null) {
         if (scanGeneration !== null && !this.#isCurrentScan(scanGeneration)) return;
 
-        const imageId = item?.dataset.imageId;
         const image = imageId ? this.images.get(imageId) ?? null : null;
         if (!image) return;
 
-        this.#updateOpenDownloadFolderButton();
+        this.#updateSelectedMediaActions(imageId);
 
+        let previewSource = image.url;
         if (image.source === 'blobimages') {
             const cachedPreview = this.currentBlobPreview?.imageId === imageId
                 ? this.currentBlobPreview.dataUrl
                 : null;
 
             if (cachedPreview) {
-                this.DOM.imgPreview.src = cachedPreview;
+                previewSource = cachedPreview;
             } else {
                 this.currentBlobPreview = null;
-                this.DOM.imgPreview.removeAttribute('src');
+                this.popup.clearPreviewSource();
 
                 const response = await window.chrome.runtime.sendMessage({
                     action: 'resolveBlobImage',
@@ -334,220 +152,59 @@ export class ImageFinder {
                 });
 
                 if ((scanGeneration !== null && !this.#isCurrentScan(scanGeneration)) ||
-                    this.selectedItem?.dataset.imageId !== imageId) return;
+                    this.popup.selectedMediaId !== imageId) return;
                 if (response?.success !== true || typeof response.dataUrl !== 'string') {
                     throw new Error(response?.error || 'Cannot resolve Blob image for preview');
                 }
 
                 this.currentBlobPreview = {imageId, dataUrl: response.dataUrl};
-                this.DOM.imgPreview.src = response.dataUrl;
+                previewSource = response.dataUrl;
             }
         } else {
             this.currentBlobPreview = null;
-            this.DOM.imgPreview.src = item.dataset.url;
         }
 
-        this.DOM.h2_Preview.style.display = 'none';
-        this.DOM.spnStatusBar.style.display = 'none';
-        this.DOM.btnDelete.disabled = false;
-        const downloadOff = this.downloadButtonState && item.classList.contains('saved');
-        this.DOM.btnDownload.disabled = false || downloadOff;
+        const downloadOff = this.shouldDisableDownloadWhenCompleted &&
+            this.resultStore.getDownload(imageId)?.completed === true;
+        this.popup.showPreviewSource(previewSource, downloadOff);
         this.updateDownloadTitles();
 
         if (image.fileSize === null &&
             image.source !== 'dataimages' &&
             image.source !== 'blobimages') {
-            const fileInfo = await this.scanner.getFileInfo(item.dataset.url);
+            const fileInfo = await this.scanner.getFileInfo(image.url);
 
             if ((scanGeneration !== null && !this.#isCurrentScan(scanGeneration)) ||
-                this.selectedItem?.dataset.imageId !== imageId) return;
+                this.popup.selectedMediaId !== imageId) return;
 
             image.fileSize = fileInfo?.size ?? null;
         }
 
         if ((scanGeneration !== null && !this.#isCurrentScan(scanGeneration)) ||
-            this.selectedItem?.dataset.imageId !== imageId) return;
+            this.popup.selectedMediaId !== imageId) return;
 
-        const size = image.fileSize >= 1048576
-            ? `${parseInt(image.fileSize / 1024 / 1024)} MB`
-            : image.fileSize ? `${parseInt(image.fileSize / 1024)} KB` : '??? KB';
-        const exactSize = Number.isFinite(image.fileSize) && image.fileSize > 0
-            ? ` (${image.fileSize.toLocaleString()} bytes)`
-            : '';
-        const mediaType = MediaType.getType(image.imageType);
-        const icon = mediaType?.icon ?? '../assets/icons/icon512.png';
-        const mediaTypeName = mediaType?.type ?? image.mediaType ?? 'image';
-        const dims = `${image.width} × ${image.height} px`;
-        this.statusBar = `
-            <img id="imgTypeInfoIcon" src="${icon}" alt="${image.imageType}" style="height: 1.25rem;" title="${image.imageType.toUpperCase()} ${mediaTypeName}, Resolution: ${dims}, Size: ${size}${exactSize}">
-               ${dims} [${size}]`;
-        this.DOM.spnStatusBar.style.display = 'flex';
+        this.popup.showPreviewMetadata(image);
     }
 
-    async onListItemClick(e) {
-        const item = e.target.closest('li');
-        if (!item) return;
-
-        this.info = 'Image preview';
-        this.selectedItem?.classList.remove('selected');
-        item.classList.add('selected');
-        this.DOM.lstImages.focus();
-        this.#updateOpenDownloadFolderButton();
-
+    async #showMediaPreviewSafely(imageId) {
         try {
-            await this.#showImage(item);
+            await this.#showMediaPreview(imageId);
         } catch (error) {
-            console.warn('Cannot show image:', item.dataset.url, error);
+            console.warn('Cannot show image:', imageId, error);
         }
-    }
-
-    async onButtonClick(e) {
-        const btn = e.target.closest('button');
-        if (!btn) return;
-
-        const item = this.selectedItem;
-        const btnName = btn.id.slice(3).toLowerCase() || '';
-        switch (btnName) {
-            case 'settings':
-                await this.toggleSettingsPanel();
-                break;
-
-            case 'defaultsettings':
-                await this.resetSettingsToDefaults();
-                break;
-
-            case 'search':
-                if (this.DOM.btnSearch.value === 'true') {
-                    await this.stopScan({endReason: 'user-abort'});
-                } else {
-                    await this.scan();
-                }
-                break;
-
-            case 'scan':
-                // TODO re-scan the selected image for a better version
-                break;
-
-            case 'download':
-                await this.saveImage(item);
-                break;
-
-            case 'saveall':
-                await this.saveAllImages();
-                break;
-
-            case 'opendownloadfolder':
-                await this.openSelectedDownloadFolder();
-                break;
-
-            case 'delete':
-                this.deleteImage(item);
-                break;
-
-            case 'clear':
-                this.clear();
-                break;
-
-            case 'tabreload':
-                await this.reloadCurrentTab();
-                break;
-
-            case 'restart':
-                await this.#restartExtension();
-                break;
-
-            default:
-                break;
-        }
-    }
-
-    async #restartExtension() {
-        try {
-            await window.chrome.storage.local.set({
-                [REOPEN_POPUP_AFTER_RESTART_STORAGE_KEY]: Date.now()
-            });
-        } catch (error) {
-            console.warn('[Restart] Cannot schedule popup reopening after restart:', error);
-        }
-
-        window.chrome.runtime.reload();
-    }
-
-    async toggleSettingsPanel() {
-        if (this.#isSettingsPanelOpen()) {
-            await this.#closeSettingsPanel();
-            return;
-        }
-
-        await this.#openSettingsPanel();
-    }
-
-    async #openSettingsPanel() {
-        await this.stopScan({endReason: 'settings-open'});
-
-        this.DOM.btnSettings.value = 'true';
-        this.DOM.divSettingsPanel.classList.add('open');
-        this.DOM.divToolbarActions.hidden = true;
-        this.DOM.divProgressbar.hidden = true;
-        this.DOM.spnStatusBar.hidden = true;
-        this.DOM.btnRestart.hidden = false;
-        this.DOM.btnDefaultSettings.hidden = false;
-        this.DOM.btnDefaultSettings.disabled = false;
-
-        await this.settingsPanel?.refresh();
-    }
-
-    async #closeSettingsPanel() {
-        if (!this.#isSettingsPanelOpen()) return;
-
-        this.DOM.btnSettings.value = 'false';
-        this.DOM.divSettingsPanel.classList.remove('open');
-        this.DOM.divToolbarActions.hidden = false;
-        this.DOM.divProgressbar.hidden = false;
-        this.DOM.spnStatusBar.hidden = false;
-        this.#showAddonVersion();
-        this.DOM.btnRestart.hidden = true;
-        this.DOM.btnDefaultSettings.hidden = true;
-        this.DOM.btnDefaultSettings.disabled = true;
-
-        await this.settingsPanel?.waitForPendingSave();
-        this.updateDownloadTitles();
-        this.#updateLEDActivity();
-    }
-
-    #isSettingsPanelOpen() {
-        return this.DOM.btnSettings.value === 'true';
-    }
-
-    #onSettingsKeyDown(event) {
-        if (!this.#isSettingsPanelOpen() || event.key !== 'Enter' || event.isComposing) return;
-
-        event.preventDefault();
-        event.stopPropagation();
-        void this.#closeSettingsPanel();
     }
 
     async resetSettingsToDefaults() {
-        if (this.DOM.btnSettings.value !== 'true') return;
-
-        await this.settingsPanel?.waitForPendingSave();
         await this.settings.resetToDefaults();
-        this.#applyThemeMode();
-        await this.settingsPanel?.refresh();
-        this.updateDownloadTitles();
-    }
 
-    #applyThemeMode(mode = this.settings.getThemeMode()) {
-        const themeMode = mode === 'dark' ? 'dark' : 'light';
-
-        document.documentElement.dataset.mode = themeMode;
-        if (this.DOM.chkTheme) this.DOM.chkTheme.checked = themeMode === 'dark';
+        return {
+            themeMode: this.settings.getThemeMode(),
+            downloadFolder: this.getEffectiveDownloadFolder()
+        };
     }
 
     async #setThemeMode(mode) {
         const themeMode = mode === 'dark' ? 'dark' : 'light';
-
-        this.#applyThemeMode(themeMode);
 
         try {
             await this.settings.setThemeMode(themeMode);
@@ -562,29 +219,25 @@ export class ImageFinder {
         await window.chrome.tabs.reload();
     }
 
-    clear({invalidateScan = true} = {}) {
+    clearMedia({invalidateScan = true} = {}) {
         if (invalidateScan) {
             void this.scanner.cancelDeepScan();
             this.#scanGeneration += 1;
             this.#scanController?.abort();
             this.#scanController = null;
             this.#resetScanActivities();
-            this.#setSearchButtonActive(false);
+            this.#setScanRunning(false);
         }
 
         this.resultStore.clear();
         this.analyzerClient.clear();
         this.currentBlobPreview = null;
-        this.mediaList.clear();
-        this.DOM.imgPreview.removeAttribute('src');
-        this.DOM.h2_Preview.style.display = 'block';
-        this.info = 'Image preview';
-        this.#showAddonVersion();
-        this.DOM.btnDownload.disabled = true;
-        this.DOM.btnSaveAll.disabled = true;
-        this.DOM.btnDelete.disabled = true;
-        this.DOM.btnClear.disabled = true;
-        this.#updateOpenDownloadFolderButton();
+        this.popup.clearMediaList();
+        this.popup.showPreviewPlaceholder();
+        this.popup.setActionDisabled('download', true);
+        this.popup.setActionDisabled('saveAll', true);
+        this.popup.setActionDisabled('delete', true);
+        this.popup.setActionDisabled('clear', true);
         this.#updateLED();
         this.#updateLEDActivity();
     }
@@ -612,7 +265,7 @@ export class ImageFinder {
         this.#scanController = scanController;
         const scanGeneration = this.#scanGeneration + 1;
         this.#scanGeneration = scanGeneration;
-        this.#setSearchButtonActive(true);
+        this.#setScanRunning(true);
         let scanCompleted = false;
         let scannerActivityActive = false;
         let deepScanActivityActive = false;
@@ -627,16 +280,14 @@ export class ImageFinder {
         this.startActivity('scanner', scanGeneration);
         scannerActivityActive = true;
         try {
-            this.clear({invalidateScan: false});
-            this.sortState = {criterion: null, direction: 'asc'};
-            this.#updateSortButtons();
-            this.#showAddonVersion();
-            this.progressbar.backgroundColor = SCAN_PROGRESS_COLOR;
-            this.progressbar.reset();
+            this.clearMedia({invalidateScan: false});
+            this.popup.resetSortState();
+            this.popup.showAddonVersion();
+            this.popup.resetScanProgress();
 
             const scanResults = await this.scanner.scan({
-                onStart: count => this.#showProgressbar(count),
-                onProgress: () => this.progressbar.update(),
+                onStart: count => this.popup.showScanProgress(count),
+                onProgress: () => this.popup.updateScanProgress(),
                 signal: scanController.signal
             });
             if (!this.#isCurrentScan(scanGeneration)) return;
@@ -651,7 +302,7 @@ export class ImageFinder {
                     showFilteringProgress: true
                 });
             } finally {
-                this.#finishFilteringProgress();
+                this.popup.finishFilteringProgress();
             }
             if (!visibleImagesUpdated) return;
             scanCompleted = true;
@@ -668,7 +319,7 @@ export class ImageFinder {
                 deepScanInitialCandidates = this.candidates.size;
                 this.stopActivity('scanner', scanGeneration);
                 scannerActivityActive = false;
-                this.info = 'Image preview';
+                this.popup.setInfo('Image preview');
                 this.startActivity('deepScan', scanGeneration);
                 deepScanActivityActive = true;
 
@@ -697,7 +348,7 @@ export class ImageFinder {
                             return diagnostic
                                 ? {
                                     continue: true,
-                                    imageFinderNewURLs: 0,
+                                    mediaControllerNewURLs: 0,
                                     acceptedCandidates: 0,
                                     existingUpgrades: 0,
                                     visibleImageDelta: 0,
@@ -717,7 +368,7 @@ export class ImageFinder {
                             return diagnostic
                                 ? {
                                     continue: true,
-                                    imageFinderNewURLs: newCandidates.length,
+                                    mediaControllerNewURLs: newCandidates.length,
                                     acceptedCandidates: 0,
                                     existingUpgrades: 0,
                                     visibleImageDelta: 0,
@@ -753,7 +404,7 @@ export class ImageFinder {
 
                         return {
                             continue: visibleImagesUpdated,
-                            imageFinderNewURLs: newCandidates.length,
+                            mediaControllerNewURLs: newCandidates.length,
                             acceptedCandidates: candidates.length,
                             existingUpgrades: existingCandidateUpgradeCount,
                             visibleImageDelta: this.images.size - visibleImagesBefore,
@@ -770,8 +421,9 @@ export class ImageFinder {
                     }
                     deepScanFailed = true;
                 } finally {
-                    deepScanCompletionInfo = this.#deepScanStartedAt === null ? null
-                        : `Deep scan completed after ${this.deepScanElapsedTime}`;
+                    deepScanCompletionInfo = deepScanStarted
+                        ? `Deep scan completed after ${this.popup.deepScanElapsedTime}`
+                        : null;
                     if (this.#isCurrentScan(scanGeneration)) {
                         console.info('[DeepScan RESULT]', {
                             status: deepScanFailed ? 'failed' : 'completed',
@@ -796,47 +448,47 @@ export class ImageFinder {
         } catch (error) {
             if (this.#isCurrentScan(scanGeneration)) {
                 console.warn('Cannot scan this page:', this.scanner.currentTab?.url);
-                this.info = 'Page not allowed to scan!';
+                this.popup.setInfo('Page not allowed to scan!');
             }
         } finally {
             if (scannerActivityActive) this.stopActivity('scanner', scanGeneration);
             if (deepScanActivityActive) this.stopActivity('deepScan', scanGeneration);
             if (scanCompleted && this.#isCurrentScan(scanGeneration)) {
-                this.info = deepScanStarted
+                this.popup.setInfo(deepScanStarted
                     ? deepScanCompletionInfo ?? 'Image preview'
                     : this.images.size > 0
                         ? 'Image preview'
-                        : 'No images found!';
+                        : 'No images found!');
             }
             this.#finalizeDeepScanUI(scanGeneration);
             if (this.#isCurrentScan(scanGeneration)) {
-                this.#hideProgressbar();
+                this.popup.hideProgress();
                 if (this.#scanController === scanController) {
                     this.#scanController = null;
                 }
-                this.#setSearchButtonActive(false);
+                this.#setScanRunning(false);
             }
         }
     }
 
-    async saveImage(item) {
-        const image = this.selectedImage;
-        if (!item || !image) return;
+    async downloadMedia(imageId) {
+        const image = imageId ? this.images.get(imageId) ?? null : null;
+        if (!image) return;
 
         try {
             const downloadId = await this.downloadImage(image);
-            this.#trackDownload(item.dataset.imageId, downloadId);
+            this.#trackDownload(imageId, downloadId);
         } catch (error) {
             console.warn('Cannot download image:', image.url, error);
-            this.#updateOpenDownloadFolderButton();
+            this.#updateSelectedMediaActions(imageId);
         }
     }
 
-    async saveAllImages() {
+    async downloadAllMedia() {
         if (this.isSavingAll) return;
 
         this.isSavingAll = true;
-        this.DOM.btnSaveAll.disabled = true;
+        this.popup.setActionDisabled('saveAll', true);
 
         try {
             const zipFileList = (this.settings.get('downloads') ?? {}).zipFileList === true;
@@ -871,18 +523,13 @@ export class ImageFinder {
                     continue;
                 }
 
-                const item = this.listItems.find(
-                    li => li.dataset.imageId === result.imageId
-                );
                 this.#trackDownload(result.imageId, result.downloadId);
-                if (!item) continue;
             }
         } catch (error) {
             console.warn('Cannot download image list:', error);
         } finally {
             this.isSavingAll = false;
-            this.DOM.btnSaveAll.disabled = (this.images.size === 0);
-            this.#updateOpenDownloadFolderButton();
+            this.popup.setActionDisabled('saveAll', this.images.size === 0);
         }
     }
 
@@ -951,20 +598,13 @@ export class ImageFinder {
     updateDownloadTitles() {
         const folder = this.getEffectiveDownloadFolder();
 
-        this.DOM.btnDownload.title = folder
-            ? `Download image to: ${folder}`
-            : 'Download image';
-        this.DOM.btnSaveAll.title = folder
-            ? `Save all images to: ${folder}`
-            : 'Save all images';
-        this.#updateOpenDownloadFolderButton();
+        this.popup.updateDownloadTitles(folder);
     }
 
-    async openSelectedDownloadFolder() {
-        const imageId = this.selectedItem?.dataset.imageId;
+    async openMediaDownloadFolder(imageId) {
         const download = imageId ? this.resultStore.getDownload(imageId) : null;
         if (!imageId || !download?.completed || !Number.isInteger(download.downloadId)) {
-            this.#updateOpenDownloadFolderButton();
+            this.#updateSelectedMediaActions(imageId);
             return;
         }
 
@@ -982,26 +622,23 @@ export class ImageFinder {
         }
     }
 
-    deleteImage(item) {
-        if (!item) return;
+    deleteMedia(imageId) {
+        if (!imageId) return;
 
-        if (this.currentBlobPreview?.imageId === item.dataset.imageId) {
+        if (this.currentBlobPreview?.imageId === imageId) {
             this.currentBlobPreview = null;
         }
 
-        this.resultStore.deleteResult(item.dataset.imageId);
-        this.mediaList.remove(item.dataset.imageId);
+        this.resultStore.deleteResult(imageId);
+        this.popup.removeMediaListItem(imageId);
 
-        this.DOM.imgPreview.removeAttribute('src');
-        this.DOM.h2_Preview.style.display = 'block';
-        this.#showAddonVersion();
-        if (this.#activityCounts.deepScan > 0) this.#updateDeepScanTitle();
-        this.DOM.btnDownload.disabled = true;
-        this.DOM.btnDelete.disabled = true;
-        this.DOM.btnSaveAll.disabled = (this.images.size === 0);
-        this.DOM.btnClear.disabled = (this.images.size === 0);
-        this.#updateOpenDownloadFolderButton();
+        this.popup.showPreviewPlaceholder();
+        this.popup.setActionDisabled('download', true);
+        this.popup.setActionDisabled('delete', true);
+        this.popup.setActionDisabled('saveAll', this.images.size === 0);
+        this.popup.setActionDisabled('clear', this.images.size === 0);
         this.#updateLED();
+        this.#updateLEDActivity();
     }
 
     #isCurrentScan(scanGeneration) {
@@ -1015,32 +652,23 @@ export class ImageFinder {
         this.#updateLEDActivity();
     }
 
-    #setSearchButtonActive(active) {
-        const button = this.DOM.btnSearch;
-        const isActive = active === true;
-
-        button.value = isActive ? 'true' : 'false';
-        button.title = isActive ? 'Stop scan' : 'Find images';
-        button.setAttribute('aria-label', button.title);
+    #setScanRunning(active) {
+        this.popup.setScanRunning(active);
     }
 
     // ✏️ EDIT 2026-10-08: Reconciles only visible result changes through MediaList.
     #renderImages(resultChanges) {
-        const renderResult = this.mediaList.reconcile(this.images, resultChanges, {
+        const renderResult = this.popup.reconcileMediaList(this.images, resultChanges, {
             getMarkerState: (imageId, image, savedImageIds) =>
                 this.resultStore.getVisibleResultMarkerState(imageId, image, savedImageIds)
         });
 
         if (renderResult.selectionRemoved) {
             this.currentBlobPreview = null;
-            this.DOM.imgPreview.removeAttribute('src');
-            this.DOM.h2_Preview.style.display = 'block';
-            this.#showAddonVersion();
-            this.DOM.btnDownload.disabled = true;
-            this.DOM.btnDelete.disabled = true;
+            this.popup.showPreviewPlaceholder();
+            this.popup.setActionDisabled('download', true);
+            this.popup.setActionDisabled('delete', true);
         }
-
-        this.#updateOpenDownloadFolderButton();
 
         return renderResult;
     }
@@ -1058,21 +686,18 @@ export class ImageFinder {
         });
         if (!visibleResultChanges || !this.#isCurrentScan(scanGeneration)) return false;
 
-        const {selectedItem, previousSelectedImageId} = this.#renderImages(visibleResultChanges);
+        const {selectedMediaId, previousSelectedMediaId} = this.#renderImages(visibleResultChanges);
         if (!this.#isCurrentScan(scanGeneration)) return false;
 
-        if (initialSort && !this.sortState.criterion) {
-            this.sort('cronologic', 'asc');
-        } else if (this.sortState.criterion) {
-            this.sort(this.sortState.criterion, this.sortState.direction);
-        }
+        this.popup.applyMediaListSort(this.images, initialSort);
 
         this.#updateImageListState();
-        if (selectedItem && selectedItem.dataset.imageId !== previousSelectedImageId) {
+        this.#updateSelectedMediaActions(selectedMediaId);
+        if (selectedMediaId && selectedMediaId !== previousSelectedMediaId) {
             try {
-                await this.#showImage(selectedItem, scanGeneration);
+                await this.#showMediaPreview(selectedMediaId, scanGeneration);
             } catch (error) {
-                console.warn('Cannot show replacement image:', selectedItem.dataset.url, error);
+                console.warn('Cannot show replacement image:', selectedMediaId, error);
             }
         }
 
@@ -1080,64 +705,9 @@ export class ImageFinder {
     }
 
     #updateImageListState() {
-        this.DOM.btnSaveAll.disabled = this.isSavingAll || this.images.size === 0;
-        this.DOM.btnClear.disabled = this.images.size === 0;
-        this.#updateOpenDownloadFolderButton();
+        this.popup.setActionDisabled('saveAll', this.isSavingAll || this.images.size === 0);
+        this.popup.setActionDisabled('clear', this.images.size === 0);
         this.#updateLED();
-    }
-
-    #createFilteringProgress(candidates) {
-        const filters = this.settings.get('filters') ?? {};
-        const runsBlurScanner = filters.ignoreBlurredImages === true && candidates.length > 0;
-        const runsDuplicateFinder = filters.ignoreDuplicates === true && candidates.length >= 2;
-        const stages = [
-            ...(runsBlurScanner ? ['blurScanner'] : []),
-            ...(runsDuplicateFinder ? ['duplicateFinder'] : [])
-        ];
-
-        if (stages.length === 0) return null;
-
-        this.progressbar.backgroundColor = FILTER_PROGRESS_COLOR;
-        this.#showProgressbar(100);
-
-        const progressByStage = Object.fromEntries(stages.map((stage, index) => [
-            stage,
-            {
-                start: index * 100 / stages.length,
-                span: 100 / stages.length
-            }
-        ]));
-        const updateStage = (stage, completed, total) => {
-            if (!Number.isFinite(total) || total <= 0) return;
-
-            const progress = progressByStage[stage];
-            if (!progress) return;
-
-            this.progressbar.setValue(
-                progress.start + progress.span * Math.min(1, completed / total)
-            );
-        };
-
-        return {
-            onBlurProgress: (completed, total) => updateStage('blurScanner', completed, total),
-            onDuplicateFinderProgress: (completed, total) => updateStage('duplicateFinder', completed, total)
-        };
-    }
-
-    #finishFilteringProgress() {
-        this.progressbar.setValue(this.progressbar.max);
-        this.#hideProgressbar();
-        this.progressbar.backgroundColor = SCAN_PROGRESS_COLOR;
-    }
-
-    #showProgressbar(max) {
-        this.DOM.spnStatusBar.style.display = 'none';
-        this.progressbar.show(max);
-    }
-
-    #hideProgressbar() {
-        this.progressbar.hide();
-        this.#showAddonVersion();
     }
 
     async #setVisibleImages(scanGeneration, {
@@ -1155,7 +725,10 @@ export class ImageFinder {
             ? allCandidates.filter(([candidateId]) => analysisCandidateIds?.has(candidateId))
             : allCandidates;
         const filteringProgress = showFilteringProgress
-            ? this.#createFilteringProgress(candidates)
+            ? this.popup.createFilteringProgress({
+                runsBlurScanner: filters.ignoreBlurredImages === true && candidates.length > 0,
+                runsDuplicateFinder: filters.ignoreDuplicates === true && candidates.length >= 2
+            })
             : null;
         const analyzedCandidates = await this.analyzerClient.filterCandidates(candidates, {
             allCandidates,
@@ -1187,14 +760,14 @@ export class ImageFinder {
     }
 
     #updateLED() {
-        this.DOM.divLED.textContent = this.images.size;
+        this.popup.setImageCount(this.images.size);
     }
 
     #trackDownload(imageId, downloadId) {
         if (!imageId || !Number.isInteger(downloadId)) return;
 
         if (!this.resultStore.trackDownload(imageId, downloadId)) return;
-        this.#updateOpenDownloadFolderButton();
+        this.#updateSelectedMediaActions(imageId);
         void this.#refreshDownloadState(imageId, downloadId);
     }
 
@@ -1223,57 +796,28 @@ export class ImageFinder {
 
         const completed = download.completed;
 
-        const item = this.listItems.find(li => li.dataset.imageId === imageId);
         if (completed) {
-            item?.classList.add('saved');
-            const marker = item?.querySelector('.result-marker');
-            if (marker) marker.dataset.state = 'downloaded';
+            this.popup.markMediaListItemDownloaded(imageId);
         }
-        if (this.selectedItem === item) {
-            this.DOM.btnDownload.disabled = this.downloadButtonState && completed;
-        }
-        this.#updateOpenDownloadFolderButton();
+        this.#updateSelectedMediaActions(imageId);
     }
 
-    #updateOpenDownloadFolderButton() {
-        const button = this.DOM.btnOpenDownloadFolder;
-        if (!button) return;
+    #updateSelectedMediaActions(imageId) {
+        if (!imageId) return;
 
-        const imageId = this.selectedItem?.dataset.imageId;
         const download = imageId ? this.resultStore.getDownload(imageId) : null;
-        button.disabled = !(
-            Number.isInteger(download?.downloadId) && download.completed === true
-        );
-    }
-
-    #showAddonVersion() {
-        if (this.selectedItem) return;
-
-        this.DOM.spnStatusBar.textContent = `Image Finder – ${getAddonVersionName()}`;
-        this.DOM.spnStatusBar.style.display = 'flex';
+        this.popup.updateSelectedMediaActions(imageId, {
+            canOpenDownloadFolder: Number.isInteger(download?.downloadId) &&
+                download.completed === true,
+            disableDownload: this.shouldDisableDownloadWhenCompleted &&
+                download?.completed === true
+        });
     }
 
     #finalizeDeepScanUI(scanGeneration) {
         if (!this.#isCurrentScan(scanGeneration) || this.#activityCounts.deepScan > 0) return;
 
         this.#updateLEDActivity();
-    }
-
-    #updateSortButtons() {
-        this.DOM.divToolbarTopLeft.querySelectorAll('button[data-sort]').forEach(sortButton => {
-            const criterion = sortButton.dataset.sort;
-            const isActive = criterion === this.sortState.criterion;
-            const title = SORT_BUTTON_TITLES[criterion];
-
-            sortButton.classList.toggle('sorted', isActive);
-            if (!title) return;
-
-            const direction = isActive ? this.sortState.direction : 'asc';
-            sortButton.value = direction;
-            sortButton.title = isActive
-                ? `${title} ${SORT_DIRECTION_TITLES[direction]}`
-                : title;
-        });
     }
 
     #updateLEDActivity() {
@@ -1287,51 +831,6 @@ export class ImageFinder {
                         ? 'scanner'
                         : 'none';
 
-        this.DOM.divLED.classList.toggle('active', activity !== 'none');
-        this.DOM.divLED.classList.toggle('flash-led', activity === 'deepScan');
-        this.DOM.divLED.dataset.activity = activity;
-        if (activity === 'deepScan') {
-            if (this.#deepScanStartedAt === null) this.#startDeepScanTitleTimer();
-            this.#updateDeepScanTitle();
-        } else if (activity === 'none') {
-            this.#stopDeepScanTitleTimer();
-            this.DOM.divLED.title = `Images found: ${this.images.size}`;
-        } else {
-            this.#stopDeepScanTitleTimer();
-            this.DOM.divLED.removeAttribute('title');
-        }
-        if (activity === 'scanner') {
-            this.info = 'Scanning...';
-        } else if (activity === 'blurScanner' || activity === 'duplicateFinder') {
-            this.info = 'Applying filters...';
-        }
-    }
-
-    #startDeepScanTitleTimer() {
-        this.#stopDeepScanTitleTimer();
-        this.#deepScanStartedAt = Date.now();
-        this.#deepScanTitleInterval = setInterval(() => {
-            if (this.#activityCounts.deepScan === 0) {
-                this.#stopDeepScanTitleTimer();
-                return;
-            }
-            this.#updateDeepScanTitle();
-        }, 1000);
-    }
-
-    #stopDeepScanTitleTimer() {
-        if (this.#deepScanTitleInterval !== null) {
-            clearInterval(this.#deepScanTitleInterval);
-            this.#deepScanTitleInterval = null;
-        }
-        this.#deepScanStartedAt = null;
-    }
-
-    #updateDeepScanTitle() {
-        if (this.#deepScanStartedAt === null) return;
-
-        const title = `Deep scan running... ${this.deepScanElapsedTime}`;
-        this.DOM.divLED.title = title;
-        this.info = title;
+        this.popup.setActivity(activity, this.images.size);
     }
 }
