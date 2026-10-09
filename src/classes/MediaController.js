@@ -622,6 +622,7 @@ export class MediaController {
         }
     }
 
+    // ✏️ EDIT 2026-10-09: Keeps the persistent offscreen analyzer in sync with result deletion.
     deleteMedia(imageId) {
         if (!imageId) return;
 
@@ -630,6 +631,9 @@ export class MediaController {
         }
 
         this.resultStore.deleteResult(imageId);
+        void this.analyzerClient.removeCandidates([imageId]).catch((error) => {
+            console.warn('Cannot remove deleted media from analyzer:', error);
+        });
         this.popup.removeMediaListItem(imageId);
 
         this.popup.showPreviewPlaceholder();

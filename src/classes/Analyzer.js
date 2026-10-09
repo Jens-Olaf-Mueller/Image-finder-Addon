@@ -31,6 +31,27 @@ export default class Analyzer {
         this.#resetState();
     }
 
+    // ✴️ NEW 2026-10-09: Removes locally deleted candidates from the incremental analyzer state.
+    removeCandidates(candidateIds) {
+        if (!Array.isArray(candidateIds)) return 0;
+
+        let removedCount = 0;
+        new Set(candidateIds).forEach((candidateId) => {
+            const record = this.#recordsById.get(candidateId);
+            if (!record) return;
+
+            this.#removeFromDuplicateGroup(record);
+            this.#removeFromDuplicateIndex(record);
+            this.#analysisStore.delete(candidateId);
+            this.#recordsById.delete(candidateId);
+            this.#acceptedCandidateIds.delete(candidateId);
+            this.#changedCandidateIds.delete(candidateId);
+            removedCount += 1;
+        });
+
+        return removedCount;
+    }
+
     cancel() {
         this.#cancelled = true;
     }
@@ -474,6 +495,34 @@ export default class Analyzer {
             candidateIds.add(record.candidateId);
             this.#candidateIdsByHashSegment.set(segmentKey, candidateIds);
         });
+    }
+
+    // ✴️ NEW 2026-10-09: Removes one candidate from every duplicate lookup structure.
+    #removeFromDuplicateIndex(record) {
+        const candidateIdsForURL = this.#candidateIdsByURL.get(record.candidate.url);
+        candidateIdsForURL?.delete(record.candidateId);
+        if (candidateIdsForURL?.size === 0) {
+            this.#candidateIdsByURL.delete(record.candidate.url);
+            this.#blurAcceptedByURL.delete(record.candidate.url);
+        }
+
+        if (typeof record.hash !== 'bigint') return;
+
+        this.#getHashSegmentKeys(record.hash).forEach((segmentKey) => {
+            const candidateIds = this.#candidateIdsByHashSegment.get(segmentKey);
+            candidateIds?.delete(record.candidateId);
+            if (candidateIds?.size === 0) this.#candidateIdsByHashSegment.delete(segmentKey);
+        });
+    }
+
+    // ✴️ NEW 2026-10-09: Keeps duplicate groups valid after a candidate was deleted.
+    #removeFromDuplicateGroup(record) {
+        const duplicateGroup = record.duplicateGroup;
+        if (!duplicateGroup) return;
+
+        duplicateGroup.delete(record.candidateId);
+        if (duplicateGroup.size === 0) this.#duplicateGroups.delete(duplicateGroup);
+        record.duplicateGroup = null;
     }
 
     #getHashSegmentKeys(hash) {

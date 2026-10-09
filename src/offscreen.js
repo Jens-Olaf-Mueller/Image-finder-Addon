@@ -195,6 +195,19 @@ window.chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => 
         return undefined;
     }
 
+    if (message.action === 'removeAnalyzerCandidates') {
+        const {sessionId, analysisGeneration, candidateIds} = message;
+        if (!Array.isArray(candidateIds)) {
+            sendResponse({success: false, error: 'The analyzer removal request is invalid'});
+            return undefined;
+        }
+
+        const analyzer = getAnalyzer(sessionId, analysisGeneration);
+        const removedCount = analyzer.removeCandidates(candidateIds);
+        sendResponse({success: true, removedCount});
+        return undefined;
+    }
+
     if (message.action === 'analyzeCandidates') {
         const {
             sessionId,

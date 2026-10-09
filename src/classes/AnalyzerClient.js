@@ -13,6 +13,8 @@ export default class AnalyzerClient {
     #analysisInitialized = false;
     #filterKey = null;
     #pendingRequests = new Map();
+    #analysisQueue = Promise.resolve();
+    #removedCandidateIds = new Set();
     #onMessage;
     #disposed = false;
 
@@ -28,6 +30,7 @@ export default class AnalyzerClient {
         this.#analysisGeneration += 1;
         this.#analysisInitialized = false;
         this.#filterKey = null;
+        this.#removedCandidateIds.clear();
         if (!this.#remoteSessionInitialized) return;
 
         void this.#resetRemoteSession();
@@ -67,44 +70,70 @@ export default class AnalyzerClient {
         }
         if (!isCurrent()) return null;
 
-        await this.#ensureOffscreenDocument();
-        if (!isCurrent()) return null;
-
-        this.#remoteSessionInitialized = true;
-        const filterKey = this.#getFilterKey(filters);
-        const usesIncrementalAnalysis = incremental === true &&
-            this.#analysisInitialized && this.#filterKey === filterKey;
-        const analysisCandidates = usesIncrementalAnalysis ? candidates : allCandidates;
-        const requestId = crypto.randomUUID();
-        this.#pendingRequests.set(requestId, {
-            isCurrent,
-            onActivityChange,
-            onBlurProgress,
-            onDuplicateFinderProgress
-        });
-
-        try {
-            const response = await this.#requestOffscreen('analyzeCandidates', {
-                sessionId: this.#sessionId,
-                analysisGeneration: this.#analysisGeneration,
-                requestId,
-                candidates: analysisCandidates,
-                filters,
-                incremental: usesIncrementalAnalysis,
-                previousVisibleImageIds: Array.from(previousVisibleImageIds)
-            });
+        return this.#queueAnalysisRequest(async () => {
             if (!isCurrent()) return null;
 
-            this.#analysisInitialized = true;
-            this.#filterKey = filterKey;
-            // ✴️ NEW 2026-10-08: Keep phase metrics with the popup where real scans are inspected.
-            if (response.performanceSummary) {
-                console.info('[Analyzer Performance]', response.performanceSummary);
+            await this.#ensureOffscreenDocument();
+            if (!isCurrent()) return null;
+
+            this.#remoteSessionInitialized = true;
+            const filterKey = this.#getFilterKey(filters);
+            const usesIncrementalAnalysis = incremental === true &&
+                this.#analysisInitialized && this.#filterKey === filterKey;
+            const analysisCandidates = usesIncrementalAnalysis ? candidates : allCandidates;
+            const requestId = crypto.randomUUID();
+            this.#pendingRequests.set(requestId, {
+                isCurrent,
+                onActivityChange,
+                onBlurProgress,
+                onDuplicateFinderProgress
+            });
+
+            try {
+                const response = await this.#requestOffscreen('analyzeCandidates', {
+                    sessionId: this.#sessionId,
+                    analysisGeneration: this.#analysisGeneration,
+                    requestId,
+                    candidates: analysisCandidates,
+                    filters,
+                    incremental: usesIncrementalAnalysis,
+                    previousVisibleImageIds: Array.from(previousVisibleImageIds)
+                });
+                if (!isCurrent()) return null;
+
+                this.#analysisInitialized = true;
+                this.#filterKey = filterKey;
+                // ✴️ NEW 2026-10-08: Keep phase metrics with the popup where real scans are inspected.
+                if (response.performanceSummary) {
+                    console.info('[Analyzer Performance]', response.performanceSummary);
+                }
+                return this.#applyAnalysisResult(allCandidates, response);
+            } finally {
+                this.#pendingRequests.delete(requestId);
             }
-            return this.#applyAnalysisResult(allCandidates, response);
-        } finally {
-            this.#pendingRequests.delete(requestId);
-        }
+        });
+    }
+
+    // ✴️ NEW 2026-10-09: Synchronizes a local result deletion with the offscreen analyzer.
+    removeCandidates(candidateIds) {
+        const uniqueCandidateIds = Array.from(new Set((candidateIds ?? []).filter(Boolean)));
+        if (uniqueCandidateIds.length === 0) return Promise.resolve(0);
+
+        uniqueCandidateIds.forEach((candidateId) => this.#removedCandidateIds.add(candidateId));
+        if (!this.#remoteSessionInitialized) return Promise.resolve(0);
+
+        const analysisGeneration = this.#analysisGeneration;
+        return this.#queueAnalysisRequest(async () => {
+            if (analysisGeneration !== this.#analysisGeneration) return 0;
+
+            const response = await this.#requestOffscreen('removeAnalyzerCandidates', {
+                sessionId: this.#sessionId,
+                analysisGeneration,
+                candidateIds: uniqueCandidateIds
+            });
+
+            return Number(response.removedCount) || 0;
+        });
     }
 
     async #resetRemoteSession() {
@@ -123,6 +152,13 @@ export default class AnalyzerClient {
             ignoreBlurredImages: filters.ignoreBlurredImages === true,
             ignoreDuplicates: filters.ignoreDuplicates === true
         });
+    }
+
+    // ✴️ NEW 2026-10-09: Prevents deletion requests from mutating an active analyzer batch.
+    #queueAnalysisRequest(operation) {
+        const request = this.#analysisQueue.then(operation, operation);
+        this.#analysisQueue = request.catch(() => undefined);
+        return request;
     }
 
     async #ensureOffscreenDocument() {
@@ -205,16 +241,18 @@ export default class AnalyzerClient {
             }
         });
 
-        return response.results.map((result) => {
+        return response.results.flatMap((result) => {
+            if (this.#removedCandidateIds.has(result?.candidateId)) return [];
+
             const candidateEntry = candidateEntriesById.get(result?.candidateId);
             if (!candidateEntry) {
                 throw new Error('The offscreen analyzer returned an unknown candidate');
             }
 
-            return {
+            return [{
                 candidateEntry,
                 replacesExistingResult: result.replacesExistingResult === true
-            };
+            }];
         });
     }
 }
