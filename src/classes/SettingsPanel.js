@@ -53,6 +53,7 @@ export class SettingsPanel {
     // ✏️ EDIT 2026-10-06: Sorted and documented the SettingsPanel class API.
     #pendingSave = Promise.resolve();
 
+    // ✏️ EDIT 2026-10-10: The browser folder is global; profiles retain only their subfolder.
     /**
      * @param {Settings} settings - The initialized settings storage.
      * @param {HTMLFormElement} form - The settings form to manage.
@@ -142,37 +143,22 @@ export class SettingsPanel {
     }
 
     /**
-     * Stores a detected default download folder and initializes the user folder when needed.
+     * Stores a detected browser download folder without assigning it as a profile subfolder.
      *
      * @returns {Promise<void>}
      */
     async setDefaultDownloadFolder() {
-        const downloads = this.settings.get('downloads', null, {});
-        let defaultFolder = downloads.defaultFolder ?? '';
-        let nextDownloads = downloads;
+        let defaultFolder = '';
 
-        if (!defaultFolder) {
-            try {
-                defaultFolder = await this.settings.getMostLikelyDownloadFolder();
-            } catch (error) {
-                this.#log('Could not determine download folder:', 'warn', error);
-                return;
-            }
-
-            if (!defaultFolder) return;
-            nextDownloads = {...nextDownloads, defaultFolder};
+        try {
+            defaultFolder = await this.settings.getMostLikelyDownloadFolder();
+        } catch (error) {
+            this.#log('Could not determine download folder:', 'warn', error);
+            return;
         }
 
-        if (!nextDownloads.userFolder) {
-            nextDownloads = {...nextDownloads, userFolder: defaultFolder};
-        }
-
-        if (nextDownloads === downloads) return;
-
-        await this.settings.save({
-            ...this.settings.data,
-            downloads: nextDownloads
-        });
+        if (!defaultFolder) return;
+        await this.settings.setDefaultDownloadFolder(defaultFolder);
     }
 
     /**
@@ -401,13 +387,15 @@ export class SettingsPanel {
         });
     }
 
-    // Updates the user-defined download folder controls.
+    // ✏️ EDIT 2026-10-10: Displays the global browser folder separately from the profile subfolder.
     #updateDownloadFolderControls() {
         const selected = Array.from(this.downloadFolderRadios).find(rad => rad.checked);
         const disabled = selected?.value !== 'user';
+        const defaultFolder = String(this.settings.get('downloads', 'defaultFolder', '')).trim();
 
         this.DOM.inpUserFolder.disabled = disabled;
         this.DOM.btnDownloadFolder.disabled = disabled;
+        this.DOM.btnDownloadFolder.title = `Download folder: ${defaultFolder}`;
     }
 
     // Updates the exclude-list input state.

@@ -35,6 +35,7 @@ const PIXEL_BLUR_SETTINGS_VERSION = 2;
  * - {@link get}                              - Reads a settings value with a fallback.
  * - {@link getThemeMode}                     - Returns the validated theme mode.
  * - {@link setThemeMode}                     - Saves the requested theme mode.
+ * - {@link setDefaultDownloadFolder}         - Stores the shared browser download folder.
  * - {@link getMostLikelyDownloadFolder}      - Finds the most frequent recent folder.
  *
  * ---------------------------------------------------------------
@@ -53,6 +54,9 @@ const PIXEL_BLUR_SETTINGS_VERSION = 2;
  * - {@link #removeWebsiteProfileScope()}     - Removes the retired profile scope.
  * - {@link #migrateSettings()}               - Runs all settings migrations.
  * - {@link #normalizeWebsiteURL()}           - Normalizes supported website URLs.
+ * - {@link #normalizeFolderPath()}           - Normalizes a browser-reported folder path.
+ * - {@link #normalizeDownloadSubfolder()}    - Converts legacy folders to a download subfolder.
+ * - {@link #normalizeDownloadSettings()}     - Normalizes the complete download settings section.
  * - {@link #normalizeSettings()}             - Migrates and completes settings data.
  * - {@link #hasCompleteSettings()}           - Checks for all known settings keys.
  * - {@link #createProfile()}                 - Creates a normalized website profile.
@@ -112,6 +116,14 @@ export class Settings {
                 return this.data;
             }
 
+            // ✏️ EDIT 2026-10-10: Profiles inherit the shared browser folder instead of storing one.
+            const sharedDefaultFolder = this.#globalData.downloads?.defaultFolder ||
+                nextData.downloads.defaultFolder;
+
+            nextData.downloads = Settings.#normalizeDownloadSettings(
+                nextData.downloads,
+                sharedDefaultFolder
+            );
             nextData.common.saveSettingsForURL = true;
             this.data = Settings.#cloneData(nextData);
             this.#activeWebsiteProfile = true;
@@ -228,6 +240,52 @@ export class Settings {
         });
     }
 
+    // ✴️ NEW 2026-10-10: Keeps the browser download folder global while profiles retain subfolders.
+    /**
+     * Stores the browser's download folder globally and migrates the active profile to it.
+     *
+     * @param {string} folder - Absolute browser download folder reported by a completed download.
+     * @returns {Promise<Object>} The normalized active settings data.
+     */
+    async setDefaultDownloadFolder(folder) {
+        const defaultFolder = Settings.#normalizeFolderPath(folder);
+        if (!defaultFolder) return this.data;
+
+        const normalizeData = (data) => {
+            const nextData = Settings.#cloneData(data);
+
+            nextData.downloads = Settings.#normalizeDownloadSettings(
+                nextData.downloads,
+                defaultFolder
+            );
+            return nextData;
+        };
+
+        const nextGlobalData = normalizeData(this.#globalData);
+        const nextData = normalizeData(this.data);
+        const globalDataChanged = JSON.stringify(nextGlobalData) !== JSON.stringify(this.#globalData);
+        const activeDataChanged = JSON.stringify(nextData) !== JSON.stringify(this.data);
+
+        this.#globalData = nextGlobalData;
+        this.data = nextData;
+        if (globalDataChanged) {
+            await window.chrome.storage.local.set({
+                [this.storageKey]: Settings.#cloneData(this.#globalData)
+            });
+        }
+
+        if (!this.#activeWebsiteProfile || !activeDataChanged) return this.data;
+
+        const keepSettingsForDays = this.#getProfileDuration(
+            this.data.common.keepSettingsForDays
+        );
+        if (keepSettingsForDays !== null) {
+            await this.#saveWebsiteProfile(keepSettingsForDays);
+        }
+
+        return this.data;
+    }
+
     /**
      * Finds the most frequently used folder among recent completed downloads.
      *
@@ -273,14 +331,15 @@ export class Settings {
         ]);
         const savedGlobalData = stored[this.storageKey];
         const globalMigration = Settings.#migrateSettings(savedGlobalData ?? {});
-        const globalData = Settings.#mergeData(DEFAULT_SETTINGS, globalMigration.data);
+        const globalData = Settings.#normalizeSettings(globalMigration.data);
         const profileMigration = Settings.#migrateWebsiteProfiles(
             stored[WEBSITE_PROFILES_STORAGE_KEY],
             globalData
         );
         const changes = {};
 
-        if (globalMigration.migrated || !Settings.#hasCompleteSettings(savedGlobalData)) {
+        if (globalMigration.migrated || !Settings.#hasCompleteSettings(savedGlobalData) ||
+            JSON.stringify(globalData) !== JSON.stringify(savedGlobalData)) {
             changes[this.storageKey] = Settings.#cloneData(globalData);
         }
         if (profileMigration.migrated) {
@@ -296,7 +355,8 @@ export class Settings {
             : profileMigration.profiles[this.#websiteURL];
 
         if (this.#isWebsiteProfileValid(profile)) {
-            this.data = Settings.#cloneData(profile.settings);
+            // ✏️ EDIT 2026-10-10: Profiles inherit the global browser download folder.
+            this.data = Settings.#mergeData(globalData, profile.settings);
             this.#activeWebsiteProfile = true;
         } else if (profile) {
             const profiles = {...profileMigration.profiles};
@@ -322,7 +382,8 @@ export class Settings {
 
         profiles[this.#websiteURL] = Settings.#createProfile(
             this.data,
-            Date.now() + keepSettingsForDays * MILLISECONDS_PER_DAY
+            Date.now() + keepSettingsForDays * MILLISECONDS_PER_DAY,
+            this.#globalData.downloads?.defaultFolder
         );
 
         await window.chrome.storage.local.set({
@@ -501,11 +562,57 @@ export class Settings {
         }
     }
 
+    // ✴️ NEW 2026-10-10: Normalizes global download paths and profile-local subfolders.
+    // Normalizes a browser-reported absolute download folder path.
+    static #normalizeFolderPath(folder) {
+        return String(folder ?? '')
+            .trim()
+            .replaceAll('\\', '/')
+            .replace(/\/+$/, '');
+    }
+
+    // Converts a legacy full path or a user value to a canonical /subfolder value.
+    static #normalizeDownloadSubfolder(userFolder, defaultFolder = '') {
+        const normalizedUserFolder = Settings.#normalizeFolderPath(userFolder);
+        const normalizedDefaultFolder = Settings.#normalizeFolderPath(defaultFolder);
+
+        if (!normalizedUserFolder) return '';
+        if (!normalizedDefaultFolder) return normalizedUserFolder;
+        if (normalizedUserFolder === normalizedDefaultFolder) return '';
+        if (normalizedUserFolder.startsWith(`${normalizedDefaultFolder}/`)) {
+            const relativeFolder = normalizedUserFolder.slice(normalizedDefaultFolder.length)
+                .replace(/^\/+/, '');
+
+            return relativeFolder ? `/${relativeFolder}` : '';
+        }
+        if (/^[A-Za-z]:\//.test(normalizedUserFolder)) return '';
+
+        return `/${normalizedUserFolder.replace(/^\/+/, '')}`;
+    }
+
+    // Normalizes shared folder metadata and the profile-local download subfolder.
+    static #normalizeDownloadSettings(downloads = {}, defaultFolder = '') {
+        const normalizedDefaultFolder = Settings.#normalizeFolderPath(
+            defaultFolder || downloads.defaultFolder
+        );
+
+        return {
+            ...downloads,
+            defaultFolder: normalizedDefaultFolder,
+            userFolder: Settings.#normalizeDownloadSubfolder(
+                downloads.userFolder,
+                normalizedDefaultFolder
+            )
+        };
+    }
+
     // Migrates incomplete settings data and fills in defaults.
     static #normalizeSettings(data) {
         const {data: migratedData} = Settings.#migrateSettings(data);
+        const normalizedData = Settings.#mergeData(DEFAULT_SETTINGS, migratedData);
 
-        return Settings.#mergeData(DEFAULT_SETTINGS, migratedData);
+        normalizedData.downloads = Settings.#normalizeDownloadSettings(normalizedData.downloads);
+        return normalizedData;
     }
 
     // Checks that all known settings sections and keys are present.
@@ -527,10 +634,19 @@ export class Settings {
         );
     }
 
-    // Creates a normalized settings profile with website saving enabled.
-    static #createProfile(settings, expiresAt) {
+    // ✏️ EDIT 2026-10-10: Creates a profile without a browser-specific download folder.
+    static #createProfile(settings, expiresAt, defaultFolder = '') {
         const profileSettings = Settings.#normalizeSettings(settings);
+        const profileDefaultFolder = profileSettings.downloads.defaultFolder || defaultFolder;
+        const downloadSettings = Settings.#normalizeDownloadSettings(
+            profileSettings.downloads,
+            profileDefaultFolder
+        );
+        const profileDownloads = {...downloadSettings};
 
+        delete profileDownloads.defaultFolder;
+
+        profileSettings.downloads = profileDownloads;
         profileSettings.common.saveSettingsForURL = true;
         return {
             expiresAt,
@@ -550,7 +666,11 @@ export class Settings {
             globalData,
             Settings.#migrateSettings(profile.settings).data
         );
-        migratedProfiles[normalizedOrigin] = Settings.#createProfile(originSettings, expiresAt);
+        migratedProfiles[normalizedOrigin] = Settings.#createProfile(
+            originSettings,
+            expiresAt,
+            globalData.downloads.defaultFolder
+        );
 
         if (!Settings.#isObject(profile.urls)) return migratedProfiles;
 
@@ -564,7 +684,11 @@ export class Settings {
                 originSettings,
                 Settings.#migrateSettings(urlProfile.settings).data
             );
-            migratedProfiles[profileURL] = Settings.#createProfile(pathSettings, expiresAt);
+            migratedProfiles[profileURL] = Settings.#createProfile(
+                pathSettings,
+                expiresAt,
+                globalData.downloads.defaultFolder
+            );
         });
 
         return migratedProfiles;
@@ -607,7 +731,8 @@ export class Settings {
 
             const normalizedProfile = Settings.#createProfile(
                 profile.settings,
-                profile.expiresAt
+                profile.expiresAt,
+                globalData.downloads.defaultFolder
             );
             migratedProfiles[normalizedURL] = normalizedProfile;
 

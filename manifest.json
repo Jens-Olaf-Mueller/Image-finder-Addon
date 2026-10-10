@@ -1,8 +1,8 @@
 {
     "manifest_version": 3,
     "name": "Image Finder",
-    "version": "0.1.22",
-    "version_name": "Beta 0.1.22",
+    "version": "0.1.23",
+    "version_name": "Beta 0.1.23",
     "description": "Find images on the current website.",
     "icons": {
         "64": "assets/icons/icon512.png"

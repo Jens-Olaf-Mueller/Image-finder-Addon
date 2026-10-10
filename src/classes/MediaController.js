@@ -4,17 +4,9 @@ import AnalyzerClient from './AnalyzerClient.js';
 import ResultStore from './ResultStore.js';
 import Popup from './Popup.js';
 import { ScanContext } from './ScanContext.js';
+import ScanController from './ScanController.js';
 
 export class MediaController {
-    #activityCounts = {
-        scanner: 0,
-        duplicateFinder: 0,
-        blurScanner: 0,
-        deepScan: 0
-    };
-    #scanGeneration = 0;
-    #scanController = null;
-
     get candidates() {
         return this.resultStore.candidates;
     }
@@ -34,6 +26,13 @@ export class MediaController {
         this.scanner = new ImageScanner(this.settings);
         this.resultStore = new ResultStore();
         this.analyzerClient = new AnalyzerClient();
+        // ✴️ NEW 2026-10-10: Keeps scan lifecycle and activity state outside the application controller.
+        this.scanController = new ScanController(this.scanner, {
+            onActivityChange: () => this.#updateLEDActivity(),
+            onScanRunningChange: (state) => this.popup.setScanRunning(state),
+            // ✏️ EDIT 2026-10-10: Explicit scan aborts must hide normal scan progress immediately.
+            onScanStopped: () => this.popup.hideProgress()
+        });
         this.isSavingAll = false;
         this.popup.setEventHandlers({
             getVisibleMedia: () => this.images,
@@ -88,7 +87,7 @@ export class MediaController {
     }
 
     async stopDeepScan({endReason = 'cancelled'} = {}) {
-        if (this.#activityCounts.deepScan === 0 && !this.isDeepScanRunning) return false;
+        if (!this.scanController.isActivityRunning('deepScan') && !this.isDeepScanRunning) return false;
 
         return this.stopScan({endReason});
     }
@@ -96,37 +95,30 @@ export class MediaController {
     async stopScan({endReason = 'user-abort'} = {}) {
         if (!this.isScanRunning) return false;
 
-        this.#scanGeneration += 1;
-        this.#scanController?.abort();
-        this.#scanController = null;
         this.analyzerClient.clear();
-        this.#resetScanActivities();
-        this.#setScanRunning(false);
         this.popup.setInfo('Image preview');
-        await this.cancelDeepScan({endReason});
-        return true;
+        return this.scanController.stop({endReason});
     }
 
     get isDeepScanRunning() {
-        return this.scanner.isDeepScanRunning;
+        return this.scanController.isDeepScanRunning;
     }
 
     get isScanRunning() {
-        return this.#scanController !== null || this.isDeepScanRunning ||
-            Object.values(this.#activityCounts).some((count) => count > 0);
+        return this.scanController.isScanRunning;
     }
 
     async cancelDeepScan({endReason = 'cancelled'} = {}) {
-        return this.scanner.cancelDeepScan({endReason});
+        return this.scanController.cancelDeepScan({endReason});
     }
 
     setDeepScanClientId(clientId) {
-        this.scanner.setDeepScanClientId(clientId);
+        this.scanController.setDeepScanClientId(clientId);
     }
 
     // ✏️ EDIT 2026-10-09: Delegates selected image preview preparation to Popup and MediaPreview.
     async #showMediaPreview(imageId, scanGeneration = null) {
-        if (scanGeneration !== null && !this.#isCurrentScan(scanGeneration)) return;
+        if (scanGeneration !== null && !this.scanController.isCurrent(scanGeneration)) return;
 
         const image = imageId ? this.images.get(imageId) ?? null : null;
         if (!image) return;
@@ -134,7 +126,7 @@ export class MediaController {
         this.#updateSelectedMediaActions(imageId);
 
         const previewVisible = await this.popup.showImagePreview(image, {
-            isCurrent: () => (scanGeneration === null || this.#isCurrentScan(scanGeneration)) &&
+            isCurrent: () => (scanGeneration === null || this.scanController.isCurrent(scanGeneration)) &&
                 this.popup.selectedMediaId === imageId,
             getFileInfo: (url) => this.scanner.getFileInfo(url)
         });
@@ -182,12 +174,7 @@ export class MediaController {
 
     clearMedia({invalidateScan = true} = {}) {
         if (invalidateScan) {
-            void this.scanner.cancelDeepScan();
-            this.#scanGeneration += 1;
-            this.#scanController?.abort();
-            this.#scanController = null;
-            this.#resetScanActivities();
-            this.#setScanRunning(false);
+            this.scanController.invalidate();
         }
 
         this.resultStore.clear();
@@ -203,232 +190,86 @@ export class MediaController {
     }
 
     startActivity(type, scanGeneration = null) {
-        if (!Object.prototype.hasOwnProperty.call(this.#activityCounts, type)) return;
-        if (scanGeneration !== null && !this.#isCurrentScan(scanGeneration)) return;
-
-        this.#activityCounts[type] += 1;
-        this.#updateLEDActivity();
+        this.scanController.startActivity(type, scanGeneration);
     }
 
     stopActivity(type, scanGeneration = null) {
-        if (!Object.prototype.hasOwnProperty.call(this.#activityCounts, type)) return;
-        if (scanGeneration !== null && !this.#isCurrentScan(scanGeneration)) return;
-
-        this.#activityCounts[type] = Math.max(0, this.#activityCounts[type] - 1);
-        this.#updateLEDActivity();
+        this.scanController.stopActivity(type, scanGeneration);
     }
 
+    // ✏️ EDIT 2026-10-10: Delegates scan lifecycle, cancellation, and activity state to ScanController.
     async scan() {
-        void this.scanner.cancelDeepScan();
-        this.#scanController?.abort();
-        const scanController = new AbortController();
-        this.#scanController = scanController;
-        const scanGeneration = this.#scanGeneration + 1;
-        this.#scanGeneration = scanGeneration;
-        this.#setScanRunning(true);
-        let scanCompleted = false;
-        let scannerActivityActive = false;
-        let deepScanActivityActive = false;
-        let deepScanStarted = false;
-        let deepScanCompletionInfo = null;
         let deepScanInitialVisibleImages = 0;
         let deepScanInitialCandidates = 0;
-        let deepScanCandidateCount = 0;
-        let deepScanFailed = false;
 
-        this.#resetScanActivities();
-        this.startActivity('scanner', scanGeneration);
-        scannerActivityActive = true;
-        try {
-            this.clearMedia({invalidateScan: false});
-            this.popup.resetSortState();
-            this.popup.showAddonVersion();
-            this.popup.resetScanProgress();
-
-            const scanResults = await this.scanner.scan({
-                onStart: count => this.popup.showScanProgress(count),
-                onProgress: () => this.popup.updateScanProgress(),
-                signal: scanController.signal
-            });
-            if (!this.#isCurrentScan(scanGeneration)) return;
-
-            this.scanContext.tab = this.scanner.currentTab;
-
-            this.resultStore.addCandidates(scanResults);
-            let visibleImagesUpdated = false;
-            try {
-                visibleImagesUpdated = await this.#refreshVisibleImages(scanGeneration, {
-                    initialSort: true,
-                    showFilteringProgress: true
-                });
-            } finally {
-                this.popup.finishFilteringProgress();
-            }
-            if (!visibleImagesUpdated) return;
-            scanCompleted = true;
-
-            const allowBackgroundScan = this.settings.get('common', 'allowBackgroundScan', false);
-            const canDeepScan = allowBackgroundScan === true &&
-                this.scanContext.isScannable && Number.isInteger(this.scanContext.tabId);
-
-            if (canDeepScan) {
-                const deepScanTabId = this.scanContext.tabId;
-
-                deepScanStarted = true;
-                deepScanInitialVisibleImages = this.images.size;
-                deepScanInitialCandidates = this.candidates.size;
-                this.stopActivity('scanner', scanGeneration);
-                scannerActivityActive = false;
-                this.popup.setInfo('Image preview');
-                this.startActivity('deepScan', scanGeneration);
-                deepScanActivityActive = true;
+        return this.scanController.scan({
+            scanContext: this.scanContext,
+            onPrepare: () => {
+                this.clearMedia({invalidateScan: false});
+                this.popup.resetSortState();
+                this.popup.showAddonVersion();
+                this.popup.resetScanProgress();
+            },
+            onNormalScanStart: (count) => this.popup.showScanProgress(count),
+            onNormalScanProgress: () => this.popup.updateScanProgress(),
+            onNormalScanResults: async (scanResults, scan) => {
+                this.resultStore.addCandidates(scanResults);
+                let visibleImagesUpdated = false;
 
                 try {
-                    const deepScanCandidates = await this.scanner.scanDeepImages(this.scanContext, async (
-                        rawCandidates,
-                        signal,
-                        diagnostic = null
-                    ) => {
-                        if (signal?.aborted || !this.#isCurrentScan(scanGeneration)) {
-                            return false;
-                        }
-
-                        const visibleImagesBefore = this.images.size;
-                        const visibleURLsBefore = new Set(
-                            Array.from(this.images.values(), (image) => image.url)
-                        );
-                        const {
-                            newCandidates,
-                            existingCandidatesUpdated,
-                            existingCandidateUpgradeCount,
-                            updatedCandidateIds
-                        } =
-                            this.resultStore.getNewURLCandidates(rawCandidates);
-                        if (newCandidates.length === 0 && !existingCandidatesUpdated) {
-                            return diagnostic
-                                ? {
-                                    continue: true,
-                                    mediaControllerNewURLs: 0,
-                                    acceptedCandidates: 0,
-                                    existingUpgrades: 0,
-                                    visibleImageDelta: 0,
-                                    visibleNewURLs: 0,
-                                    visibleWinnersFromBatch: 0,
-                                    notVisibleAfterFiltering: 0,
-                                    visibleImages: this.images.size
-                                }
-                                : true;
-                        }
-
-                        const candidates = newCandidates.length > 0
-                            ? await this.scanner.createCandidates(newCandidates, deepScanTabId, {signal})
-                            : [];
-                        if (signal?.aborted || !this.#isCurrentScan(scanGeneration)) return false;
-                        if (candidates.length === 0 && !existingCandidatesUpdated) {
-                            return diagnostic
-                                ? {
-                                    continue: true,
-                                    mediaControllerNewURLs: newCandidates.length,
-                                    acceptedCandidates: 0,
-                                    existingUpgrades: 0,
-                                    visibleImageDelta: 0,
-                                    visibleNewURLs: 0,
-                                    visibleWinnersFromBatch: 0,
-                                    notVisibleAfterFiltering: 0,
-                                    visibleImages: this.images.size
-                                }
-                                : true;
-                        }
-
-                        this.resultStore.addCandidates(candidates, {markerOrigin: 'deepScan'});
-                        const analysisCandidateIds = new Set([
-                            ...updatedCandidateIds,
-                            ...candidates.map((candidate) => candidate.id)
-                        ]);
-                        const visibleImagesUpdated = await this.#refreshVisibleImages(
-                            scanGeneration,
-                            {
-                                incrementalAnalysis: true,
-                                analysisCandidateIds
-                            }
-                        );
-
-                        if (!diagnostic) return visibleImagesUpdated;
-
-                        const visibleWinnersFromBatch = candidates.filter((candidate) =>
-                            this.images.has(candidate.id)
-                        ).length;
-                        const visibleNewURLs = Array.from(this.images.values()).filter((candidate) =>
-                            !visibleURLsBefore.has(candidate.url)
-                        ).length;
-
-                        return {
-                            continue: visibleImagesUpdated,
-                            mediaControllerNewURLs: newCandidates.length,
-                            acceptedCandidates: candidates.length,
-                            existingUpgrades: existingCandidateUpgradeCount,
-                            visibleImageDelta: this.images.size - visibleImagesBefore,
-                            visibleNewURLs,
-                            visibleWinnersFromBatch,
-                            notVisibleAfterFiltering: candidates.length - visibleWinnersFromBatch,
-                            visibleImages: this.images.size
-                        };
+                    visibleImagesUpdated = await this.#refreshVisibleImages(scan.generation, {
+                        initialSort: true,
+                        showFilteringProgress: true
                     });
-                    deepScanCandidateCount = deepScanCandidates.length;
-                } catch (error) {
-                    if (this.#isCurrentScan(scanGeneration)) {
-                        console.warn('Cannot deep scan this page:', error);
-                    }
-                    deepScanFailed = true;
                 } finally {
-                    deepScanCompletionInfo = deepScanStarted
-                        ? `Deep scan completed after ${this.popup.deepScanElapsedTime}`
-                        : null;
-                    if (this.#isCurrentScan(scanGeneration)) {
-                        console.info('[DeepScan RESULT]', {
-                            status: deepScanFailed ? 'failed' : 'completed',
-                            deepScanCandidates: deepScanCandidateCount,
-                            visibleImages: this.images.size,
-                            newVisibleImages: Math.max(
-                                0,
-                                this.images.size - deepScanInitialVisibleImages
-                            ),
-                            candidates: this.candidates.size,
-                            newCandidates: Math.max(
-                                0,
-                                this.candidates.size - deepScanInitialCandidates
-                            )
-                        });
-                    }
-                    this.stopActivity('deepScan', scanGeneration);
-                    deepScanActivityActive = false;
-                    this.#finalizeDeepScanUI(scanGeneration);
+                    this.popup.finishFilteringProgress();
                 }
-            }
-        } catch (error) {
-            if (this.#isCurrentScan(scanGeneration)) {
-                console.warn('Cannot scan this page:', this.scanner.currentTab?.url);
-                this.popup.setInfo('Page not allowed to scan!');
-            }
-        } finally {
-            if (scannerActivityActive) this.stopActivity('scanner', scanGeneration);
-            if (deepScanActivityActive) this.stopActivity('deepScan', scanGeneration);
-            if (scanCompleted && this.#isCurrentScan(scanGeneration)) {
+
+                return visibleImagesUpdated;
+            },
+            shouldStartDeepScan: () => {
+                const allowBackgroundScan = this.settings.get('common', 'allowBackgroundScan', false);
+
+                return allowBackgroundScan === true &&
+                    this.scanContext.isScannable && Number.isInteger(this.scanContext.tabId);
+            },
+            onDeepScanStart: () => {
+                deepScanInitialVisibleImages = this.images.size;
+                deepScanInitialCandidates = this.candidates.size;
+                this.popup.setInfo('Image preview');
+            },
+            onDeepScanCandidates: (rawCandidates, signal, diagnostic, scan) =>
+                this.#processDeepScanCandidates(rawCandidates, signal, diagnostic, scan.generation),
+            onDeepScanFinished: ({failed, candidateCount}) => {
+                const completionInfo = `Deep scan completed after ${this.popup.deepScanElapsedTime}`;
+
+                console.info('[DeepScan RESULT]', {
+                    status: failed ? 'failed' : 'completed',
+                    deepScanCandidates: candidateCount,
+                    visibleImages: this.images.size,
+                    newVisibleImages: Math.max(0, this.images.size - deepScanInitialVisibleImages),
+                    candidates: this.candidates.size,
+                    newCandidates: Math.max(0, this.candidates.size - deepScanInitialCandidates)
+                });
+
+                return completionInfo;
+            },
+            onScanCompleted: ({deepScanStarted, deepScanCompletion}) => {
                 this.popup.setInfo(deepScanStarted
-                    ? deepScanCompletionInfo ?? 'Image preview'
+                    ? deepScanCompletion ?? 'Image preview'
                     : this.images.size > 0
                         ? 'Image preview'
                         : 'No images found!');
-            }
-            this.#finalizeDeepScanUI(scanGeneration);
-            if (this.#isCurrentScan(scanGeneration)) {
+            },
+            onScanError: () => {
+                console.warn('Cannot scan this page:', this.scanner.currentTab?.url);
+                this.popup.setInfo('Page not allowed to scan!');
+            },
+            onFinalize: (scan) => {
+                this.#finalizeDeepScanUI(scan.generation);
                 this.popup.hideProgress();
-                if (this.#scanController === scanController) {
-                    this.#scanController = null;
-                }
-                this.#setScanRunning(false);
             }
-        }
+        });
     }
 
     async downloadMedia(imageId) {
@@ -509,30 +350,20 @@ export class MediaController {
         return response.downloadId;
     }
 
+    // ✏️ EDIT 2026-10-10: Uses the canonical profile subfolder for browser download filenames.
     getDownloadTarget() {
         const downloads = this.settings.get('downloads') ?? {};
         const userFolder = String(downloads.userFolder ?? '')
             .trim()
             .replaceAll('\\', '/')
-            .replace(/\/+$/, '');
+            .replace(/^\/+|\/+$/g, '');
         const defaultFolder = String(downloads.defaultFolder ?? '')
             .trim()
             .replaceAll('\\', '/')
             .replace(/\/+$/, '');
-
-        let relativeFolder = userFolder;
-
-        if (defaultFolder && (userFolder === defaultFolder || userFolder.startsWith(`${defaultFolder}/`))) {
-            relativeFolder = userFolder.slice(defaultFolder.length).replace(/^\/+/, '');
-        } else if (userFolder.startsWith('/') || /^[A-Za-z]:\//.test(userFolder)) {
-            relativeFolder = '';
-        }
-
-        const isAbsoluteUserFolder = userFolder.startsWith('/') || /^[A-Za-z]:\//.test(userFolder);
-        const effectiveFolder = downloads.downloadFolder === 'user' && userFolder
-            ? isAbsoluteUserFolder || !defaultFolder
-                ? userFolder
-                : `${defaultFolder}/${userFolder}`
+        const relativeFolder = /^[A-Za-z]:\//.test(userFolder) ? '' : userFolder;
+        const effectiveFolder = downloads.downloadFolder === 'user'
+            ? [defaultFolder, relativeFolder].filter(Boolean).join('/')
             : '';
 
         return {
@@ -601,19 +432,86 @@ export class MediaController {
         this.#updateLEDActivity();
     }
 
-    #isCurrentScan(scanGeneration) {
-        return scanGeneration === this.#scanGeneration;
-    }
+    // ✴️ NEW 2026-10-10: Processes one DeepScan batch while ScanController owns its lifecycle.
+    async #processDeepScanCandidates(rawCandidates, signal, diagnostic, scanGeneration) {
+        if (signal?.aborted || !this.scanController.isCurrent(scanGeneration)) return false;
 
-    #resetScanActivities() {
-        Object.keys(this.#activityCounts).forEach((type) => {
-            this.#activityCounts[type] = 0;
+        const visibleImagesBefore = this.images.size;
+        const visibleURLsBefore = new Set(
+            Array.from(this.images.values(), (item) => item.url)
+        );
+        const {
+            newCandidates,
+            existingCandidatesUpdated,
+            existingCandidateUpgradeCount,
+            updatedCandidateIds
+        } = this.resultStore.getNewURLCandidates(rawCandidates);
+        if (newCandidates.length === 0 && !existingCandidatesUpdated) {
+            return diagnostic
+                ? {
+                    continue: true,
+                    mediaControllerNewURLs: 0,
+                    acceptedCandidates: 0,
+                    existingUpgrades: 0,
+                    visibleImageDelta: 0,
+                    visibleNewURLs: 0,
+                    visibleWinnersFromBatch: 0,
+                    notVisibleAfterFiltering: 0,
+                    visibleImages: this.images.size
+                }
+                : true;
+        }
+
+        const candidates = newCandidates.length > 0
+            ? await this.scanner.createCandidates(newCandidates, this.scanContext.tabId, {signal})
+            : [];
+        if (signal?.aborted || !this.scanController.isCurrent(scanGeneration)) return false;
+        if (candidates.length === 0 && !existingCandidatesUpdated) {
+            return diagnostic
+                ? {
+                    continue: true,
+                    mediaControllerNewURLs: newCandidates.length,
+                    acceptedCandidates: 0,
+                    existingUpgrades: 0,
+                    visibleImageDelta: 0,
+                    visibleNewURLs: 0,
+                    visibleWinnersFromBatch: 0,
+                    notVisibleAfterFiltering: 0,
+                    visibleImages: this.images.size
+                }
+                : true;
+        }
+
+        this.resultStore.addCandidates(candidates, {markerOrigin: 'deepScan'});
+        const analysisCandidateIds = new Set([
+            ...updatedCandidateIds,
+            ...candidates.map((item) => item.id)
+        ]);
+        const visibleImagesUpdated = await this.#refreshVisibleImages(scanGeneration, {
+            incrementalAnalysis: true,
+            analysisCandidateIds
         });
-        this.#updateLEDActivity();
-    }
 
-    #setScanRunning(active) {
-        this.popup.setScanRunning(active);
+        if (!diagnostic) return visibleImagesUpdated;
+
+        const visibleWinnersFromBatch = candidates.filter((item) =>
+            this.images.has(item.id)
+        ).length;
+        const visibleNewURLs = Array.from(this.images.values()).filter((item) =>
+            !visibleURLsBefore.has(item.url)
+        ).length;
+
+        return {
+            continue: visibleImagesUpdated,
+            mediaControllerNewURLs: newCandidates.length,
+            acceptedCandidates: candidates.length,
+            existingUpgrades: existingCandidateUpgradeCount,
+            visibleImageDelta: this.images.size - visibleImagesBefore,
+            visibleNewURLs,
+            visibleWinnersFromBatch,
+            notVisibleAfterFiltering: candidates.length - visibleWinnersFromBatch,
+            visibleImages: this.images.size
+        };
     }
 
     // ✏️ EDIT 2026-10-08: Reconciles only visible result changes through MediaList.
@@ -643,10 +541,10 @@ export class MediaController {
             incrementalAnalysis,
             analysisCandidateIds
         });
-        if (!visibleResultChanges || !this.#isCurrentScan(scanGeneration)) return false;
+        if (!visibleResultChanges || !this.scanController.isCurrent(scanGeneration)) return false;
 
         const {selectedMediaId, previousSelectedMediaId} = this.#renderImages(visibleResultChanges);
-        if (!this.#isCurrentScan(scanGeneration)) return false;
+        if (!this.scanController.isCurrent(scanGeneration)) return false;
 
         this.popup.applyMediaListSort(this.images, initialSort);
 
@@ -660,7 +558,7 @@ export class MediaController {
             }
         }
 
-        return this.#isCurrentScan(scanGeneration);
+        return this.scanController.isCurrent(scanGeneration);
     }
 
     #updateImageListState() {
@@ -694,7 +592,7 @@ export class MediaController {
             filters,
             incremental: usesIncrementalAnalysis,
             previousVisibleImageIds,
-            isCurrent: () => this.#isCurrentScan(scanGeneration),
+            isCurrent: () => this.scanController.isCurrent(scanGeneration),
             onActivityChange: (activity, isActive) => {
                 if (isActive) {
                     this.startActivity(activity, scanGeneration);
@@ -705,7 +603,7 @@ export class MediaController {
             onBlurProgress: filteringProgress?.onBlurProgress,
             onDuplicateFinderProgress: filteringProgress?.onDuplicateFinderProgress
         });
-        if (!analyzedCandidates || !this.#isCurrentScan(scanGeneration)) return false;
+        if (!analyzedCandidates || !this.scanController.isCurrent(scanGeneration)) return false;
 
         const visibleCandidates = analyzedCandidates.map(({
             candidateEntry,
@@ -774,22 +672,13 @@ export class MediaController {
     }
 
     #finalizeDeepScanUI(scanGeneration) {
-        if (!this.#isCurrentScan(scanGeneration) || this.#activityCounts.deepScan > 0) return;
+        if (!this.scanController.isCurrent(scanGeneration) ||
+            this.scanController.isActivityRunning('deepScan')) return;
 
         this.#updateLEDActivity();
     }
 
     #updateLEDActivity() {
-        const activity = this.#activityCounts.deepScan > 0
-            ? 'deepScan'
-            : this.#activityCounts.blurScanner > 0
-                ? 'blurScanner'
-            : this.#activityCounts.duplicateFinder > 0
-                ? 'duplicateFinder'
-                    : this.#activityCounts.scanner > 0
-                        ? 'scanner'
-                        : 'none';
-
-        this.popup.setActivity(activity, this.images.size);
+        this.popup.setActivity(this.scanController.activity, this.images.size);
     }
 }
