@@ -1,7 +1,6 @@
-import { MediaType } from './MediaType.js';
 import MediaList from './MediaList.js';
+import MediaPreview from './MediaPreview.js';
 import Progressbar from './Progressbar.js';
-import { getAddonVersionName } from '../addon-info.js';
 
 const SORT_BUTTON_TITLES = Object.freeze({
     filename: 'Sort by filename',
@@ -27,6 +26,7 @@ export default class Popup {
     #deepScanTitleInterval = null;
     #eventHandlers = {};
     #mediaList;
+    #mediaPreview;
     #progressbar;
     #settingsPanel = null;
     #sortState = {
@@ -91,7 +91,7 @@ export default class Popup {
      * Gives the current preview title text.
      * @type {String}
      */
-    get info() { return this.DOM.h2_Preview.textContent; }
+    get info() { return this.#mediaPreview.info; }
 
     DOM = {};
 
@@ -101,6 +101,7 @@ export default class Popup {
         });
 
         this.#mediaList = new MediaList(this.DOM.lstImages);
+        this.#mediaPreview = new MediaPreview(this.DOM.divPreview, this.DOM.spnStatusBar);
         this.#progressbar = new Progressbar(this.DOM.divProgressbar);
         this.#setEventListeners();
         window.addEventListener('pagehide', () => this.#stopDeepScanTitleTimer(), {once: true});
@@ -188,15 +189,7 @@ export default class Popup {
      * @param {String} text Preview title.
      */
     setInfo(text) {
-        if (typeof text === 'string') this.DOM.h2_Preview.textContent = text;
-    }
-
-    /**
-     * Writes HTML to the popup status bar.
-     * @param {String} html Status markup.
-     */
-    setStatus(html) {
-        if (typeof html === 'string') this.DOM.spnStatusBar.innerHTML = html;
+        this.#mediaPreview.info = text;
     }
 
     /**
@@ -205,60 +198,26 @@ export default class Popup {
     showAddonVersion() {
         if (this.selectedItem) return;
 
-        this.DOM.spnStatusBar.textContent = `Image Finder – ${getAddonVersionName()}`;
-        this.DOM.spnStatusBar.style.display = 'flex';
+        this.#mediaPreview.showAddonVersion();
     }
 
     /**
      * Restores the empty preview state.
      */
     showPreviewPlaceholder() {
-        this.DOM.imgPreview.removeAttribute('src');
-        this.DOM.h2_Preview.style.display = 'block';
-        this.setInfo('Image preview');
+        this.#mediaPreview.showPlaceholder();
         this.showAddonVersion();
     }
 
+    // ✏️ EDIT 2026-10-09: Delegates preview rendering to the dedicated MediaPreview component.
     /**
-     * Clears the current preview source while replacement media is loading.
+     * Shows an image preview and optionally enriches it with file metadata.
+     * @param {Object} image Selected image result.
+     * @param {Object} options Preview dependencies.
+     * @returns {Promise<Boolean>} Whether the image is still the active preview.
      */
-    clearPreviewSource() {
-        this.DOM.imgPreview.removeAttribute('src');
-    }
-
-    /**
-     * Shows a media source before optional metadata enrichment is complete.
-     * @param {String} sourceURL URL or data URL used by the preview image.
-     * @param {Boolean} downloadDisabled Whether the download action is disabled.
-     */
-    showPreviewSource(sourceURL, downloadDisabled) {
-        this.DOM.imgPreview.src = sourceURL;
-        this.DOM.h2_Preview.style.display = 'none';
-        this.DOM.spnStatusBar.style.display = 'none';
-        this.DOM.btnDelete.disabled = false;
-        this.DOM.btnDownload.disabled = downloadDisabled === true;
-    }
-
-    /**
-     * Renders metadata for the selected media preview.
-     * @param {Object} image Selected media result.
-     */
-    showPreviewMetadata(image) {
-        const size = image.fileSize >= 1048576
-            ? `${parseInt(image.fileSize / 1024 / 1024)} MB`
-            : image.fileSize ? `${parseInt(image.fileSize / 1024)} KB` : '??? KB';
-        const exactSize = Number.isFinite(image.fileSize) && image.fileSize > 0
-            ? ` (${image.fileSize.toLocaleString()} bytes)`
-            : '';
-        const mediaType = MediaType.getType(image.imageType);
-        const icon = mediaType?.icon ?? '../assets/icons/icon512.png';
-        const mediaTypeName = mediaType?.type ?? image.mediaType ?? 'image';
-        const dimensions = `${image.width} × ${image.height} px`;
-
-        this.setStatus(`
-            <img id="imgTypeInfoIcon" src="${icon}" alt="${image.imageType}" style="height: 1.25rem;" title="${image.imageType.toUpperCase()} ${mediaTypeName}, Resolution: ${dimensions}, Size: ${size}${exactSize}">
-               ${dimensions} [${size}]`);
-        this.DOM.spnStatusBar.style.display = 'flex';
+    showImagePreview(image, options = {}) {
+        return this.#mediaPreview.showImage(image, options);
     }
 
     /**

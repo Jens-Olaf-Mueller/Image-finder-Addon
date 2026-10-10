@@ -109,35 +109,76 @@
         </div>
     </fieldset>
 
-    <fieldset name="imagetypes"><legend>Image Types</legend>
-        <label id="lblJpg" class="control">
+    <fieldset name="imagetypes"><legend>Media Types</legend>
+        <label id="lblJpg" class="control" data-media="image">
             <input type="checkbox" id="chkJpg" name="jpg" checked/>
+            <img src="/assets/icons/jpeg.png" alt="jpg" class="media-icon">
              .jpg / .jpeg
         </label>
-        <label id="lblPng" class="control">
+        <label id="lblPng" class="control" data-media="image">
             <input type="checkbox" id="chkPng" name="png" checked/>
+            <img src="/assets/icons/png.png" alt="png" class="media-icon">
              .png
         </label>
-        <label id="lblBmp" class="control">
+        <label id="lblBmp" class="control" data-media="image">
             <input type="checkbox" id="chkBmp" name="bmp" checked/>
+            <img src="/assets/icons/bmp.png" alt="bmp" class="media-icon">
              .bmp
         </label>
-        <label id="lblWebp" class="control">
+        <label id="lblWebp" class="control" data-media="image">
             <input type="checkbox" id="chkWebp" name="webp" checked/>
+            <img src="/assets/icons/webp.png" alt="webp" class="media-icon">
              .webp
         </label>
-        <label id="lblGif" class="control">
+        <label id="lblGif" class="control" data-media="image">
             <input type="checkbox" id="chkGif" name="gif" checked/>
+            <img src="/assets/icons/gif.png" alt="gif" class="media-icon">
              .gif
         </label>
-        <label id="lblSvg" class="control">
+        <label id="lblSvg" class="control" data-media="image">
             <input type="checkbox" id="chkSvg" name="svg"/>
+            <img src="/assets/icons/svg.png" alt="svg" class="media-icon">
              .svg
         </label>
-        <label id="lblAvif" class="control">
+        <label id="lblAvif" class="control" data-media="image">
             <input type="checkbox" id="chkAvif" name="avif"/>
+            <img src="/assets/icons/avif.png" alt="avif" class="media-icon">
              .avif
         </label>
+
+        <!-- .mp4 | .webm | .mov | .mkv | .avi | .wmv | .ogg? -->
+        <label id="lblMp4" class="control hidden" data-media="video">
+            <input type="checkbox" id="chkMp4" name="mp4"/>
+            <img src="/assets/icons/mp4.png" alt="mp4" class="media-icon">
+             .mp4
+        </label>
+        <label id="lblMov" class="control hidden" data-media="video">
+            <input type="checkbox" id="chkMov" name="mov"/>
+            <img src="/assets/icons/mov.png" alt="mov" class="media-icon">
+             .mov
+        </label>
+        <label id="lblMkv" class="control hidden" data-media="video">
+            <input type="checkbox" id="chkMkv" name="mkv"/>
+            <img src="/assets/icons/mkv.png" alt="mkv" class="media-icon">
+             .mkv
+        </label>
+        <label id="lblWebm" class="control hidden" data-media="video">
+            <input type="checkbox" id="chkWebm" name="webm"/>
+            <img src="/assets/icons/webm.png" alt="webm" class="media-icon">
+             .webm
+        </label>
+        <label id="lblWmv" class="control hidden" data-media="video">
+            <input type="checkbox" id="chkWmv" name="wmv"/>
+            <img src="/assets/icons/wmv.png" alt="wmv" class="media-icon">
+             .wmv
+        </label>
+        <label id="lblAvi" class="control hidden" data-media="video">
+            <input type="checkbox" id="chkAvi" name="avi"/>
+            <img src="/assets/icons/avi.png" alt="avi" class="media-icon">
+             .avi
+        </label>
+
+        <!-- .mp3 | .wav | .acc | .ogg | .opus | .flac | . -->
     </fieldset>
 
     <fieldset name="sources"><legend>Image Sources</legend>

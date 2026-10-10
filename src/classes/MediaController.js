@@ -35,7 +35,6 @@ export class MediaController {
         this.resultStore = new ResultStore();
         this.analyzerClient = new AnalyzerClient();
         this.isSavingAll = false;
-        this.currentBlobPreview = null;
         this.popup.setEventHandlers({
             getVisibleMedia: () => this.images,
             onScan: () => this.scan(),
@@ -125,6 +124,7 @@ export class MediaController {
         this.scanner.setDeepScanClientId(clientId);
     }
 
+    // ✏️ EDIT 2026-10-09: Delegates selected image preview preparation to Popup and MediaPreview.
     async #showMediaPreview(imageId, scanGeneration = null) {
         if (scanGeneration !== null && !this.#isCurrentScan(scanGeneration)) return;
 
@@ -133,57 +133,18 @@ export class MediaController {
 
         this.#updateSelectedMediaActions(imageId);
 
-        let previewSource = image.url;
-        if (image.source === 'blobimages') {
-            const cachedPreview = this.currentBlobPreview?.imageId === imageId
-                ? this.currentBlobPreview.dataUrl
-                : null;
-
-            if (cachedPreview) {
-                previewSource = cachedPreview;
-            } else {
-                this.currentBlobPreview = null;
-                this.popup.clearPreviewSource();
-
-                const response = await window.chrome.runtime.sendMessage({
-                    action: 'resolveBlobImage',
-                    tabId: image.tabId,
-                    blobUrl: image.url
-                });
-
-                if ((scanGeneration !== null && !this.#isCurrentScan(scanGeneration)) ||
-                    this.popup.selectedMediaId !== imageId) return;
-                if (response?.success !== true || typeof response.dataUrl !== 'string') {
-                    throw new Error(response?.error || 'Cannot resolve Blob image for preview');
-                }
-
-                this.currentBlobPreview = {imageId, dataUrl: response.dataUrl};
-                previewSource = response.dataUrl;
-            }
-        } else {
-            this.currentBlobPreview = null;
-        }
+        const previewVisible = await this.popup.showImagePreview(image, {
+            isCurrent: () => (scanGeneration === null || this.#isCurrentScan(scanGeneration)) &&
+                this.popup.selectedMediaId === imageId,
+            getFileInfo: (url) => this.scanner.getFileInfo(url)
+        });
+        if (!previewVisible) return;
 
         const downloadOff = this.shouldDisableDownloadWhenCompleted &&
             this.resultStore.getDownload(imageId)?.completed === true;
-        this.popup.showPreviewSource(previewSource, downloadOff);
+        this.popup.setActionDisabled('delete', false);
+        this.popup.setActionDisabled('download', downloadOff);
         this.updateDownloadTitles();
-
-        if (image.fileSize === null &&
-            image.source !== 'dataimages' &&
-            image.source !== 'blobimages') {
-            const fileInfo = await this.scanner.getFileInfo(image.url);
-
-            if ((scanGeneration !== null && !this.#isCurrentScan(scanGeneration)) ||
-                this.popup.selectedMediaId !== imageId) return;
-
-            image.fileSize = fileInfo?.size ?? null;
-        }
-
-        if ((scanGeneration !== null && !this.#isCurrentScan(scanGeneration)) ||
-            this.popup.selectedMediaId !== imageId) return;
-
-        this.popup.showPreviewMetadata(image);
     }
 
     async #showMediaPreviewSafely(imageId) {
@@ -231,7 +192,6 @@ export class MediaController {
 
         this.resultStore.clear();
         this.analyzerClient.clear();
-        this.currentBlobPreview = null;
         this.popup.clearMediaList();
         this.popup.showPreviewPlaceholder();
         this.popup.setActionDisabled('download', true);
@@ -626,10 +586,6 @@ export class MediaController {
     deleteMedia(imageId) {
         if (!imageId) return;
 
-        if (this.currentBlobPreview?.imageId === imageId) {
-            this.currentBlobPreview = null;
-        }
-
         this.resultStore.deleteResult(imageId);
         void this.analyzerClient.removeCandidates([imageId]).catch((error) => {
             console.warn('Cannot remove deleted media from analyzer:', error);
@@ -668,7 +624,6 @@ export class MediaController {
         });
 
         if (renderResult.selectionRemoved) {
-            this.currentBlobPreview = null;
             this.popup.showPreviewPlaceholder();
             this.popup.setActionDisabled('download', true);
             this.popup.setActionDisabled('delete', true);
