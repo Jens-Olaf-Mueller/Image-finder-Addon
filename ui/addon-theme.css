@@ -22,7 +22,7 @@
 
     /* --adn-progressbar-bg: navy; */
     --adn-progressbar-bg-scan: #32CD32;
-    --adn-progressbar-bg-filter: tomato;
+    --adn-progressbar-bg-filter: #EF4444; /* tomato */
     --adn-progressbar-border: silver;
     --adn-progressbar-text: whitesmoke;
     --adn-control-accent: #285EFE; /* #006000 #32CD32 */
@@ -31,10 +31,10 @@
     --adn-led-text: #000000;
     --adn-led-active-text: #000000;
     --adn-led-scanner: limegreen;
-    --adn-led-filter: tomato;
+    --adn-led-filter: #EF4444; /* tomato */
     --adn-led-deep-scan: #ffe600;
 
-    --adn-marker-new: tomato;
+    --adn-marker-new: #EF4444; /* tomato */
     --adn-marker-upgrade: #32CD32;
     --adn-result-selected-bg: navy;
     --adn-result-selected-text: whitesmoke;

@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>DeepScan DOM state fixture</title>
+</head>
+<body>
+    <main id="mainTestRoot"></main>
+    <script type="module">
+        const {default: DeepScanDOMState} = await import('../src/classes/DeepScanDOMState.js');
+        const testRoot = document.getElementById('mainTestRoot');
+        const waitForMutations = () => new Promise((resolve) => setTimeout(resolve, 0));
+        const assert = (condition, message) => {
+            if (!condition) throw new Error(message);
+        };
+
+        try {
+            const state = new DeepScanDOMState({
+                scanDocument: document,
+                mutationAttributes: ['src']
+            });
+            state.start();
+
+            const initialScope = state.consumeScope('initial');
+            assert(initialScope.roots[0] === document, 'Initial scope must scan the document.');
+
+            const directTarget = document.createElement('button');
+            const firstImage = document.createElement('img');
+            directTarget.append(firstImage);
+            testRoot.append(directTarget);
+            state.registerDirectTarget(directTarget);
+            await waitForMutations();
+
+            const directScope = state.consumeScope();
+            assert(directScope.roots.includes(directTarget),
+                'A changed direct target must become its own delta root.');
+
+            const carousel = document.createElement('section');
+            carousel.className = 'carousel';
+            testRoot.append(carousel);
+            await waitForMutations();
+            state.consumeScope();
+            state.registerGenericRoot(carousel);
+
+            const lazyImage = document.createElement('img');
+            lazyImage.setAttribute('data-src', '/images/lazy.jpg');
+            carousel.append(lazyImage);
+            await waitForMutations();
+
+            const carouselScope = state.consumeScope();
+            assert(carouselScope.roots.includes(lazyImage),
+                'A new carousel child must remain a narrow delta root.');
+            assert(carouselScope.dirtyGenericRoots.has(carousel),
+                'A changed known carousel must be marked dirty.');
+
+            state.markGenericRootProcessed(carousel);
+            const metrics = state.getMetrics();
+            assert(metrics.knownGenericRoots === 1, 'The known carousel count must be retained.');
+            assert(metrics.deltaRoots >= 2, 'Delta roots must be counted.');
+            state.stop();
+
+            document.documentElement.dataset.deepScanDomStateResult = 'passed';
+        } catch (error) {
+            document.documentElement.dataset.deepScanDomStateResult = 'failed';
+            document.documentElement.dataset.deepScanDomStateError = error.message;
+        }
+    </script>
+</body>
+</html>

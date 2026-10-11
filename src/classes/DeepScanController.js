@@ -58,7 +58,7 @@ export default class DeepScanController {
 
             registerTargets();
             const initialCollectionStartedAt = performance.now();
-            await collectSources();
+            await collectSources({phase: 'initial'});
             addMetric(null, 'initialCollectionMs', performance.now() - initialCollectionStartedAt);
             while (isActive()) {
                 const pass = ++this.#deepScanPass;
@@ -105,7 +105,7 @@ export default class DeepScanController {
 
                 const photoSwipeActivityBeforeFinalCollection = getPhotoSwipeActivityCount();
                 const finalCollectionStartedAt = performance.now();
-                await collectSources({metrics: passMetrics});
+                await collectSources({metrics: passMetrics, phase: 'final'});
                 addMetric(passMetrics, 'finalCollectionMs', performance.now() - finalCollectionStartedAt);
                 const newTargets = registerTargets();
                 addMetric(passMetrics, 'newTargets', newTargets);

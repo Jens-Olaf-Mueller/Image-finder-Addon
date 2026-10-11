@@ -1,8 +1,8 @@
 {
     "manifest_version": 3,
     "name": "Image Finder",
-    "version": "0.1.25",
-    "version_name": "Beta 0.1.25",
+    "version": "0.1.26",
+    "version_name": "Beta 0.1.26",
     "description": "Find images on the current website.",
     "icons": {
         "64": "assets/icons/icon512.png"
@@ -46,6 +46,7 @@
                 "src/content.js",
                 "src/classes/CarouselScanner.js",
                 "src/classes/DeepScanController.js",
+                "src/classes/DeepScanDOMState.js",
                 "src/classes/DocumentTraverser.js",
                 "src/classes/PhotoSwipeScanner.js",
                 "src/classes/ContainerAnalyser.js"

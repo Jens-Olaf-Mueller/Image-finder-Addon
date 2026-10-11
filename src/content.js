@@ -1,6 +1,7 @@
 import CarouselScanner from './classes/CarouselScanner.js';
 import ContainerAnalyser from './classes/ContainerAnalyser.js';
 import DeepScanController from './classes/DeepScanController.js';
+import DeepScanDOMState from './classes/DeepScanDOMState.js';
 import DocumentTraverser from './classes/DocumentTraverser.js';
 import PhotoSwipeScanner from './classes/PhotoSwipeScanner.js';
 
@@ -8,7 +9,8 @@ export async function scanImages(
     includeAllImageSources = false,
     includeSupplementarySources = true,
     mutationObserverOptions = null,
-    includeLightboxSources = false
+    includeLightboxSources = false,
+    scanRoots = null
 ) {
     const getURL = (value, baseURI = document.baseURI) => {
         if (typeof value !== 'string' || !value.trim()) return null;
@@ -109,15 +111,26 @@ export async function scanImages(
     };
 
     const getOpenRoots = () => {
-        const roots = [document];
-        const seenRoots = new Set(roots);
+        const roots = [];
+        const seenRoots = new Set();
+        const initialRoots = Array.isArray(scanRoots) && scanRoots.length > 0
+            ? scanRoots
+            : [document];
+        const addRoot = (root) => {
+            if (!root || seenRoots.has(root)) return;
+
+            seenRoots.add(root);
+            roots.push(root);
+        };
+
+        initialRoots.forEach(addRoot);
 
         for (let index = 0; index < roots.length; index += 1) {
+            if (roots[index]?.nodeType === Node.ELEMENT_NODE && roots[index].shadowRoot) {
+                addRoot(roots[index].shadowRoot);
+            }
             roots[index].querySelectorAll?.('*').forEach((element) => {
-                if (element.shadowRoot && !seenRoots.has(element.shadowRoot)) {
-                    seenRoots.add(element.shadowRoot);
-                    roots.push(element.shadowRoot);
-                }
+                if (element.shadowRoot) addRoot(element.shadowRoot);
             });
         }
 
@@ -125,9 +138,24 @@ export async function scanImages(
     };
 
     const openRootsSnapshot = mutationObserverOptions?.enabled === true ? null : getOpenRoots();
-    const getDeepElements = (selector) => (openRootsSnapshot ?? getOpenRoots()).flatMap((root) =>
-        Array.from(root.querySelectorAll?.(selector) ?? [])
-    );
+    const getDeepElements = (selector) => {
+        const elements = [];
+        const seenElements = new Set();
+        const addElement = (elm) => {
+            if (seenElements.has(elm)) return;
+
+            seenElements.add(elm);
+            elements.push(elm);
+        };
+
+        (openRootsSnapshot ?? getOpenRoots()).forEach((root) => {
+            if (root?.nodeType === Node.ELEMENT_NODE && root.matches?.(selector)) {
+                addElement(root);
+            }
+            root.querySelectorAll?.(selector).forEach(addElement);
+        });
+        return elements;
+    };
 
     const getBackgroundURLs = (bgImage) => {
         if (typeof bgImage !== 'string' || !bgImage || bgImage === 'none') return [];
@@ -716,7 +744,12 @@ export async function scanPhotoSwipeImages({
     onActivity = null,
     onPerformance = null,
     performanceState = null,
-    traverseCarousel = false
+    traverseCarousel = false,
+    scanRoots = [document],
+    dirtyGenericRoots = new Set(),
+    registerGenericRoot = null,
+    markGenericRootProcessed = null,
+    registerDirectTarget = null
 } = {}) {
     const performanceStartedAt = performance.now();
     const collectPerformance = typeof onPerformance === 'function';
@@ -820,17 +853,23 @@ export async function scanPhotoSwipeImages({
         const phaseStartedAt = getPhaseStartedAt();
         const roots = [initialRoot];
         const seenRoots = new Set(roots);
+        const addRoot = (root) => {
+            if (!root || seenRoots.has(root)) return;
+
+            seenRoots.add(root);
+            roots.push(root);
+        };
 
         for (let index = 0; index < roots.length; index += 1) {
+            if (roots[index]?.nodeType === Node.ELEMENT_NODE && roots[index].shadowRoot) {
+                addRoot(roots[index].shadowRoot);
+            }
             const queryStartedAt = getPhaseStartedAt();
             const elements = roots[index].querySelectorAll?.('*') ?? [];
             recordQuery('*', elements.length);
             recordPhase('domQueriesMs', queryStartedAt);
             elements.forEach((element) => {
-                if (element.shadowRoot && !seenRoots.has(element.shadowRoot)) {
-                    seenRoots.add(element.shadowRoot);
-                    roots.push(element.shadowRoot);
-                }
+                if (element.shadowRoot) addRoot(element.shadowRoot);
             });
         }
 
@@ -839,7 +878,12 @@ export async function scanPhotoSwipeImages({
     };
     const queryDeep = (root, selector) => getOpenRoots(root).flatMap((queryRoot) => {
         const queryStartedAt = getPhaseStartedAt();
-        const result = Array.from(queryRoot.querySelectorAll?.(selector) ?? []);
+        const result = [
+            ...(queryRoot?.nodeType === Node.ELEMENT_NODE && queryRoot.matches?.(selector)
+                ? [queryRoot]
+                : []),
+            ...Array.from(queryRoot.querySelectorAll?.(selector) ?? [])
+        ];
         recordQuery(selector, result.length);
         recordPhase('domQueriesMs', queryStartedAt);
         return result;
@@ -1176,7 +1220,11 @@ export async function scanPhotoSwipeImages({
             getPhaseStartedAt,
             recordPhase,
             addCandidates: (...newCandidates) => candidates.push(...newCandidates),
-            getCarouselStateLabel
+            getCarouselStateLabel,
+            scanRoots,
+            dirtyGenericRoots,
+            registerGenericRoot,
+            markGenericRootProcessed
         });
         genericCarouselMs += carouselScanResult.genericCarouselMs;
         genericCarouselCalls += carouselScanResult.genericCarouselCalls;
@@ -1209,7 +1257,9 @@ export async function scanPhotoSwipeImages({
         recordQuery,
         addCandidates: (...newCandidates) => candidates.push(...newCandidates),
         getCandidateCount: () => candidates.length,
-        traverseCarousel
+        traverseCarousel,
+        scanRoots,
+        registerDirectTarget
     });
     directPhotoSwipeMs += photoSwipeScanResult.directPhotoSwipeMs;
     directPhotoSwipeCalls += photoSwipeScanResult.directPhotoSwipeCalls;
@@ -1250,6 +1300,30 @@ export async function scanPhotoSwipeImages({
 const DEEP_SCAN_READINESS_POLL_INTERVAL_MS = 100;
 const DEEP_SCAN_READINESS_STABLE_MS = 300;
 const DEEP_SCAN_READINESS_MAX_WAIT_MS = 2000;
+const DEEP_SCAN_MUTATION_ATTRIBUTES = [
+    'src',
+    'srcset',
+    'data-src',
+    'data-srcset',
+    'data-lazy-src',
+    'data-lazy-srcset',
+    'data-image',
+    'data-image-src',
+    'data-full',
+    'data-full-src',
+    'data-fullsize',
+    'data-large',
+    'data-original',
+    'data-original-src',
+    'data-lightbox-src',
+    'href',
+    'aria-controls',
+    'data-target',
+    'onclick',
+    'at-attr',
+    'data-carousel-id',
+    'data-gallery-id'
+];
 
 export async function runIsolatedDeepScan({
     onBatch = null,
@@ -1759,8 +1833,7 @@ export async function runHiddenFrameDeepScan({
     const knownTargets = new Set();
     const photoSwipeScanner = new PhotoSwipeScanner();
     const carouselScanner = new CarouselScanner();
-    // Diagnostic-only state: it records what the current run sees, but never
-    // participates in discovery, filtering, traversal, or result selection.
+    // ✏️ EDIT 2026-10-11: Retained for detailed PhotoSwipe performance reporting.
     const photoSwipePerformanceState = {
         callIndex: 0,
         mutationVersion: 0,
@@ -1772,7 +1845,6 @@ export async function runHiddenFrameDeepScan({
     const completedScrollContainerStates = new Map();
     const handledStructureContainers = new WeakSet();
     const lowPriorityStructureContainers = new WeakSet();
-    let observer = null;
     let lastRelevantMutationAt = startedAt;
     let relevantMutationCount = 0;
     let photoSwipeActivityCount = 0;
@@ -1783,6 +1855,20 @@ export async function runHiddenFrameDeepScan({
     const edgeLoadWaitMs = Math.max(5000, maximumSettleMs);
     const edgeLoadPollMs = 100;
     const isActive = () => signal?.aborted !== true;
+    // ✴️ NEW 2026-10-11: Keeps DeepScan collections limited to changed DOM subtrees.
+    const domState = new DeepScanDOMState({
+        scanDocument: document,
+        mutationAttributes: DEEP_SCAN_MUTATION_ATTRIBUTES,
+        onActivity: ({records}) => {
+            // ✏️ EDIT 2026-10-11: Image loads remain queued as delta roots, but only
+            // DOM mutations postpone the global settle timer after a scroll step.
+            if (records.length === 0) return;
+
+            records.forEach(markKnownGenericRootsChanged);
+            lastRelevantMutationAt = Date.now();
+            relevantMutationCount += records.length;
+        }
+    });
     const createPerformanceMetrics = () => ({
         steps: 0,
         scrollActionMs: 0,
@@ -1827,7 +1913,11 @@ export async function runHiddenFrameDeepScan({
         resolutionUpgrades: 0,
         newDomImages: 0,
         newTargets: 0,
-        newGalleries: 0
+        newGalleries: 0,
+        fullSourceCollections: 0,
+        deltaSourceCollections: 0,
+        emptyDeltaCollections: 0,
+        deltaRoots: 0
     });
     const scanPerformanceMetrics = createPerformanceMetrics();
     const edgeRangeWaits = [];
@@ -2198,7 +2288,7 @@ export async function runHiddenFrameDeepScan({
                     maxCallMs: roundPhotoSwipeValue(phase.maxCallMs)
                 }]
             )),
-            rootChangeTracking: 'Only relevant mutations observed by the existing light-DOM observer; class/style and closed shadow-root changes are intentionally not inferred.'
+            rootChangeTracking: 'Changed light-DOM subtrees and image loads are scanned incrementally; class/style-only changes and newly attached open shadow roots remain covered by the final full scan.'
         };
 
         return {
@@ -2232,6 +2322,7 @@ export async function runHiddenFrameDeepScan({
                 candidatePipelineMs: Math.round(scanPerformanceMetrics.candidatePipelineMs),
                 batchDispatchMs: Math.round(scanPerformanceMetrics.batchDispatchMs)
             },
+            domDelta: domState.getMetrics(),
             photoSwipeDetail: photoSwipeSummary,
             photoSwipeSlowCalls,
             edgeRangeGrowth: {
@@ -2266,7 +2357,11 @@ export async function runHiddenFrameDeepScan({
                 containerScrollSteps: scanPerformanceMetrics.containerScrollSteps,
                 containersHandled: scanPerformanceMetrics.containersHandled,
                 containersScanned: scanPerformanceMetrics.containersScanned,
-                repeatContainers: scanPerformanceMetrics.repeatContainers
+                repeatContainers: scanPerformanceMetrics.repeatContainers,
+                fullSourceCollections: scanPerformanceMetrics.fullSourceCollections,
+                deltaSourceCollections: scanPerformanceMetrics.deltaSourceCollections,
+                emptyDeltaCollections: scanPerformanceMetrics.emptyDeltaCollections,
+                deltaRoots: scanPerformanceMetrics.deltaRoots
             },
             note: 'Exclusive percentages use only non-overlapping top-level phases; nested timings overlap with document/container traversal.'
         };
@@ -2445,21 +2540,38 @@ export async function runHiddenFrameDeepScan({
                 : 'timeout';
         return createResult(false, endReason, rangeBefore, rangeAfter);
     };
-    const collectSources = async ({metrics = null} = {}) => {
+    const collectSources = async ({metrics = null, phase = 'delta'} = {}) => {
         if (!isActive()) return 0;
 
         recordCollectionMetric(metrics, 'collectSourcesCalls', 1);
+        const collectionScope = domState.consumeScope(phase);
+        if (collectionScope.phase === 'delta') {
+            recordCollectionMetric(metrics, 'deltaSourceCollections', 1);
+            recordCollectionMetric(metrics, 'deltaRoots', collectionScope.roots.length);
+            if (collectionScope.roots.length === 0 && collectionScope.dirtyGenericRoots.size === 0) {
+                recordCollectionMetric(metrics, 'emptyDeltaCollections', 1);
+                return 0;
+            }
+        } else {
+            recordCollectionMetric(metrics, 'fullSourceCollections', 1);
+        }
+
         const collectionStartedAt = performance.now();
         const scanImagesStartedAt = performance.now();
         const foundCandidates = await scanImages(
             true,
             true,
             null,
-            true
+            true,
+            collectionScope.roots
         );
         const scanImagesMs = performance.now() - scanImagesStartedAt;
         recordCollectionMetric(metrics, 'scanImagesCalls', 1);
         const carouselStartedAt = performance.now();
+        const photoSwipeRoots = Array.from(new Set([
+            ...collectionScope.roots,
+            ...collectionScope.dirtyGenericRoots
+        ]));
         const photoSwipeCandidates = await scanPhotoSwipeImages({
             carouselScanner,
             photoSwipeScanner,
@@ -2482,7 +2594,12 @@ export async function runHiddenFrameDeepScan({
                 recordCollectionMetric(metrics, 'directPhotoSwipeCalls', performanceMetrics.directPhotoSwipeCalls);
                 recordCollectionMetric(metrics, 'photoSwipeOtherMs', performanceMetrics.otherMs);
             },
-            traverseCarousel: true
+            traverseCarousel: true,
+            scanRoots: photoSwipeRoots,
+            dirtyGenericRoots: collectionScope.dirtyGenericRoots,
+            registerGenericRoot: (root) => domState.registerGenericRoot(root),
+            markGenericRootProcessed: (root) => domState.markGenericRootProcessed(root),
+            registerDirectTarget: (target) => domState.registerDirectTarget(target)
         });
         const carouselPhotoSwipeMs = performance.now() - carouselStartedAt;
         recordCollectionMetric(metrics, 'scanPhotoSwipeCalls', 1);
@@ -2555,24 +2672,6 @@ export async function runHiddenFrameDeepScan({
         recordCollectionMetric(metrics, 'candidatePipelineMs', candidatePipelineMs);
         recordCollectionMetric(metrics, 'collectSourcesMs', collectionMs);
         return newCandidates.length;
-    };
-    const isGeneratedScrollAnchor = (node) => node?.nodeType === Node.ELEMENT_NODE &&
-        node.hasAttribute?.('data-image-finder-scroll-anchor');
-    const containsRealElement = (node) => {
-        if (!node || isGeneratedScrollAnchor(node)) return false;
-        if (node.nodeType === Node.ELEMENT_NODE) return true;
-        if (node.nodeType !== Node.DOCUMENT_FRAGMENT_NODE) return false;
-
-        return Array.from(node.children).some((element) => !isGeneratedScrollAnchor(element));
-    };
-    const isRelevantMutation = (record) => {
-        if (record.type === 'attributes') {
-            return !isGeneratedScrollAnchor(record.target) && record.attributeName !== 'class' &&
-                record.attributeName !== 'style';
-        }
-
-        return Array.from(record.addedNodes ?? []).some(containsRealElement) ||
-            Array.from(record.removedNodes ?? []).some(containsRealElement);
     };
     const markKnownGenericRootsChanged = (record) => {
         photoSwipePerformanceState.mutationVersion += 1;
@@ -2911,41 +3010,8 @@ export async function runHiddenFrameDeepScan({
         }
     };
 
-    const startMutationObservation = () => {
-        if (typeof MutationObserver !== 'function' || !document.documentElement) return;
-
-        observer = new MutationObserver((records) => {
-            const relevantMutations = records.filter(isRelevantMutation);
-            if (relevantMutations.length === 0) return;
-
-            relevantMutations.forEach(markKnownGenericRootsChanged);
-            lastRelevantMutationAt = Date.now();
-            relevantMutationCount += relevantMutations.length;
-        });
-        observer.observe(document.documentElement, {
-            subtree: true,
-            childList: true,
-            attributes: true,
-            attributeFilter: [
-                'src',
-                'srcset',
-                'data-src',
-                'data-srcset',
-                'data-lazy-src',
-                'data-lazy-srcset',
-                'data-image',
-                'data-image-src',
-                'data-full',
-                'data-full-src',
-                'data-fullsize',
-                'data-large',
-                'data-original',
-                'data-original-src',
-                'data-lightbox-src'
-            ]
-        });
-    };
-    const stopMutationObservation = () => observer?.disconnect();
+    const startMutationObservation = () => domState.start();
+    const stopMutationObservation = () => domState.stop();
     const waitForHiddenFrameReadiness = async () => {
         const readinessDeadline = Date.now() + DEEP_SCAN_READINESS_MAX_WAIT_MS;
         while (isActive() && (window.innerWidth <= 0 || window.innerHeight <= 0 ||

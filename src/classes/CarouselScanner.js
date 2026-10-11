@@ -1,11 +1,13 @@
 /**
  * Traverses generic DOM carousels while keeping the PhotoSwipe-specific
- * operations supplied by the caller. The scanner intentionally retains the
- * current global discovery and processed-root behaviour; cache invalidation is
- * a separate follow-up.
+ * operations supplied by the caller. Known roots retain their state and are
+ * revisited only when the DeepScan DOM state reports an actual change.
  */
 export default class CarouselScanner {
     #processedCarouselRoots;
+    #genericGalleries = new WeakMap();
+    #genericGalleryKeys = new WeakMap();
+    #genericGallerySequence = 0;
 
     constructor({processedCarouselRoots = new WeakSet()} = {}) {
         this.#processedCarouselRoots = processedCarouselRoots;
@@ -13,6 +15,9 @@ export default class CarouselScanner {
 
     reset() {
         this.#processedCarouselRoots = new WeakSet();
+        this.#genericGalleries = new WeakMap();
+        this.#genericGalleryKeys = new WeakMap();
+        this.#genericGallerySequence = 0;
     }
 
     async scan({
@@ -40,7 +45,11 @@ export default class CarouselScanner {
         getPhaseStartedAt,
         recordPhase,
         addCandidates,
-        getCarouselStateLabel
+        getCarouselStateLabel,
+        scanRoots = [scanDocument],
+        dirtyGenericRoots = new Set(),
+        registerGenericRoot = null,
+        markGenericRootProcessed = null
     } = {}) {
         const genericSourceAttributes = [
             'src',
@@ -54,17 +63,19 @@ export default class CarouselScanner {
         ];
         const genericGalleryTokens = /(?:carousel|gallery|slider|swiper)/i;
         const genericSlideTokens = /(?:slide|item|media)/i;
-        const genericGalleryKeys = new WeakMap();
-        let genericGallerySequence = 0;
+        const effectiveScanRoots = Array.isArray(scanRoots) && scanRoots.length > 0
+            ? scanRoots
+            : [scanDocument];
         let genericCarouselMs = 0;
         let genericCarouselCalls = 0;
         const getGenericGalleryKey = (root) => {
-            if (genericGalleryKeys.has(root)) return genericGalleryKeys.get(root);
+            if (this.#genericGalleryKeys.has(root)) return this.#genericGalleryKeys.get(root);
 
             const explicitKey = root.getAttribute?.('data-carousel-id')?.trim() ||
                 root.getAttribute?.('data-gallery-id')?.trim() || root.id?.trim();
-            const key = explicitKey ? 'gallery#' + explicitKey : 'gallery#?' + genericGallerySequence++;
-            genericGalleryKeys.set(root, key);
+            const key = explicitKey ? 'gallery#' + explicitKey : 'gallery#?' +
+                this.#genericGallerySequence++;
+            this.#genericGalleryKeys.set(root, key);
             return key;
         };
         const getElementClassText = (element) => typeof element?.className === 'string'
@@ -430,7 +441,9 @@ export default class CarouselScanner {
             recordPhase('candidateClassificationMs', phaseStartedAt);
             return isGalleryRoot;
         };
-        const traverseGenericCarousel = async (root) => {
+        const getGenericGallery = (root) => {
+            if (this.#genericGalleries.has(root)) return this.#genericGalleries.get(root);
+
             const gallery = {
                 key: getGenericGalleryKey(root),
                 type: 'unknown',
@@ -438,6 +451,10 @@ export default class CarouselScanner {
                 stateLabels: new Map(),
                 visitedStates: new Set()
             };
+            this.#genericGalleries.set(root, gallery);
+            return gallery;
+        };
+        const traverseGenericCarousel = async (root, gallery) => {
             const initialState = await waitFor(() => getGenericCarouselState(root, gallery), 1500);
             if (!initialState || isAborted()) return;
 
@@ -552,12 +569,20 @@ export default class CarouselScanner {
         };
         const traverseGenericCarousels = async () => {
             const discoveryStartedAt = getPhaseStartedAt();
-            const elements = queryDeep(scanDocument, '*');
+            const elements = [];
+            const seenElements = new Set();
+            effectiveScanRoots.forEach((scanRoot) => {
+                queryDeep(scanRoot, '*').forEach((elm) => {
+                    if (seenElements.has(elm)) return;
+                    seenElements.add(elm);
+                    elements.push(elm);
+                });
+            });
             const roots = elements.filter(isGenericGalleryRoot);
             const candidateIterationStartedAt = getPhaseStartedAt();
             if (collectPerformance) {
-                performanceDetail.generic.candidateCount = elements.length;
-                performanceDetail.generic.documentElementsScanned = elements.length;
+                performanceDetail.generic.candidateCount += elements.length;
+                performanceDetail.generic.documentElementsScanned += elements.length;
                 elements.forEach((root) => {
                     if (performanceState?.genericCandidates?.has(root)) {
                         performanceDetail.generic.previouslySeenCandidates += 1;
@@ -591,6 +616,7 @@ export default class CarouselScanner {
             for (const root of uniqueRoots) {
                 const rootIterationStartedAt = getPhaseStartedAt();
                 if (isAborted()) return;
+                registerGenericRoot?.(root);
                 if (collectPerformance) {
                     performanceDetail.generic.rootsConsidered += 1;
                     const rootState = performanceState?.genericRoots?.get(root);
@@ -615,7 +641,9 @@ export default class CarouselScanner {
                         });
                     }
                 }
-                if (this.#processedCarouselRoots.has(root)) {
+                const previouslyProcessed = this.#processedCarouselRoots.has(root);
+                const rootIsDirty = dirtyGenericRoots.has(root);
+                if (previouslyProcessed && !rootIsDirty) {
                     if (collectPerformance) performanceDetail.generic.rootsAlreadyProcessed += 1;
                     recordPhase('candidateIterationMs', rootIterationStartedAt);
                     continue;
@@ -625,9 +653,10 @@ export default class CarouselScanner {
                 const carouselStartedAt = performance.now();
                 genericCarouselCalls += 1;
                 try {
-                    await traverseGenericCarousel(root);
+                    await traverseGenericCarousel(root, getGenericGallery(root));
                 } finally {
                     genericCarouselMs += performance.now() - carouselStartedAt;
+                    if (!isAborted()) markGenericRootProcessed?.(root);
                 }
             }
         };

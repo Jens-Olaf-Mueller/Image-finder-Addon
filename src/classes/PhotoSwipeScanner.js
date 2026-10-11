@@ -50,10 +50,15 @@ export default class PhotoSwipeScanner {
         recordQuery,
         addCandidates,
         getCandidateCount,
-        traverseCarousel
+        traverseCarousel,
+        scanRoots = [scanDocument],
+        registerDirectTarget = null
     } = {}) {
         let directPhotoSwipeMs = 0;
         let directPhotoSwipeCalls = 0;
+        const effectiveScanRoots = Array.isArray(scanRoots) && scanRoots.length > 0
+            ? scanRoots
+            : [scanDocument];
         const isVisibleMediaTarget = (target) => {
             const phaseStartedAt = getPhaseStartedAt();
             const imageQueryStartedAt = getPhaseStartedAt();
@@ -414,7 +419,15 @@ export default class PhotoSwipeScanner {
         };
 
         const directDiscoveryStartedAt = getPhaseStartedAt();
-        const targets = queryDeep(scanDocument, '[at-attr="media_locator"]');
+        const targets = [];
+        const seenTargets = new Set();
+        effectiveScanRoots.forEach((root) => {
+            queryDeep(root, '[at-attr="media_locator"]').forEach((target) => {
+                if (seenTargets.has(target)) return;
+                seenTargets.add(target);
+                targets.push(target);
+            });
+        });
         if (collectPerformance) performanceDetail.direct.targetCount = targets.length;
         recordPhase('directPhotoSwipeDiscoveryMs', directDiscoveryStartedAt);
         for (const target of targets) {
@@ -432,6 +445,7 @@ export default class PhotoSwipeScanner {
                     performanceState?.directTargets?.add(target);
                 }
             }
+            registerDirectTarget?.(target);
             const targetSource = getTargetSourceKey(target);
             if (isAborted()) {
                 recordPhase('candidateClassificationMs', candidateStartedAt);

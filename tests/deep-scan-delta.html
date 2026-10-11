@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>DeepScan delta collection fixture</title>
+    <style>
+        #mainTestRoot {
+            min-height: 200vh;
+        }
+    </style>
+</head>
+<body>
+    <main id="mainTestRoot">
+        <img src="/tests/initial-image.jpg" alt="Initial test image">
+    </main>
+    <script type="module">
+        const {runHiddenFrameDeepScan} = await import('../src/content.js');
+        const testRoot = document.getElementById('mainTestRoot');
+        const batches = [];
+        const assert = (condition, message) => {
+            if (!condition) throw new Error(message);
+        };
+
+        try {
+            window.addEventListener('scroll', () => {
+                const lateImage = document.createElement('img');
+                lateImage.src = '/tests/late-image.jpg';
+                lateImage.alt = 'Late test image';
+                testRoot.append(lateImage);
+            }, {once: true});
+
+            const result = await runHiddenFrameDeepScan({
+                stableCycleLimit: 1,
+                minimumSettleMs: 50,
+                quietSettleMs: 50,
+                maximumSettleMs: 100,
+                onBatch: async (batch) => batches.push(...batch)
+            });
+            const urls = new Set(batches.map((candidate) => candidate.url));
+            document.documentElement.dataset.deepScanDeltaMetrics = JSON.stringify({
+                counters: result.performance.counters,
+                domDelta: result.performance.domDelta,
+                urls: Array.from(urls)
+            });
+            assert(urls.has(new URL('/tests/initial-image.jpg', location.href).href),
+                'The initial full scan must collect the initial image.');
+            assert(urls.has(new URL('/tests/late-image.jpg', location.href).href),
+                'The delta scan must collect the late image.');
+            assert(result.performance.domDelta.deltaScopes > 0,
+                'The DeepScan must run delta collections.');
+            assert(result.performance.domDelta.deltaRoots > 0,
+                'The late image must produce a delta root.');
+            assert(result.performance.counters.fullSourceCollections >= 2,
+                'Initial and final collections must stay full scans.');
+
+            document.documentElement.dataset.deepScanDeltaResult = 'passed';
+        } catch (error) {
+            document.documentElement.dataset.deepScanDeltaResult = 'failed';
+            document.documentElement.dataset.deepScanDeltaError = error.message;
+        }
+    </script>
+</body>
+</html>
