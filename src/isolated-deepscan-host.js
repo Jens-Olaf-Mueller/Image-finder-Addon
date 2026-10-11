@@ -52,8 +52,7 @@
                     action,
                     scanId: job.scanId,
                     token: job.token,
-                    url: job.url,
-                    ignoreHiddenImages: job.ignoreHiddenImages === true
+                    url: job.url
                 }, job.frameOrigin);
             } catch {
                 // The handshake timeout reports a frame that cannot be reached.
@@ -121,7 +120,6 @@
                 token: jobInput.token,
                 url: jobInput.url,
                 frameOrigin,
-                ignoreHiddenImages: jobInput.ignoreHiddenImages === true,
                 frame,
                 finished: false,
                 handshakeTimeout: null,

@@ -279,7 +279,6 @@
                 return;
             }
             const result = await runHiddenFrameDeepScan({
-                ignoreHiddenImages: message.ignoreHiddenImages === true,
                 minimumImageWidth: message.minimumImageWidth,
                 minimumImageHeight: message.minimumImageHeight,
                 signal: scan.controller.signal,
@@ -408,7 +407,6 @@
                 action: 'start',
                 scanId: scan.scanId,
                 token: scan.token,
-                ignoreHiddenImages: scan.ignoreHiddenImages === true,
                 minimumImageWidth: scan.minimumImageWidth,
                 minimumImageHeight: scan.minimumImageHeight
             }, scan.frameOrigin);
@@ -460,7 +458,6 @@
             scanId: message.scanId,
             token: message.token,
             frameOrigin,
-            ignoreHiddenImages: message.ignoreHiddenImages === true,
             minimumImageWidth: message.minimumImageWidth,
             minimumImageHeight: message.minimumImageHeight,
             wrapper,
@@ -615,7 +612,6 @@
         try {
             const {runIsolatedDeepScan} = await import(chrome.runtime.getURL('src/content.js'));
             const result = await runIsolatedDeepScan({
-                ignoreHiddenImages: message.ignoreHiddenImages === true,
                 signal: scan.controller.signal,
                 onBatch: async (candidates) => {
                     if (activeScan !== scan || scan.controller.signal.aborted) return;

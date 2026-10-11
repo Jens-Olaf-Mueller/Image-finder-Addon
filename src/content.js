@@ -5,7 +5,6 @@ import DocumentTraverser from './classes/DocumentTraverser.js';
 import PhotoSwipeScanner from './classes/PhotoSwipeScanner.js';
 
 export async function scanImages(
-    ignoreHiddenImages = false,
     includeAllImageSources = false,
     includeSupplementarySources = true,
     mutationObserverOptions = null,
@@ -201,30 +200,6 @@ export async function scanImages(
         return dimensionsPromise;
     };
 
-    const isHidden = (element, computedStyle = null) => {
-        if (!ignoreHiddenImages) return false;
-
-        try {
-            for (let current = element; current;) {
-                const style = current === element && computedStyle
-                    ? computedStyle
-                    : getComputedStyle(current);
-
-                if (style.display === 'none' ||
-                    style.visibility === 'hidden' ||
-                    style.visibility === 'collapse') {
-                    return true;
-                }
-
-                current = current.parentElement ?? current.getRootNode?.().host ?? null;
-            }
-        } catch {
-            return false;
-        }
-
-        return false;
-    };
-
     const hasNonZeroBlur = (filter) => {
         if (typeof filter !== 'string' || filter === 'none') return false;
 
@@ -360,14 +335,7 @@ export async function scanImages(
         });
     };
 
-    const collectImageElement = (
-        img,
-        includeAllSources,
-        seenURLs = null,
-        includeHiddenImages = false
-    ) => {
-        if (!includeHiddenImages && isHidden(img)) return;
-
+    const collectImageElement = (img, includeAllSources, seenURLs = null) => {
         const currentSrc = getURL(img.currentSrc, img.baseURI);
         const src = getURL(img.getAttribute('src'), img.baseURI);
         const dataSrc = getURL(img.getAttribute('data-src'), img.baseURI);
@@ -591,7 +559,7 @@ export async function scanImages(
                 imagesToProcess.forEach((image) => {
                     try {
                         collectImageElement(image, true, seenURLs);
-                        if (includeLightboxSources && !isHidden(image)) {
+                        if (includeLightboxSources) {
                             collectLightboxSources(image, seenURLs);
                         }
                     } catch {
@@ -689,7 +657,7 @@ export async function scanImages(
 
     for (const img of getDeepElements('img')) {
         collectImageElement(img, includeAllImageSources);
-        if (includeLightboxSources && !isHidden(img)) {
+        if (includeLightboxSources) {
             collectLightboxSources(img);
         }
     }
@@ -713,8 +681,6 @@ export async function scanImages(
         for (const element of elements) {
             try {
                 const style = getComputedStyle(element);
-                if (isHidden(element, style)) continue;
-
                 const backgroundImage = style.backgroundImage;
                 for (const url of getBackgroundURLs(backgroundImage)) {
                     addCandidate(url, 0, 0, 'backgroundimages', element);
@@ -725,8 +691,6 @@ export async function scanImages(
         }
 
         for (const link of getDeepElements('a[href]')) {
-            if (isHidden(link)) continue;
-
             const url = getURL(link.href);
 
             if (!isLinkedImageURL(url)) continue;
@@ -1288,7 +1252,6 @@ const DEEP_SCAN_READINESS_STABLE_MS = 300;
 const DEEP_SCAN_READINESS_MAX_WAIT_MS = 2000;
 
 export async function runIsolatedDeepScan({
-    ignoreHiddenImages = false,
     onBatch = null,
     signal = null,
     scrollStepFactor = 0.8,
@@ -1493,7 +1456,6 @@ export async function runIsolatedDeepScan({
         if (!isActive()) return;
 
         const foundCandidates = await scanImages(
-            ignoreHiddenImages,
             true,
             false,
             null,
@@ -1780,7 +1742,6 @@ export async function runIsolatedDeepScan({
 }
 
 export async function runHiddenFrameDeepScan({
-    ignoreHiddenImages = false,
     onBatch = null,
     signal = null,
     stableCycleLimit = 3,
@@ -2491,7 +2452,6 @@ export async function runHiddenFrameDeepScan({
         const collectionStartedAt = performance.now();
         const scanImagesStartedAt = performance.now();
         const foundCandidates = await scanImages(
-            ignoreHiddenImages,
             true,
             true,
             null,

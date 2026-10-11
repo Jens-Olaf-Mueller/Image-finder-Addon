@@ -678,7 +678,6 @@ function createHiddenDeepScanHostMessage(job, action) {
         token: job.token,
         ...(action === 'start' ? {
             url: job.url,
-            ignoreHiddenImages: job.ignoreHiddenImages === true,
             minimumImageWidth: job.minimumImageWidth,
             minimumImageHeight: job.minimumImageHeight
         } : {})
@@ -803,7 +802,6 @@ async function startHiddenDeepScan(request) {
         tabId: request.tabId,
         hostFrameId: HIDDEN_DEEP_SCAN_HOST_FRAME_ID,
         url: request.url,
-        ignoreHiddenImages: request.ignoreHiddenImages === true,
         minimumImageWidth: Number.isFinite(request.minimumImageWidth)
             ? Math.max(0, Math.round(request.minimumImageWidth))
             : 200,
@@ -1052,7 +1050,6 @@ async function startIsolatedDeepScan(request) {
         token: crypto.randomUUID(),
         url: request.url,
         tabId: request.tabId,
-        ignoreHiddenImages: request.ignoreHiddenImages === true,
         minimumImageWidth: Number.isFinite(request.minimumImageWidth)
             ? Math.max(0, Math.round(request.minimumImageWidth))
             : 200,
@@ -1084,7 +1081,6 @@ async function startIsolatedDeepScan(request) {
             scanId: job.scanId,
             tabId: job.tabId,
             url: job.url,
-            ignoreHiddenImages: job.ignoreHiddenImages,
             minimumImageWidth: job.minimumImageWidth,
             minimumImageHeight: job.minimumImageHeight,
             allowProtectedDeepScan: job.allowProtectedDeepScan

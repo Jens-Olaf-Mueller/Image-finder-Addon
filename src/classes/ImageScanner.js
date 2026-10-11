@@ -61,11 +61,9 @@ export default class ImageScanner {
         if (signal?.aborted || !Number.isInteger(tab?.id)) return [];
         this.currentTab = tab ?? null;
 
-        const filters = this.settings.get('filters') ?? {};
         const result = await window.chrome.scripting.executeScript({
             target: {tabId: tab.id},
-            func: scanImages,
-            args: [filters.ignoreHiddenImages === true]
+            func: scanImages
         });
         if (signal?.aborted) return [];
         const filesFound = result[0]?.result ?? [];
@@ -246,7 +244,6 @@ export default class ImageScanner {
             return [];
         }
 
-        const filters = this.settings.get('filters') ?? {};
         const debugSettings = this.settings.get('debug') ?? {};
         const imageFilter = this.filter;
         const allowProtectedDeepScan = this.settings.get(
@@ -422,7 +419,6 @@ export default class ImageScanner {
                     scanId,
                     url: scanContext.url,
                     tabId: scanContext.tabId,
-                    ignoreHiddenImages: filters.ignoreHiddenImages === true,
                     minimumImageWidth: imageFilter.minWidth,
                     minimumImageHeight: imageFilter.minHeight,
                     allowProtectedDeepScan,

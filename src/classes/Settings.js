@@ -789,7 +789,6 @@ export const DEFAULT_SETTINGS = {
     },
     filters: {
         ignoreDuplicates: true,
-        ignoreHiddenImages: false,
         ignoreBlurredImages: true,
         blurSettingsVersion: PIXEL_BLUR_SETTINGS_VERSION,
         hasExcludeList: false,
