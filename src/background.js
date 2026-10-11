@@ -122,6 +122,7 @@ function createDebugCollector(job) {
             enabledSources: {...job.enabledDebugLogSources}
         },
         enabledSources: {...job.enabledDebugLogSources},
+        popupClientId: job.popupClientId ?? null,
         records: [],
         collectorSequence: 0,
         exportTimer: null,
@@ -225,6 +226,27 @@ function handleDebugContextComplete(message) {
     });
 }
 
+// ✴️ NEW 2026-10-11: Keeps an open popup's final debug records ahead of the fallback export.
+function isPopupDebugContextPending(job, collector) {
+    const clientId = job?.popupClientId;
+
+    return collector?.enabledSources?.popup === true &&
+        collector.popupComplete !== true &&
+        typeof clientId === 'string' &&
+        popupDeepScanPorts.has(clientId);
+}
+
+// ✴️ NEW 2026-10-11: Exports completed records when their popup can no longer close the context.
+function scheduleDisconnectedPopupDebugExports(clientId) {
+    debugCollectorsByScanId.forEach((collector) => {
+        if (collector.popupClientId !== clientId || !collector.meta.status || collector.exported) {
+            return;
+        }
+
+        queueDebugCollectorExport(collector, DEBUG_LOG_EXPORT_DELAY_MS);
+    });
+}
+
 function scheduleDebugExport(job, status, reason = null) {
     const collector = debugCollectorsByScanId.get(job?.scanId);
     if (!collector || collector.exported) return;
@@ -234,6 +256,8 @@ function scheduleDebugExport(job, status, reason = null) {
     if (typeof reason === 'string' && reason) collector.meta.reason = reason;
     const flush = debugBackgroundLogger?.flush?.() ?? Promise.resolve();
     void flush.finally(() => {
+        // ✏️ EDIT 2026-10-11: An open popup flushes its own terminal records first.
+        if (isPopupDebugContextPending(job, collector)) return;
         queueDebugCollectorExport(
             collector,
             collector.popupComplete ? DEBUG_LOG_POPUP_FINAL_DELAY_MS : DEBUG_LOG_EXPORT_DELAY_MS
@@ -1367,6 +1391,7 @@ chrome.runtime.onConnect.addListener((port) => {
         if (popupDeepScanPorts.get(clientId) !== port) return;
 
         popupDeepScanPorts.delete(clientId);
+        scheduleDisconnectedPopupDebugExports(clientId);
         const job = activeIsolatedDeepScan;
         if (job?.popupClientId !== clientId) return;
 

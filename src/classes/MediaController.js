@@ -240,7 +240,7 @@ export class MediaController {
             },
             onDeepScanCandidates: (rawCandidates, signal, diagnostic, scan) =>
                 this.#processDeepScanCandidates(rawCandidates, signal, diagnostic, scan.generation),
-            onDeepScanFinished: ({failed, candidateCount}) => {
+            onDeepScanFinished: async ({failed, candidateCount}) => {
                 const completionInfo = `Deep scan completed after ${this.popup.deepScanElapsedTime}`;
 
                 console.info('[DeepScan RESULT]', {
@@ -251,6 +251,9 @@ export class MediaController {
                     candidates: this.candidates.size,
                     newCandidates: Math.max(0, this.candidates.size - deepScanInitialCandidates)
                 });
+
+                // ✴️ NEW 2026-10-11: Exports all DeepScan logs after the final result has been logged.
+                await this.scanner.completeDeepScanDebugContext();
 
                 return completionInfo;
             },

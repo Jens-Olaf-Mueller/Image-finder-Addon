@@ -18,6 +18,7 @@ export default class ImageScanner {
     #imageDimensionsByURL = new Map();
     #activeDeepScan = null;
     #deepScanClientId = null;
+    #deepScanDebugContext = null;
 
     get isDeepScanRunning() {
         return this.#activeDeepScan !== null;
@@ -212,6 +213,34 @@ export default class ImageScanner {
         return true;
     }
 
+    // ✴️ NEW 2026-10-11: Closes DeepScan debug collection after the final popup result log.
+    /**
+     * Flushes the popup debug context after the caller logged the final DeepScan result.
+     * @returns {Promise<void>}
+     */
+    async completeDeepScanDebugContext() {
+        const context = this.#deepScanDebugContext;
+        if (!context) return;
+
+        this.#deepScanDebugContext = null;
+        const {logger, scanId} = context;
+        try {
+            await logger?.flush?.();
+        } finally {
+            logger?.clearContext(scanId);
+            try {
+                await window.chrome.runtime.sendMessage({
+                    target: 'image-finder-debug-log',
+                    action: 'context-complete',
+                    source: 'popup',
+                    scanId
+                });
+            } catch {
+                // The fallback export covers a closed popup.
+            }
+        }
+    }
+
     async scanDeepImages(scanContext, onCandidates = null) {
         if (!scanContext?.isScannable || !Number.isInteger(scanContext.tabId)) {
             return [];
@@ -230,6 +259,7 @@ export default class ImageScanner {
 
         const scanId = crypto.randomUUID();
         const debugLogger = globalThis.imageFinderDebugLogger;
+        this.#deepScanDebugContext = {logger: debugLogger, scanId};
         debugLogger?.setContext({scanId, url: scanContext.url});
         const transportMetrics = {
             batches: 0,
@@ -415,25 +445,7 @@ export default class ImageScanner {
         } finally {
             session.finish({status: 'finished'});
             console.info('[DeepScan Performance]', createTransportSummary(completionResult));
-            const completeDebugContext = () => {
-                debugLogger?.clearContext(scanId);
-                try {
-                    void window.chrome.runtime.sendMessage({
-                        target: 'image-finder-debug-log',
-                        action: 'context-complete',
-                        source: 'popup',
-                        scanId
-                    }).catch(() => undefined);
-                } catch {
-                    // The fallback export covers a closed popup.
-                }
-            };
-            const debugFlush = debugLogger?.flush?.();
-            if (debugFlush && typeof debugFlush.finally === 'function') {
-                void debugFlush.finally(completeDebugContext);
-            } else {
-                completeDebugContext();
-            }
+            // ✏️ EDIT 2026-10-11: Keep the context until ImageFinder logged DeepScan RESULT.
         }
 
         return Array.from(candidatesByURL.values());
