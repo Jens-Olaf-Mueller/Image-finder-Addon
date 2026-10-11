@@ -1853,7 +1853,8 @@ export async function runHiddenFrameDeepScan({
     onBatch = null,
     signal = null,
     stableCycleLimit = 3,
-    scrollStepFactor = 0.8,
+    // ✏️ EDIT 2026-10-12: Advance by full viewport heights to reduce per-step settling.
+    scrollStepFactor = 1.0,
     minimumSettleMs = 150,
     quietSettleMs = 350,
     maximumSettleMs = 1500,
@@ -1881,6 +1882,8 @@ export async function runHiddenFrameDeepScan({
     const lowPriorityStructureContainers = new WeakSet();
     let lastRelevantMutationAt = startedAt;
     let relevantMutationCount = 0;
+    // ✴️ NEW 2026-10-11: Points to the single sequential settle phase currently observing DOM activity.
+    let activeSettleWait = null;
     let photoSwipeActivityCount = 0;
     let currentPassMetrics = null;
     // Kept central so a future setting can switch LOW traversal back on without
@@ -1899,7 +1902,11 @@ export async function runHiddenFrameDeepScan({
             if (records.length === 0) return;
 
             records.forEach(markKnownGenericRootsChanged);
-            lastRelevantMutationAt = Date.now();
+            const mutationAt = Date.now();
+            if (activeSettleWait?.firstMutationAt === null) {
+                activeSettleWait.firstMutationAt = mutationAt;
+            }
+            lastRelevantMutationAt = mutationAt;
             relevantMutationCount += records.length;
         }
     });
@@ -1936,6 +1943,17 @@ export async function runHiddenFrameDeepScan({
         batches: 0,
         documentUpSteps: 0,
         documentDownSteps: 0,
+        documentTargetSteps: 0,
+        documentAnchorSteps: 0,
+        documentBottomDwellSteps: 0,
+        documentNoneSteps: 0,
+        documentTargetMoves: 0,
+        documentAnchorMoves: 0,
+        documentBottomDwellMoves: 0,
+        documentUnmovedSteps: 0,
+        documentTargetDistancePx: 0,
+        documentAnchorDistancePx: 0,
+        documentBottomDwellDistancePx: 0,
         containerScrollSteps: 0,
         containersHandled: 0,
         containersScanned: 0,
@@ -2230,8 +2248,18 @@ export async function runHiddenFrameDeepScan({
             waits: 0,
             quietExits: 0,
             maxTimeouts: 0,
-            aborts: 0
+            aborts: 0,
+            noMutationWaits: 0,
+            noMutationMs: 0,
+            mutationWaits: 0,
+            mutationMs: 0,
+            mutationCount: 0,
+            alreadyQuietWaits: 0,
+            alreadyQuietMs: 0,
+            minimumDelayMs: 0,
+            beyondMinimumDelayMs: 0
         });
+        // ✴️ NEW 2026-10-11: Separates mandatory settling time from waits justified by DOM activity.
         const addSettleWaitToSummary = (summary, wait) => {
             summary.totalMs += wait.durationMs;
             summary.waits += 1;
@@ -2241,6 +2269,27 @@ export async function runHiddenFrameDeepScan({
                 abort: 'aborts'
             }[wait.endReason];
             if (counter) summary[counter] += 1;
+
+            const mutationDelta = Math.max(0, Number(wait.mutationDelta) || 0);
+            const minimumDelayMs = Math.min(
+                Math.max(0, Number(wait.durationMs) || 0),
+                Math.max(0, Number(wait.minimumWaitMs) || 0)
+            );
+            summary.minimumDelayMs += minimumDelayMs;
+            summary.beyondMinimumDelayMs += Math.max(0, wait.durationMs - minimumDelayMs);
+            if (mutationDelta === 0) {
+                summary.noMutationWaits += 1;
+                summary.noMutationMs += wait.durationMs;
+            } else {
+                summary.mutationWaits += 1;
+                summary.mutationMs += wait.durationMs;
+                summary.mutationCount += mutationDelta;
+            }
+
+            if (wait.lastRelevantMutationAgeAtStart >= wait.quietTargetMs) {
+                summary.alreadyQuietWaits += 1;
+                summary.alreadyQuietMs += wait.durationMs;
+            }
         };
         const settle = createSettleSummary();
         const settleByScope = {
@@ -2270,15 +2319,52 @@ export async function runHiddenFrameDeepScan({
             if (durationMs < 1500) return '1250-1499';
             return '>=1500';
         };
+        // ✴️ NEW 2026-10-11: Shows how long lazy DOM work takes to begin after a scroll action.
+        const firstMutationDelay = {
+            waits: 0,
+            totalMs: 0,
+            maxMs: 0,
+            below50Ms: 0,
+            from50To99Ms: 0,
+            from100To149Ms: 0,
+            from150To249Ms: 0,
+            from250To349Ms: 0,
+            from350Ms: 0
+        };
+        const getFirstMutationDelayBucket = (delayMs) => {
+            if (delayMs < 50) return 'below50Ms';
+            if (delayMs < 100) return 'from50To99Ms';
+            if (delayMs < 150) return 'from100To149Ms';
+            if (delayMs < 250) return 'from150To249Ms';
+            if (delayMs < 350) return 'from250To349Ms';
+            return 'from350Ms';
+        };
         settleWaits.forEach((wait) => {
             addSettleWaitToSummary(settle, wait);
             addSettleWaitToSummary(settleByScope[wait.scope], wait);
             if (wait.direction) addSettleWaitToSummary(settleByDirection[wait.direction], wait);
             settleDurationBuckets[getSettleDurationBucket(wait.durationMs)] += 1;
+
+            if (!Number.isFinite(wait.firstMutationDelayMs)) return;
+
+            firstMutationDelay.waits += 1;
+            firstMutationDelay.totalMs += wait.firstMutationDelayMs;
+            firstMutationDelay.maxMs = Math.max(
+                firstMutationDelay.maxMs,
+                wait.firstMutationDelayMs
+            );
+            firstMutationDelay[
+                getFirstMutationDelayBucket(wait.firstMutationDelayMs)
+            ] += 1;
         });
         const roundSettleSummary = (summary) => ({
             ...summary,
-            totalMs: Math.round(summary.totalMs)
+            totalMs: Math.round(summary.totalMs),
+            noMutationMs: Math.round(summary.noMutationMs),
+            mutationMs: Math.round(summary.mutationMs),
+            alreadyQuietMs: Math.round(summary.alreadyQuietMs),
+            minimumDelayMs: Math.round(summary.minimumDelayMs),
+            beyondMinimumDelayMs: Math.round(summary.beyondMinimumDelayMs)
         });
         const totalMs = Math.max(0, performance.now() - startedAtPerformance);
         const documentTraversalMs = scanPerformanceMetrics.documentUpMs +
@@ -2351,6 +2437,40 @@ export async function runHiddenFrameDeepScan({
                 'class/style-only changes and newly attached open shadow roots remain covered by ' +
                 'the final full scan.'
         };
+        // ✴️ NEW 2026-10-12: Keeps the scroll-plan result flat so debug-log export preserves every counter.
+        const documentScroll = {
+            targetSteps: scanPerformanceMetrics.documentTargetSteps,
+            targetMoves: scanPerformanceMetrics.documentTargetMoves,
+            targetDistancePx: Math.round(scanPerformanceMetrics.documentTargetDistancePx),
+            targetAverageDistancePx: scanPerformanceMetrics.documentTargetMoves > 0
+                ? Math.round(
+                    scanPerformanceMetrics.documentTargetDistancePx /
+                    scanPerformanceMetrics.documentTargetMoves
+                )
+                : 0,
+            anchorSteps: scanPerformanceMetrics.documentAnchorSteps,
+            anchorMoves: scanPerformanceMetrics.documentAnchorMoves,
+            anchorDistancePx: Math.round(scanPerformanceMetrics.documentAnchorDistancePx),
+            anchorAverageDistancePx: scanPerformanceMetrics.documentAnchorMoves > 0
+                ? Math.round(
+                    scanPerformanceMetrics.documentAnchorDistancePx /
+                    scanPerformanceMetrics.documentAnchorMoves
+                )
+                : 0,
+            bottomDwellSteps: scanPerformanceMetrics.documentBottomDwellSteps,
+            bottomDwellMoves: scanPerformanceMetrics.documentBottomDwellMoves,
+            bottomDwellDistancePx: Math.round(
+                scanPerformanceMetrics.documentBottomDwellDistancePx
+            ),
+            bottomDwellAverageDistancePx: scanPerformanceMetrics.documentBottomDwellMoves > 0
+                ? Math.round(
+                    scanPerformanceMetrics.documentBottomDwellDistancePx /
+                    scanPerformanceMetrics.documentBottomDwellMoves
+                )
+                : 0,
+            noActionSteps: scanPerformanceMetrics.documentNoneSteps,
+            unmovedSteps: scanPerformanceMetrics.documentUnmovedSteps
+        };
 
         return {
             status,
@@ -2384,6 +2504,7 @@ export async function runHiddenFrameDeepScan({
                 batchDispatchMs: Math.round(scanPerformanceMetrics.batchDispatchMs)
             },
             domDelta: domState.getMetrics(),
+            documentScroll,
             photoSwipeDetail: photoSwipeSummary,
             photoSwipeSlowCalls,
             edgeRangeGrowth: {
@@ -2403,7 +2524,15 @@ export async function runHiddenFrameDeepScan({
                 byDirection: Object.fromEntries(Object.entries(settleByDirection).map(
                     ([direction, summary]) => [direction, roundSettleSummary(summary)]
                 )),
-                durationBuckets: settleDurationBuckets
+                durationBuckets: settleDurationBuckets,
+                firstMutationDelay: {
+                    ...firstMutationDelay,
+                    totalMs: Math.round(firstMutationDelay.totalMs),
+                    averageMs: firstMutationDelay.waits > 0
+                        ? Math.round(firstMutationDelay.totalMs / firstMutationDelay.waits)
+                        : 0,
+                    maxMs: Math.round(firstMutationDelay.maxMs)
+                }
             },
             counters: {
                 collectSourcesCalls: scanPerformanceMetrics.collectSourcesCalls,
@@ -2500,11 +2629,20 @@ export async function runHiddenFrameDeepScan({
         phase = scope
     } = {}) => {
         const settleStartedAt = Date.now();
+        // ✴️ NEW 2026-10-11: Records the first post-scroll DOM activity for an adaptive settle threshold.
+        const settleActivity = {firstMutationAt: null};
+        activeSettleWait = settleActivity;
         const relevantMutationCountBefore = relevantMutationCount;
+        // ✴️ NEW 2026-10-11: Retains whether this wait began before or after the last relevant DOM activity.
+        const lastRelevantMutationAgeAtStart = Math.max(
+            0,
+            settleStartedAt - lastRelevantMutationAt
+        );
         const effectiveMinimumMs = Math.max(0, Math.min(minimumMs, maximumSettleMs));
         const maximumWaitMs = Math.max(effectiveMinimumMs, maximumSettleMs);
         const settleDeadline = settleStartedAt + maximumWaitMs;
         const finishSettleWait = (settled, endReason) => {
+            if (activeSettleWait === settleActivity) activeSettleWait = null;
             const lastRelevantMutationAgeMs = Math.max(0, Date.now() - lastRelevantMutationAt);
             settleWaits.push({
                 scope,
@@ -2518,6 +2656,10 @@ export async function runHiddenFrameDeepScan({
                 relevantMutationCountBefore,
                 relevantMutationCountAfter: relevantMutationCount,
                 mutationDelta: relevantMutationCount - relevantMutationCountBefore,
+                firstMutationDelayMs: settleActivity.firstMutationAt === null
+                    ? null
+                    : Math.max(0, settleActivity.firstMutationAt - settleStartedAt),
+                lastRelevantMutationAgeAtStart,
                 lastRelevantMutationAt,
                 lastRelevantMutationAgeMs
             });

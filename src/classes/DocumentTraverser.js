@@ -101,24 +101,32 @@ export default class DocumentTraverser {
                 ? this.#isAtCurrentDocumentTop(before)
                 : this.#isAtCurrentDocumentBottom(before);
             let scrollResult = {scrolled: false, targetMovement: 0};
+            let scrollMode = 'none';
 
             const scrollActionStartedAt = performance.now();
             if (atEdge) {
                 if (direction === 'down') {
                     const bottomTarget = this.#getBottomDwellTarget();
-                    if (bottomTarget) scrollResult = this.#scrollElementIntoView(bottomTarget, 'end');
+                    if (bottomTarget) {
+                        scrollMode = 'bottomDwell';
+                        scrollResult = this.#scrollElementIntoView(bottomTarget, 'end');
+                    }
                 }
             } else {
                 const target = this.#getNextScrollTarget(direction);
                 if (target) {
+                    scrollMode = 'target';
                     if (direction === 'up') this.#attemptedUpwardTargets.add(target.element);
                     else this.#attemptedDownwardTargets.add(target.element);
                     scrollResult = this.#scrollElementIntoView(target.element);
                 } else {
+                    scrollMode = 'anchor';
                     scrollResult = this.#scrollFurtherWithAnchor(before, direction);
                 }
             }
             this.#addMetric(metrics, 'scrollActionMs', performance.now() - scrollActionStartedAt);
+            // ✴️ NEW 2026-10-12: Distinguishes target, anchor, and edge dwell movement plans.
+            this.#addMetric(metrics, `document${scrollMode[0].toUpperCase()}${scrollMode.slice(1)}Steps`, 1);
 
             const settleStartedAt = performance.now();
             if (!(await this.#waitForSettle({
@@ -142,6 +150,16 @@ export default class DocumentTraverser {
                 ? after.effectiveScrollTop < before.effectiveScrollTop
                 : after.effectiveScrollTop > before.effectiveScrollTop;
             let scrollMoved = documentScrollMoved;
+            const documentScrollDistance = Math.abs(
+                after.effectiveScrollTop - before.effectiveScrollTop
+            );
+            if (documentScrollMoved) {
+                const metricPrefix = `document${scrollMode[0].toUpperCase()}${scrollMode.slice(1)}`;
+                this.#addMetric(metrics, `${metricPrefix}Moves`, 1);
+                this.#addMetric(metrics, `${metricPrefix}DistancePx`, documentScrollDistance);
+            } else {
+                this.#addMetric(metrics, 'documentUnmovedSteps', 1);
+            }
             let reachedEdge = direction === 'up'
                 ? this.#isAtCurrentDocumentTop(after)
                 : this.#isAtCurrentDocumentBottom(after);

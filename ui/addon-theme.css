@@ -3,7 +3,7 @@
     --adn-icon-size: 2rem;
     --adn-icon-size-small: 1.5rem;
     --adn-marker-size: 1rem;
-    --adn-icon-color: #202020;
+    --adn-icon-color: #101010;
     --adn-media-images: #6DBF39;
     --adn-media-videos: #EF4444;
     --adn-media-audio: #285EFE;
@@ -37,7 +37,7 @@
     --adn-led-active-text: #000000;
     --adn-led-scanner: #6DBF39;
     --adn-led-filter: #EF4444; /* tomato */
-    --adn-led-deep-scan: #ffe600;
+    --adn-led-deep-scan: gold;
 
     --adn-marker-new: #EF4444; /* tomato */
     --adn-marker-upgrade: #6DBF39; /* #32CD32 */
