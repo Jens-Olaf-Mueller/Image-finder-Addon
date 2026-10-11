@@ -1,5 +1,6 @@
 import { Settings } from './Settings.js';
 import ImageScanner from './ImageScanner.js';
+import MediaProvider, { MEDIA_CLUSTER_SIZE } from './MediaProvider.js';
 import AnalyzerClient from './AnalyzerClient.js';
 import ResultStore from './ResultStore.js';
 import Popup from './Popup.js';
@@ -23,7 +24,8 @@ export class MediaController {
         this.popup = new Popup();
         this.settings = new Settings();
         this.scanContext = new ScanContext();
-        this.scanner = new ImageScanner(this.settings);
+        this.mediaProvider = new MediaProvider(this.settings);
+        this.scanner = new ImageScanner(this.settings, this.mediaProvider);
         this.resultStore = new ResultStore();
         this.analyzerClient = new AnalyzerClient();
         // ✴️ NEW 2026-10-10: Keeps scan lifecycle and activity state outside the application controller.
@@ -128,7 +130,7 @@ export class MediaController {
         const previewVisible = await this.popup.showImagePreview(image, {
             isCurrent: () => (scanGeneration === null || this.scanController.isCurrent(scanGeneration)) &&
                 this.popup.selectedMediaId === imageId,
-            getFileInfo: (url) => this.scanner.getFileInfo(url)
+            getFileInfo: (url) => this.mediaProvider.getFileInfo(url)
         });
         if (!previewVisible) return;
 
@@ -507,9 +509,10 @@ export class MediaController {
 
         const candidatePreparationStartedAt = performance.now();
         const candidates = newCandidates.length > 0
-            ? await this.scanner.createCandidates(newCandidates, this.scanContext.tabId, {
+            ? await this.mediaProvider.prepareCandidates(newCandidates, this.scanContext.tabId, {
                 signal,
-                metrics: popupPipeline
+                metrics: measurePopupPipeline ? popupPipeline : null,
+                clusterSize: MEDIA_CLUSTER_SIZE
             })
             : [];
         popupPipeline.candidatePreparationMs = performance.now() - candidatePreparationStartedAt;

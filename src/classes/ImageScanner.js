@@ -1,8 +1,5 @@
 import { scanImages } from '../content.js';
-import { MediaType } from './MediaType.js';
 
-const DEFAULT_BYTES_PER_PIXEL = 0.1;
-const UTF8_ENCODER = new TextEncoder();
 const ISOLATED_DEEP_SCAN_TARGET = 'image-finder-isolated-deepscan';
 
 function getPixelCount(candidate) {
@@ -15,7 +12,6 @@ function getPixelCount(candidate) {
 }
 
 export default class ImageScanner {
-    #imageDimensionsByURL = new Map();
     #activeDeepScan = null;
     #deepScanClientId = null;
     #deepScanDebugContext = null;
@@ -24,22 +20,9 @@ export default class ImageScanner {
         return this.#activeDeepScan !== null;
     }
 
-    get filter() {
-        const fileSize = this.settings.get('filesizes') ?? {};
-        const imageTypes = this.settings.get('imagetypes') ?? {};
-        const extensions = Object.entries(imageTypes).filter(([_, enabled]) => enabled).map(([ext]) => ext);
-
-        return {
-            ignoreSize: fileSize.ignoresizes ?? true,
-            minWidth: fileSize.minwidth ?? 200,
-            minHeight: fileSize.minheight ?? 200,
-            minSize: (fileSize.minimumfilesize ?? 128) * 1024,
-            extensions: new Set(extensions)
-        };
-    }
-
-    constructor(settings) {
+    constructor(settings, mediaProvider) {
         this.settings = settings;
+        this.mediaProvider = mediaProvider;
         this.currentTab = null;
     }
 
@@ -53,7 +36,7 @@ export default class ImageScanner {
         if (signal?.aborted) return [];
 
         this.currentTab = null;
-        this.#imageDimensionsByURL.clear();
+        this.mediaProvider.reset();
         const [tab] = await window.chrome.tabs.query({
             active: true,
             currentWindow: true
@@ -68,154 +51,12 @@ export default class ImageScanner {
         if (signal?.aborted) return [];
         const filesFound = result[0]?.result ?? [];
 
-        const candidates = await this.createCandidates(filesFound, tab.id, {onStart, onProgress, signal});
+        const candidates = await this.mediaProvider.prepareCandidates(filesFound, tab.id, {
+            onStart,
+            onProgress,
+            signal
+        });
         return candidates;
-    }
-
-    // ✏️ EDIT 2026-10-11: Allows DeepScan diagnostics to measure candidate metadata preparation.
-    async createCandidates(filesFound, tabId, {
-        onStart = null,
-        onProgress = null,
-        signal = null,
-        metrics = null
-    } = {}) {
-        if (!Array.isArray(filesFound) || !Number.isInteger(tabId)) return [];
-
-        const isActive = () => signal?.aborted !== true;
-        const filter = this.filter;
-        const sources = this.settings.get('sources') ?? {};
-        const images = [];
-
-        if (metrics) metrics.suppliedCandidates = filesFound.length;
-        onStart?.(filesFound.length);
-
-        for (const image of filesFound) {
-            if (!isActive()) break;
-            try {
-                if (sources[image.source] === false) continue;
-                const dataImage = image.source === 'dataimages'
-                    ? this.getDataImageInfo(image.url)
-                    : null;
-                if (image.source === 'dataimages' && !dataImage) continue;
-
-                const blobImage = image.source === 'blobimages';
-                const blobMediaType = blobImage && typeof image.mimeType === 'string'
-                    ? MediaType.getType(image.mimeType)
-                    : null;
-
-                const url = dataImage || blobImage ? null : new URL(image.url);
-                const candidateFileName = dataImage
-                    ? `data-image.${dataImage.mediaType.format}`
-                    : blobImage
-                        ? 'blob-image'
-                        : decodeURIComponent(url.pathname.split('/').pop());
-                if (this.isExcluded(candidateFileName)) continue;
-
-                let fileInfo = dataImage
-                        ? {size: dataImage.size}
-                        : blobImage
-                            ? {size: image.fileSize ?? null, type: image.mimeType ?? null}
-                            : null,
-                    mediaType = dataImage?.mediaType ?? blobMediaType ??
-                        (!blobImage && candidateFileName.includes('.')
-                            ? MediaType.getType(candidateFileName.split('.').pop())
-                            : null);
-                let imageType = mediaType?.type === 'image' ? mediaType.format : null;
-
-                // Keine oder unbekannte Extension → MIME-Type ermitteln
-                if (!imageType || !filter.extensions.has(imageType)) {
-                    if (dataImage || blobImage) continue;
-
-                    const fileInfoStartedAt = performance.now();
-                    if (metrics) metrics.fileInfoRequests += 1;
-                    fileInfo = await this.getFileInfo(image.url, signal);
-                    if (metrics) {
-                        metrics.fileInfoMs += performance.now() - fileInfoStartedAt;
-                        if (!fileInfo?.type) metrics.fileInfoFailures += 1;
-                    }
-                    if (!isActive()) break;
-                    if (!fileInfo?.type) continue;
-                    mediaType = MediaType.getType(fileInfo.type);
-                    imageType = mediaType?.type === 'image' ? mediaType.format : null;
-                    if (!imageType || !filter.extensions.has(imageType)) continue;
-                }
-
-                let width = image.width,
-                    height = image.height,
-                    dimensionsKnown = width > 0 && height > 0;
-
-                if (!dimensionsKnown) {
-                    const dimensionsCached = this.#imageDimensionsByURL.has(image.url);
-                    const dimensionsStartedAt = performance.now();
-                    if (metrics) {
-                        metrics.dimensionRequests += 1;
-                        if (dimensionsCached) metrics.dimensionCacheHits += 1;
-                    }
-                    const dimensions = await this.getImageDimensions(image.url, signal);
-                    if (metrics) {
-                        metrics.dimensionMs += performance.now() - dimensionsStartedAt;
-                        if (!dimensions) metrics.dimensionFailures += 1;
-                    }
-                    if (!isActive()) break;
-                    if (!dimensions) continue;
-
-                    width = dimensions.width;
-                    height = dimensions.height;
-                    dimensionsKnown = true;
-                }
-
-                const isValid = (dimensionsKnown && width >= filter.minWidth && height >= filter.minHeight);
-                let estimatedSize = null;
-                if (filter.ignoreSize && !isValid) {
-                    if (!fileInfo) {
-                        const fileInfoStartedAt = performance.now();
-                        if (metrics) metrics.fileInfoRequests += 1;
-                        fileInfo = await this.getFileInfo(image.url, signal);
-                        if (metrics) {
-                            metrics.fileInfoMs += performance.now() - fileInfoStartedAt;
-                            if (!fileInfo?.type) metrics.fileInfoFailures += 1;
-                        }
-                    }
-                    if (!isActive()) break;
-                    if (fileInfo?.size != null) {
-                        if (fileInfo.size < filter.minSize) continue;
-                    } else if (dimensionsKnown) {
-                        estimatedSize = width * height * DEFAULT_BYTES_PER_PIXEL;
-                        if (estimatedSize < filter.minSize) continue;
-                    }
-                }
-
-                if (!isActive()) break;
-                const imageId = crypto.randomUUID();
-                const fileName = dataImage
-                    ? `data-image-${imageId}.${imageType}`
-                    : blobImage
-                        ? `blob-image-${imageId}.${imageType}`
-                        : candidateFileName;
-                const candidate = {
-                    id: imageId,
-                    url: image.url,
-                    fileName,
-                    mediaType: mediaType.type,
-                    imageType,
-                    width,
-                    height,
-                    fileSize: fileInfo?.size ?? null,
-                    estimatedSize,
-                    source: image.source,
-                    tabId,
-                    visuallyBlurred: image.visuallyBlurred === true
-                };
-                images.push(candidate);
-            } catch (error) {
-                console.warn('Cannot process image:', image.url, error);
-            } finally {
-                onProgress?.();
-            }
-        }
-
-        if (metrics) metrics.createdCandidates = images.length;
-        return images;
     }
 
     async cancelDeepScan({endReason = 'cancelled'} = {}) {
@@ -279,7 +120,7 @@ export default class ImageScanner {
         const debugSettings = this.settings.get('debug') ?? {};
         const shouldMeasurePopupPipeline = debugSettings.debugmode === true &&
             debugSettings.logpopup === true;
-        const imageFilter = this.filter;
+        const imageFilter = this.mediaProvider.filter;
         const allowProtectedDeepScan = this.settings.get(
             'common',
             'allowProtectedDeepScan',
@@ -565,159 +406,4 @@ export default class ImageScanner {
         return Array.from(candidatesByURL.values());
     }
 
-    isExcluded(fileName) {
-        const filters = this.settings.get('filters') ?? {};
-
-        if (!filters.hasExcludeList) return false;
-
-        const excludeList = filters.excludeList
-            ?.split(',')
-            .map(word => word.trim().toLowerCase())
-            .filter(Boolean) ?? [];
-
-        const name = fileName.toLowerCase();
-
-        return excludeList.some(word => name.includes(word));
-    }
-
-    async getImageDimensions(url, signal = null) {
-        if (this.#imageDimensionsByURL.has(url)) {
-            return this.#imageDimensionsByURL.get(url);
-        }
-
-        const dimensionsPromise = new Promise((resolve) => {
-            const image = new Image();
-
-            const finish = (dimensions) => {
-                clearTimeout(timeout);
-                image.onload = null;
-                image.onerror = null;
-                signal?.removeEventListener?.('abort', onAbort);
-                resolve(dimensions);
-            };
-
-            const timeout = setTimeout(() => finish(null), 10000);
-            const onAbort = () => {
-                try {
-                    image.src = '';
-                } catch {
-                    // Clearing a page-owned image request is best effort.
-                }
-                finish(null);
-            };
-
-            image.onload = () => {
-                const width = image.naturalWidth;
-                const height = image.naturalHeight;
-
-                finish(
-                    width > 0 && height > 0
-                        ? {width, height}
-                        : null
-                );
-            };
-
-            image.onerror = () => finish(null);
-
-            try {
-                image.src = url;
-            } catch {
-                finish(null);
-            }
-            if (signal?.aborted) onAbort();
-            else signal?.addEventListener?.('abort', onAbort, {once: true});
-        });
-
-        this.#imageDimensionsByURL.set(url, dimensionsPromise);
-        return dimensionsPromise;
-    }
-
-    async getFileInfo(url, signal = null) {
-        try {
-            const response = await fetch(url, {
-                headers: {'Range': 'bytes=0-0'},
-                ...(signal ? {signal} : {})
-            });
-            if (!response.ok) return null;
-
-            const type = response.headers.get('content-type') || null;
-            const contentRange = response.headers.get('content-range');
-
-            let size = null;
-
-            if (contentRange) {
-                const total = contentRange.split('/').pop();
-                if (total && total !== '*') size = Number(total) || null;
-            } else {
-                size = Number(response.headers.get('content-length')) || null;
-            }
-
-            await response.body?.cancel();
-            return {
-                size,
-                type
-            };
-
-        } catch (error) {
-            if (signal?.aborted || error?.name === 'AbortError') return null;
-            console.warn('Cannot read file info:', url, error);
-            return null;
-        }
-    }
-
-    getDataImageInfo(url) {
-        if (typeof url !== 'string' || !/^data:image\//i.test(url)) return null;
-
-        const commaIndex = url.indexOf(',');
-        if (commaIndex === -1) return null;
-
-        const metadata = url.slice(5, commaIndex);
-        const [mime, ...parameters] = metadata.split(';');
-        const mediaType = MediaType.getType(mime);
-        if (!mediaType || mediaType.type !== 'image') return null;
-
-        const payload = url.slice(commaIndex + 1);
-        const isBase64 = parameters.some(
-            parameter => parameter.trim().toLowerCase() === 'base64'
-        );
-
-        return {
-            mediaType,
-            size: isBase64
-                ? this.getBase64PayloadSize(payload)
-                : this.getPercentEncodedPayloadSize(payload)
-        };
-    }
-
-    getBase64PayloadSize(payload) {
-        let base64 = payload;
-
-        try {
-            if (base64.includes('%')) base64 = decodeURIComponent(base64);
-        } catch {
-            return null;
-        }
-
-        base64 = base64.replace(/\s/g, '');
-        const padding = base64.endsWith('==') ? 2 : base64.endsWith('=') ? 1 : 0;
-
-        return Math.max(0, Math.floor(base64.length * 3 / 4) - padding);
-    }
-
-    getPercentEncodedPayloadSize(payload) {
-        let size = 0;
-        let rawStart = 0;
-
-        for (let index = 0; index < payload.length; index++) {
-            const encodedByte = payload[index] === '%' &&
-                /^[\da-f]{2}$/i.test(payload.slice(index + 1, index + 3));
-            if (!encodedByte) continue;
-
-            size += UTF8_ENCODER.encode(payload.slice(rawStart, index)).byteLength + 1;
-            index += 2;
-            rawStart = index + 1;
-        }
-
-        return size + UTF8_ENCODER.encode(payload.slice(rawStart)).byteLength;
-    }
 }

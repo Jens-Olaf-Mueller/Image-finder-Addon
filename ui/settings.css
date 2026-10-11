@@ -24,7 +24,7 @@ form#frmSettings {
 }
 
 #frmSettings fieldset[name] legend {
-    color: var(--adn-settings-legend-text);
+    color: var(--adn-text);
     font-weight: bold;
     transform: translateY(1rem);
 }
