@@ -749,6 +749,8 @@ export async function scanPhotoSwipeImages({
     dirtyGenericRoots = new Set(),
     registerGenericRoot = null,
     markGenericRootProcessed = null,
+    registerPendingGenericRoot = null,
+    markGenericRootReady = null,
     registerDirectTarget = null
 } = {}) {
     const performanceStartedAt = performance.now();
@@ -811,6 +813,8 @@ export async function scanPhotoSwipeImages({
             maxTimeoutOverrunMs: 0
         }
     } : null;
+    // ✴️ NEW 2026-10-11: Keeps individual wait causes measurable per scanner call.
+    const waitPurposeMetrics = new Map();
     if (performanceState && collectPerformance) {
         performanceState.callIndex = performanceDetail.callIndex;
     }
@@ -844,6 +848,26 @@ export async function scanPhotoSwipeImages({
             performanceDetail.queries.allElementsResults += size;
         }
     };
+    const recordWaitPurpose = (purpose, durationMs, endReason) => {
+        if (!collectPerformance) return;
+
+        const metrics = waitPurposeMetrics.get(purpose) ?? {
+            calls: 0,
+            totalMs: 0,
+            timeouts: 0,
+            aborts: 0
+        };
+        metrics.calls += 1;
+        metrics.totalMs += durationMs;
+        if (endReason === 'timeout') metrics.timeouts += 1;
+        if (endReason === 'abort') metrics.aborts += 1;
+        waitPurposeMetrics.set(purpose, metrics);
+    };
+    const getWaitPurposeSummary = () => Array.from(waitPurposeMetrics.entries())
+        .sort(([, first], [, second]) => second.totalMs - first.totalMs)
+        .map(([purpose, metrics]) => `${purpose}: ${Math.round(metrics.totalMs)}ms, ` +
+            `${metrics.calls} calls, ${metrics.timeouts} timeouts, ${metrics.aborts} aborts`)
+        .join(' | ');
     let genericCarouselMs = 0;
     let genericCarouselCalls = 0;
     let directPhotoSwipeMs = 0;
@@ -946,7 +970,11 @@ export async function scanPhotoSwipeImages({
         );
         return image ? {photoSwipe, slide, image} : null;
     };
-    const waitFor = (predicate, timeoutMs = 2000) => new Promise((resolve) => {
+    const waitFor = (
+        predicate,
+        timeoutMs = 2000,
+        purpose = 'unclassified'
+    ) => new Promise((resolve) => {
         const waitStartedAt = getPhaseStartedAt();
         let observer = null;
         let interval = null;
@@ -972,6 +1000,7 @@ export async function scanPhotoSwipeImages({
                         Math.max(0, durationMs - timeoutMs)
                     );
                 }
+                recordWaitPurpose(purpose, durationMs, endReason);
             }
             resolve(value);
         };
@@ -1010,13 +1039,14 @@ export async function scanPhotoSwipeImages({
         timeout = setTimeout(() => finish(null, 'timeout'), timeoutMs);
         signal?.addEventListener?.('abort', onAbort, {once: true});
     });
-    const closePhotoSwipe = async () => {
+    const closePhotoSwipe = async (purpose = 'photo-swipe') => {
         const photoSwipe = findOpenPhotoSwipe();
         if (!photoSwipe) return true;
 
         const closeButton = photoSwipe.querySelector('.pswp__button--close') ?? await waitFor(
             () => photoSwipe.querySelector('.pswp__button--close'),
-            500
+            500,
+            purpose + '-close-button'
         );
         if (!closeButton) return false;
 
@@ -1030,7 +1060,7 @@ export async function scanPhotoSwipeImages({
         const closed = await waitFor(() => {
             if (!photoSwipe.isConnected) return true;
             return !photoSwipe.classList.contains('pswp--open');
-        }, 1500);
+        }, 1500, purpose + '-close');
         return Boolean(closed);
     };
 
@@ -1224,7 +1254,9 @@ export async function scanPhotoSwipeImages({
             scanRoots,
             dirtyGenericRoots,
             registerGenericRoot,
-            markGenericRootProcessed
+            markGenericRootProcessed,
+            registerPendingGenericRoot,
+            markGenericRootReady
         });
         genericCarouselMs += carouselScanResult.genericCarouselMs;
         genericCarouselCalls += carouselScanResult.genericCarouselCalls;
@@ -1270,6 +1302,8 @@ export async function scanPhotoSwipeImages({
             ...performanceDetail,
             totalDurationMs: scanPhotoSwipeMs,
             nonWaitDurationMs: Math.max(0, scanPhotoSwipeMs - performanceDetail.waits.totalMs),
+            waitPurposes: Object.fromEntries(waitPurposeMetrics.entries()),
+            waitPurposeSummary: getWaitPurposeSummary(),
             generic: {
                 ...performanceDetail.generic,
                 durationMs: genericCarouselMs,
@@ -1926,6 +1960,8 @@ export async function runHiddenFrameDeepScan({
     const PHOTO_SWIPE_SLOW_CALL_THRESHOLD_MS = 250;
     const MAX_PHOTO_SWIPE_SLOW_CALLS = 12;
     const photoSwipeSlowCalls = [];
+    // ✴️ NEW 2026-10-11: Aggregates labelled Carousel and PhotoSwipe waits.
+    const photoSwipeWaitPurposeMetrics = new Map();
     const photoSwipeDetail = {
         totalCalls: 0,
         totalMs: 0,
@@ -1977,6 +2013,26 @@ export async function runHiddenFrameDeepScan({
     };
     const recordCollectionMetric = (metrics, name, value) => addMetric(metrics, name, value);
     const roundPhotoSwipeValue = (value) => Number.isFinite(value) ? Math.round(value) : value;
+    const addPhotoSwipeWaitPurposeMetrics = (waitPurposes = {}) => {
+        Object.entries(waitPurposes).forEach(([purpose, metrics]) => {
+            const summary = photoSwipeWaitPurposeMetrics.get(purpose) ?? {
+                calls: 0,
+                totalMs: 0,
+                timeouts: 0,
+                aborts: 0
+            };
+            summary.calls += metrics.calls;
+            summary.totalMs += metrics.totalMs;
+            summary.timeouts += metrics.timeouts;
+            summary.aborts += metrics.aborts;
+            photoSwipeWaitPurposeMetrics.set(purpose, summary);
+        });
+    };
+    const getPhotoSwipeWaitPurposeSummary = () => Array.from(photoSwipeWaitPurposeMetrics.entries())
+        .sort(([, first], [, second]) => second.totalMs - first.totalMs)
+        .map(([purpose, metrics]) => `${purpose}: ${Math.round(metrics.totalMs)}ms, ` +
+            `${metrics.calls} calls, ${metrics.timeouts} timeouts, ${metrics.aborts} aborts`)
+        .join(' | ');
     const createSlowPhotoSwipeRecord = (detail, performanceMetrics) => ({
         callIndex: detail.callIndex,
         totalDurationMs: roundPhotoSwipeValue(performanceMetrics.scanPhotoSwipeMs),
@@ -2095,6 +2151,7 @@ export async function runHiddenFrameDeepScan({
             photoSwipeDetail.waits.maxTimeoutOverrunMs,
             detail.waits.maxTimeoutOverrunMs
         );
+        addPhotoSwipeWaitPurposeMetrics(detail.waitPurposes);
         Object.entries(detail.phases).forEach(([name, durationMs]) => {
             const phase = photoSwipeDetail.phases[name] ?? {totalMs: 0, maxCallMs: 0};
             phase.totalMs += durationMs;
@@ -2257,6 +2314,7 @@ export async function runHiddenFrameDeepScan({
         }));
         const photoSwipeSummary = {
             ...photoSwipeDetail,
+            waitPurposeSummary: getPhotoSwipeWaitPurposeSummary(),
             totalMs: roundPhotoSwipeValue(photoSwipeDetail.totalMs),
             maxCallMs: roundPhotoSwipeValue(photoSwipeDetail.maxCallMs),
             direct: {
@@ -2288,7 +2346,10 @@ export async function runHiddenFrameDeepScan({
                     maxCallMs: roundPhotoSwipeValue(phase.maxCallMs)
                 }]
             )),
-            rootChangeTracking: 'Changed light-DOM subtrees and image loads are scanned incrementally; class/style-only changes and newly attached open shadow roots remain covered by the final full scan.'
+            rootChangeTracking: 'Changed light-DOM subtrees and image loads are scanned incrementally; ' +
+                'pending generic Carousels additionally observe their own state attributes. Other ' +
+                'class/style-only changes and newly attached open shadow roots remain covered by ' +
+                'the final full scan.'
         };
 
         return {
@@ -2599,6 +2660,8 @@ export async function runHiddenFrameDeepScan({
             dirtyGenericRoots: collectionScope.dirtyGenericRoots,
             registerGenericRoot: (root) => domState.registerGenericRoot(root),
             markGenericRootProcessed: (root) => domState.markGenericRootProcessed(root),
+            registerPendingGenericRoot: (root) => domState.registerPendingGenericRoot(root),
+            markGenericRootReady: (root) => domState.markGenericRootReady(root),
             registerDirectTarget: (target) => domState.registerDirectTarget(target)
         });
         const carouselPhotoSwipeMs = performance.now() - carouselStartedAt;

@@ -49,7 +49,9 @@ export default class CarouselScanner {
         scanRoots = [scanDocument],
         dirtyGenericRoots = new Set(),
         registerGenericRoot = null,
-        markGenericRootProcessed = null
+        markGenericRootProcessed = null,
+        registerPendingGenericRoot = null,
+        markGenericRootReady = null
     } = {}) {
         const genericSourceAttributes = [
             'src',
@@ -334,11 +336,19 @@ export default class CarouselScanner {
             try {
                 temporaryStyle = createTemporaryStyle();
                 activeTarget.click();
-                const photoSwipe = await waitFor(findOpenPhotoSwipe, 2000);
+                const photoSwipe = await waitFor(
+                    findOpenPhotoSwipe,
+                    2000,
+                    'generic-photo-swipe-open'
+                );
                 if (!photoSwipe || isAborted()) return;
 
                 reportActivity();
-                const readySlide = await waitFor(() => getReadyActiveSlideImage(photoSwipe), 3000);
+                const readySlide = await waitFor(
+                    () => getReadyActiveSlideImage(photoSwipe),
+                    3000,
+                    'generic-photo-swipe-ready'
+                );
                 if (!readySlide || isAborted()) return;
                 addCandidates(...collectPhotoSwipeCandidates(photoSwipe, {includePreloaded: true}));
                 const beforeZoom = getImageSnapshot(readySlide.image);
@@ -355,7 +365,7 @@ export default class CarouselScanner {
                     return didZoomStateChange(beforeZoom, afterZoom, photoSwipe)
                         ? {activeSlide, afterZoom}
                         : null;
-                }, 3000);
+                }, 3000, 'generic-photo-swipe-zoom');
                 if (zoomedSlide) addCandidates(...collectPhotoSwipeCandidates(
                     zoomedSlide.activeSlide.photoSwipe,
                     {includePreloaded: true}
@@ -364,8 +374,10 @@ export default class CarouselScanner {
                 // One optional enrichment failure must not stop horizontal traversal.
             } finally {
                 try {
-                    const closed = await closePhotoSwipe();
-                    if (!closed && findOpenPhotoSwipe()) await closePhotoSwipe();
+                    const closed = await closePhotoSwipe('generic-photo-swipe');
+                    if (!closed && findOpenPhotoSwipe()) {
+                        await closePhotoSwipe('generic-photo-swipe');
+                    }
                 } finally {
                     temporaryStyle?.remove();
                 }
@@ -455,8 +467,13 @@ export default class CarouselScanner {
             return gallery;
         };
         const traverseGenericCarousel = async (root, gallery) => {
-            const initialState = await waitFor(() => getGenericCarouselState(root, gallery), 1500);
-            if (!initialState || isAborted()) return;
+            // ✏️ EDIT 2026-10-11: Retry state-less roots only after their own state changes.
+            const initialState = getGenericCarouselState(root, gallery);
+            if (!initialState || isAborted()) {
+                if (!isAborted()) registerPendingGenericRoot?.(root);
+                return;
+            }
+            markGenericRootReady?.(root);
 
             const initialLabel = getCarouselStateLabel(gallery, initialState.key);
             const virtualHint = /(?:virtual|recycl)/i.test([
@@ -480,7 +497,11 @@ export default class CarouselScanner {
             const traverseDirection = async (direction) => {
                 let successfulTransitions = 0;
                 while (!isAborted()) {
-                    const beforeState = await waitFor(() => getGenericCarouselState(root, gallery), 1000);
+                    const beforeState = await waitFor(
+                        () => getGenericCarouselState(root, gallery),
+                        1000,
+                        'generic-before-state'
+                    );
                     if (!beforeState) return {kind: 'failed', reason: 'gallery-unavailable'};
 
                     const controlState = getGenericCarouselControl(root, direction);
@@ -516,7 +537,7 @@ export default class CarouselScanner {
                     const nextState = await waitFor(() => {
                         const state = getGenericCarouselState(root, gallery);
                         return state && state.key !== beforeState.key ? state : null;
-                    }, 3000);
+                    }, 3000, 'generic-next-state');
                     if (isAborted()) return {kind: 'aborted'};
                     if (!nextState) {
                         const settledControl = getGenericCarouselControl(root, direction);

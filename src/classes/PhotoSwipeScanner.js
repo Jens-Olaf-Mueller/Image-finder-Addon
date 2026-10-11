@@ -259,7 +259,7 @@ export default class PhotoSwipeScanner {
                 return didZoomStateChange(beforeZoom, afterZoom, activeSlide.photoSwipe)
                     ? {activeSlide, afterZoom}
                     : null;
-            }, 3000);
+            }, 3000, 'direct-carousel-zoom');
             if (isAborted()) return {alreadyVisited: false, newSources: sourcesBeforeZoom};
             if (!zoomedSlide) {
                 reportZoom(imageDimensions(beforeZoom) + ' no-upgrade');
@@ -295,7 +295,11 @@ export default class PhotoSwipeScanner {
                     backward: new Set()
                 }
             };
-            const initialState = await waitFor(() => getCarouselState(photoSwipe, carousel), 3000);
+            const initialState = await waitFor(
+                () => getCarouselState(photoSwipe, carousel),
+                3000,
+                'direct-carousel-initial-state'
+            );
             if (!initialState || isAborted()) return;
 
             const initialStateLabel = getCarouselStateLabel(carousel, initialState.key);
@@ -314,7 +318,8 @@ export default class PhotoSwipeScanner {
                 while (!isAborted()) {
                     const beforeState = await waitFor(
                         () => getCarouselState(photoSwipe, carousel),
-                        1000
+                        1000,
+                        'direct-carousel-before-state'
                     );
                     if (!beforeState) {
                         reportCarousel(
@@ -350,7 +355,7 @@ export default class PhotoSwipeScanner {
                     const nextState = await waitFor(() => {
                         const state = getCarouselState(photoSwipe, carousel);
                         return state && state.key !== beforeState.key ? state : null;
-                    }, 3000);
+                    }, 3000, 'direct-carousel-next-state');
                     if (isAborted()) return {kind: 'aborted'};
                     if (!nextState) {
                         const stableControl = getCarouselControl(photoSwipe, direction);
@@ -490,7 +495,11 @@ export default class PhotoSwipeScanner {
                 temporaryStyle = createTemporaryStyle();
                 target.click();
 
-                const photoSwipe = await waitFor(findOpenPhotoSwipe, 2000);
+                const photoSwipe = await waitFor(
+                    findOpenPhotoSwipe,
+                    2000,
+                    'direct-photo-swipe-open'
+                );
                 if (isAborted()) break;
                 if (!photoSwipe) continue;
 
@@ -502,7 +511,8 @@ export default class PhotoSwipeScanner {
 
                 const readySlide = await waitFor(
                     () => getReadyActiveSlideImage(findOpenPhotoSwipe()),
-                    3000
+                    3000,
+                    'direct-photo-swipe-ready'
                 );
                 if (isAborted()) break;
                 if (!readySlide) continue;
@@ -525,7 +535,7 @@ export default class PhotoSwipeScanner {
                     return didZoomStateChange(beforeZoom, afterZoom, activeSlide.photoSwipe)
                         ? {activeSlide, afterZoom}
                         : null;
-                }, 3000);
+                }, 3000, 'direct-photo-swipe-zoom');
                 if (isAborted()) break;
                 if (!zoomedSlide) {
                     reportZoom(imageDimensions(beforeZoom) + ' no-upgrade');
@@ -543,8 +553,10 @@ export default class PhotoSwipeScanner {
                 // One page-owned PhotoSwipe target must not stop the remaining DeepScan.
             } finally {
                 try {
-                    const closed = await closePhotoSwipe();
-                    if (!closed && findOpenPhotoSwipe()) await closePhotoSwipe();
+                    const closed = await closePhotoSwipe('direct-photo-swipe');
+                    if (!closed && findOpenPhotoSwipe()) {
+                        await closePhotoSwipe('direct-photo-swipe');
+                    }
                 } finally {
                     temporaryStyle?.remove();
                     directPhotoSwipeMs += performance.now() - photoSwipeStartedAt;

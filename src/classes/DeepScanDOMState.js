@@ -1,3 +1,15 @@
+const GENERIC_CAROUSEL_STATE_ATTRIBUTES = [
+    'class',
+    'aria-current',
+    'aria-hidden',
+    'aria-selected',
+    'data-active',
+    'data-active-slide',
+    'data-index',
+    'data-slide-index',
+    'data-swiper-slide-index'
+];
+
 /**
  * Tracks source-relevant DOM changes during one hidden DeepScan run.
  */
@@ -10,6 +22,9 @@ export default class DeepScanDOMState {
     #dirtyGenericRoots = new Set();
     #knownGenericRoots = new Set();
     #knownDirectTargets = new Set();
+    // ✴️ NEW 2026-10-11: Watches only generic roots without an initial state.
+    #pendingGenericRoots = new Set();
+    #pendingGenericRootObservers = new Map();
     #metrics = {
         relevantMutations: 0,
         childListMutations: 0,
@@ -19,7 +34,9 @@ export default class DeepScanDOMState {
         deltaScopes: 0,
         emptyDeltaScopes: 0,
         deltaRoots: 0,
-        dirtyGenericRoots: 0
+        dirtyGenericRoots: 0,
+        pendingGenericRootObservers: 0,
+        pendingGenericRootStateChanges: 0
     };
 
     /**
@@ -55,6 +72,7 @@ export default class DeepScanDOMState {
         this.#observer?.disconnect();
         this.#observer = null;
         this.#scanDocument?.removeEventListener('load', this.#onImageLoad, true);
+        this.#pendingGenericRootObservers.forEach((observer) => observer.disconnect());
     }
 
     /**
@@ -63,6 +81,40 @@ export default class DeepScanDOMState {
      */
     registerGenericRoot(root) {
         if (root?.nodeType === Node.ELEMENT_NODE) this.#knownGenericRoots.add(root);
+    }
+
+    /**
+     * Marks a generic root for event-driven retry while no Carousel state is available.
+     * @param {Element|null} root Carousel root without a usable state.
+     */
+    registerPendingGenericRoot(root) {
+        if (root?.nodeType !== Node.ELEMENT_NODE || root.isConnected === false) return;
+
+        this.#pendingGenericRoots.add(root);
+        if (this.#pendingGenericRootObservers.has(root) || typeof MutationObserver !== 'function') {
+            return;
+        }
+
+        const observer = new MutationObserver((records) => {
+            this.#handlePendingGenericRootMutations(root, records);
+        });
+        observer.observe(root, {
+            subtree: true,
+            attributes: true,
+            attributeFilter: GENERIC_CAROUSEL_STATE_ATTRIBUTES
+        });
+        this.#pendingGenericRootObservers.set(root, observer);
+        this.#metrics.pendingGenericRootObservers += 1;
+    }
+
+    /**
+     * Stops the narrow state observer after a generic root became usable.
+     * @param {Element|null} root Generic root with a usable Carousel state.
+     */
+    markGenericRootReady(root) {
+        this.#pendingGenericRoots.delete(root);
+        this.#pendingGenericRootObservers.get(root)?.disconnect();
+        this.#pendingGenericRootObservers.delete(root);
     }
 
     /**
@@ -119,7 +171,9 @@ export default class DeepScanDOMState {
             knownGenericRoots: this.#knownGenericRoots.size,
             knownDirectTargets: this.#knownDirectTargets.size,
             pendingRoots: this.#pendingRoots.size,
-            pendingGenericRoots: this.#dirtyGenericRoots.size
+            pendingGenericRoots: this.#dirtyGenericRoots.size,
+            pendingGenericStateRoots: this.#pendingGenericRoots.size,
+            pendingGenericStateObservers: this.#pendingGenericRootObservers.size
         };
     }
 
@@ -153,6 +207,20 @@ export default class DeepScanDOMState {
         });
         this.#metrics.relevantMutations += relevantRecords.length;
         this.#onActivity?.({records: relevantRecords, imageLoads: 0});
+    }
+
+    // Requeues a pending Carousel only when its own state attributes change.
+    #handlePendingGenericRootMutations(root, records) {
+        if (root.isConnected === false) {
+            this.markGenericRootReady(root);
+            return;
+        }
+        if (records.length === 0) return;
+
+        this.#pendingRoots.add(root);
+        this.#dirtyGenericRoots.add(root);
+        this.#metrics.pendingGenericRootStateChanges += records.length;
+        this.#onActivity?.({records, imageLoads: 0});
     }
 
     // Queues an added element or every added element of a document fragment.

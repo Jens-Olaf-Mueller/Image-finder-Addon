@@ -1200,6 +1200,7 @@
                 detail.queries.calls > 0 && detail.generic.candidateCount > 0 &&
                 Number.isFinite(detail.phases.genericCarouselDiscoveryMs) &&
                 Number.isFinite(detail.phases.candidateClassificationMs) &&
+                detail.waitPurposeSummary.includes('generic-next-state') &&
                 reuseDetail?.generic.rootsPreviouslySeen > 0 &&
                 reuseDetail.generic.rootsAlreadyProcessed > 0 &&
                 reuseDetail.generic.rootsUnchangedSincePreviousCall > 0

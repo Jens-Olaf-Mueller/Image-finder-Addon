@@ -206,6 +206,10 @@ img.preview:not([src]) {
     cursor: pointer;
 }
 
+.toolbar-button__media {
+    color: var(--adn-media-color, #6DBF39) !important;
+}
+
 .tbr-btn__small {
     display: flex;
     align-items: center;

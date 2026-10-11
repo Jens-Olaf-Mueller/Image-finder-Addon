@@ -54,8 +54,22 @@
                 'A changed known carousel must be marked dirty.');
 
             state.markGenericRootProcessed(carousel);
+            state.registerPendingGenericRoot(carousel);
+            carousel.setAttribute('aria-current', 'true');
+            await waitForMutations();
+
+            const pendingStateScope = state.consumeScope();
+            assert(pendingStateScope.roots.includes(carousel),
+                'A pending carousel state change must requeue its root.');
+            assert(pendingStateScope.dirtyGenericRoots.has(carousel),
+                'A pending carousel state change must mark its root dirty.');
+            state.markGenericRootReady(carousel);
             const metrics = state.getMetrics();
             assert(metrics.knownGenericRoots === 1, 'The known carousel count must be retained.');
+            assert(metrics.pendingGenericRootObservers === 1,
+                'A missing Carousel state must receive a narrow observer.');
+            assert(metrics.pendingGenericStateRoots === 0,
+                'A ready Carousel root must no longer remain pending.');
             assert(metrics.deltaRoots >= 2, 'Delta roots must be counted.');
             state.stop();
 
