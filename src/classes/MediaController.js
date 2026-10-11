@@ -238,8 +238,14 @@ export class MediaController {
                 deepScanInitialCandidates = this.candidates.size;
                 this.popup.setInfo('Image preview');
             },
-            onDeepScanCandidates: (rawCandidates, signal, diagnostic, scan) =>
-                this.#processDeepScanCandidates(rawCandidates, signal, diagnostic, scan.generation),
+            onDeepScanCandidates: (rawCandidates, signal, diagnostic, scan, measurePopupPipeline) =>
+                this.#processDeepScanCandidates(
+                    rawCandidates,
+                    signal,
+                    diagnostic,
+                    scan.generation,
+                    measurePopupPipeline
+                ),
             onDeepScanFinished: async ({failed, candidateCount}) => {
                 const completionInfo = `Deep scan completed after ${this.popup.deepScanElapsedTime}`;
 
@@ -436,21 +442,54 @@ export class MediaController {
     }
 
     // ✴️ NEW 2026-10-10: Processes one DeepScan batch while ScanController owns its lifecycle.
-    async #processDeepScanCandidates(rawCandidates, signal, diagnostic, scanGeneration) {
+    async #processDeepScanCandidates(
+        rawCandidates,
+        signal,
+        diagnostic,
+        scanGeneration,
+        measurePopupPipeline = false
+    ) {
         if (signal?.aborted || !this.scanController.isCurrent(scanGeneration)) return false;
 
+        // ✴️ NEW 2026-10-11: Measures popup-only DeepScan stages without changing their order.
+        const popupPipeline = {
+            rawCandidates: rawCandidates.length,
+            newURLCandidates: 0,
+            preparedCandidates: 0,
+            candidateSelectionMs: 0,
+            candidatePreparationMs: 0,
+            fileInfoRequests: 0,
+            fileInfoFailures: 0,
+            fileInfoMs: 0,
+            dimensionRequests: 0,
+            dimensionCacheHits: 0,
+            dimensionFailures: 0,
+            dimensionMs: 0,
+            candidateStoreMs: 0,
+            analyzerMs: 0,
+            visibleResultStoreMs: 0,
+            listReconciliationMs: 0,
+            listSortMs: 0,
+            postListUiMs: 0,
+            totalMs: 0
+        };
+        const batchStartedAt = performance.now();
         const visibleImagesBefore = this.images.size;
         const visibleURLsBefore = new Set(
             Array.from(this.images.values(), (item) => item.url)
         );
+        const candidateSelectionStartedAt = performance.now();
         const {
             newCandidates,
             existingCandidatesUpdated,
             existingCandidateUpgradeCount,
             updatedCandidateIds
         } = this.resultStore.getNewURLCandidates(rawCandidates);
+        popupPipeline.candidateSelectionMs = performance.now() - candidateSelectionStartedAt;
+        popupPipeline.newURLCandidates = newCandidates.length;
         if (newCandidates.length === 0 && !existingCandidatesUpdated) {
-            return diagnostic
+            popupPipeline.totalMs = performance.now() - batchStartedAt;
+            return diagnostic || measurePopupPipeline
                 ? {
                     continue: true,
                     mediaControllerNewURLs: 0,
@@ -460,17 +499,25 @@ export class MediaController {
                     visibleNewURLs: 0,
                     visibleWinnersFromBatch: 0,
                     notVisibleAfterFiltering: 0,
-                    visibleImages: this.images.size
+                    visibleImages: this.images.size,
+                    ...(measurePopupPipeline ? {popupPipeline} : {})
                 }
                 : true;
         }
 
+        const candidatePreparationStartedAt = performance.now();
         const candidates = newCandidates.length > 0
-            ? await this.scanner.createCandidates(newCandidates, this.scanContext.tabId, {signal})
+            ? await this.scanner.createCandidates(newCandidates, this.scanContext.tabId, {
+                signal,
+                metrics: popupPipeline
+            })
             : [];
+        popupPipeline.candidatePreparationMs = performance.now() - candidatePreparationStartedAt;
+        popupPipeline.preparedCandidates = candidates.length;
         if (signal?.aborted || !this.scanController.isCurrent(scanGeneration)) return false;
         if (candidates.length === 0 && !existingCandidatesUpdated) {
-            return diagnostic
+            popupPipeline.totalMs = performance.now() - batchStartedAt;
+            return diagnostic || measurePopupPipeline
                 ? {
                     continue: true,
                     mediaControllerNewURLs: newCandidates.length,
@@ -480,22 +527,26 @@ export class MediaController {
                     visibleNewURLs: 0,
                     visibleWinnersFromBatch: 0,
                     notVisibleAfterFiltering: 0,
-                    visibleImages: this.images.size
+                    visibleImages: this.images.size,
+                    ...(measurePopupPipeline ? {popupPipeline} : {})
                 }
                 : true;
         }
 
+        const candidateStoreStartedAt = performance.now();
         this.resultStore.addCandidates(candidates, {markerOrigin: 'deepScan'});
         const analysisCandidateIds = new Set([
             ...updatedCandidateIds,
             ...candidates.map((item) => item.id)
         ]);
+        popupPipeline.candidateStoreMs = performance.now() - candidateStoreStartedAt;
         const visibleImagesUpdated = await this.#refreshVisibleImages(scanGeneration, {
             incrementalAnalysis: true,
-            analysisCandidateIds
+            analysisCandidateIds,
+            popupPipeline
         });
 
-        if (!diagnostic) return visibleImagesUpdated;
+        if (!diagnostic && !measurePopupPipeline) return visibleImagesUpdated;
 
         const visibleWinnersFromBatch = candidates.filter((item) =>
             this.images.has(item.id)
@@ -513,7 +564,13 @@ export class MediaController {
             visibleNewURLs,
             visibleWinnersFromBatch,
             notVisibleAfterFiltering: candidates.length - visibleWinnersFromBatch,
-            visibleImages: this.images.size
+            visibleImages: this.images.size,
+            ...(measurePopupPipeline ? {
+                popupPipeline: {
+                    ...popupPipeline,
+                    totalMs: performance.now() - batchStartedAt
+                }
+            } : {})
         };
     }
 
@@ -537,20 +594,29 @@ export class MediaController {
         initialSort = false,
         showFilteringProgress = false,
         incrementalAnalysis = false,
-        analysisCandidateIds = null
+        analysisCandidateIds = null,
+        popupPipeline = null
     } = {}) {
         const visibleResultChanges = await this.#setVisibleImages(scanGeneration, {
             showFilteringProgress,
             incrementalAnalysis,
-            analysisCandidateIds
+            analysisCandidateIds,
+            popupPipeline
         });
         if (!visibleResultChanges || !this.scanController.isCurrent(scanGeneration)) return false;
 
+        const listReconciliationStartedAt = performance.now();
         const {selectedMediaId, previousSelectedMediaId} = this.#renderImages(visibleResultChanges);
+        if (popupPipeline) {
+            popupPipeline.listReconciliationMs += performance.now() - listReconciliationStartedAt;
+        }
         if (!this.scanController.isCurrent(scanGeneration)) return false;
 
+        const listSortStartedAt = performance.now();
         this.popup.applyMediaListSort(this.images, initialSort);
+        if (popupPipeline) popupPipeline.listSortMs += performance.now() - listSortStartedAt;
 
+        const postListUiStartedAt = performance.now();
         this.#updateImageListState();
         this.#updateSelectedMediaActions(selectedMediaId);
         if (selectedMediaId && selectedMediaId !== previousSelectedMediaId) {
@@ -560,6 +626,7 @@ export class MediaController {
                 console.warn('Cannot show replacement image:', selectedMediaId, error);
             }
         }
+        if (popupPipeline) popupPipeline.postListUiMs += performance.now() - postListUiStartedAt;
 
         return this.scanController.isCurrent(scanGeneration);
     }
@@ -573,7 +640,8 @@ export class MediaController {
     async #setVisibleImages(scanGeneration, {
         showFilteringProgress = false,
         incrementalAnalysis = false,
-        analysisCandidateIds = null
+        analysisCandidateIds = null,
+        popupPipeline = null
     } = {}) {
         const previousVisibleImageIds = new Set(this.images.keys());
         const allCandidates = Array.from(this.candidates);
@@ -590,6 +658,7 @@ export class MediaController {
                 runsDuplicateFinder: filters.ignoreDuplicates === true && candidates.length >= 2
             })
             : null;
+        const analyzerStartedAt = performance.now();
         const analyzedCandidates = await this.analyzerClient.filterCandidates(candidates, {
             allCandidates,
             filters,
@@ -606,8 +675,10 @@ export class MediaController {
             onBlurProgress: filteringProgress?.onBlurProgress,
             onDuplicateFinderProgress: filteringProgress?.onDuplicateFinderProgress
         });
+        if (popupPipeline) popupPipeline.analyzerMs += performance.now() - analyzerStartedAt;
         if (!analyzedCandidates || !this.scanController.isCurrent(scanGeneration)) return false;
 
+        const visibleResultStoreStartedAt = performance.now();
         const visibleCandidates = analyzedCandidates.map(({
             candidateEntry,
             replacesExistingResult
@@ -616,7 +687,12 @@ export class MediaController {
             return candidateEntry;
         });
 
-        return this.resultStore.replaceVisibleResults(visibleCandidates);
+        const visibleResultChanges = this.resultStore.replaceVisibleResults(visibleCandidates);
+        if (popupPipeline) {
+            popupPipeline.visibleResultStoreMs += performance.now() - visibleResultStoreStartedAt;
+        }
+
+        return visibleResultChanges;
     }
 
     #updateLED() {

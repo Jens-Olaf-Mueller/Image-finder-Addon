@@ -72,7 +72,13 @@ export default class ImageScanner {
         return candidates;
     }
 
-    async createCandidates(filesFound, tabId, {onStart = null, onProgress = null, signal = null} = {}) {
+    // ✏️ EDIT 2026-10-11: Allows DeepScan diagnostics to measure candidate metadata preparation.
+    async createCandidates(filesFound, tabId, {
+        onStart = null,
+        onProgress = null,
+        signal = null,
+        metrics = null
+    } = {}) {
         if (!Array.isArray(filesFound) || !Number.isInteger(tabId)) return [];
 
         const isActive = () => signal?.aborted !== true;
@@ -80,6 +86,7 @@ export default class ImageScanner {
         const sources = this.settings.get('sources') ?? {};
         const images = [];
 
+        if (metrics) metrics.suppliedCandidates = filesFound.length;
         onStart?.(filesFound.length);
 
         for (const image of filesFound) {
@@ -119,7 +126,13 @@ export default class ImageScanner {
                 if (!imageType || !filter.extensions.has(imageType)) {
                     if (dataImage || blobImage) continue;
 
+                    const fileInfoStartedAt = performance.now();
+                    if (metrics) metrics.fileInfoRequests += 1;
                     fileInfo = await this.getFileInfo(image.url, signal);
+                    if (metrics) {
+                        metrics.fileInfoMs += performance.now() - fileInfoStartedAt;
+                        if (!fileInfo?.type) metrics.fileInfoFailures += 1;
+                    }
                     if (!isActive()) break;
                     if (!fileInfo?.type) continue;
                     mediaType = MediaType.getType(fileInfo.type);
@@ -132,7 +145,17 @@ export default class ImageScanner {
                     dimensionsKnown = width > 0 && height > 0;
 
                 if (!dimensionsKnown) {
+                    const dimensionsCached = this.#imageDimensionsByURL.has(image.url);
+                    const dimensionsStartedAt = performance.now();
+                    if (metrics) {
+                        metrics.dimensionRequests += 1;
+                        if (dimensionsCached) metrics.dimensionCacheHits += 1;
+                    }
                     const dimensions = await this.getImageDimensions(image.url, signal);
+                    if (metrics) {
+                        metrics.dimensionMs += performance.now() - dimensionsStartedAt;
+                        if (!dimensions) metrics.dimensionFailures += 1;
+                    }
                     if (!isActive()) break;
                     if (!dimensions) continue;
 
@@ -144,7 +167,15 @@ export default class ImageScanner {
                 const isValid = (dimensionsKnown && width >= filter.minWidth && height >= filter.minHeight);
                 let estimatedSize = null;
                 if (filter.ignoreSize && !isValid) {
-                    fileInfo ??= await this.getFileInfo(image.url, signal);
+                    if (!fileInfo) {
+                        const fileInfoStartedAt = performance.now();
+                        if (metrics) metrics.fileInfoRequests += 1;
+                        fileInfo = await this.getFileInfo(image.url, signal);
+                        if (metrics) {
+                            metrics.fileInfoMs += performance.now() - fileInfoStartedAt;
+                            if (!fileInfo?.type) metrics.fileInfoFailures += 1;
+                        }
+                    }
                     if (!isActive()) break;
                     if (fileInfo?.size != null) {
                         if (fileInfo.size < filter.minSize) continue;
@@ -183,6 +214,7 @@ export default class ImageScanner {
             }
         }
 
+        if (metrics) metrics.createdCandidates = images.length;
         return images;
     }
 
@@ -245,6 +277,8 @@ export default class ImageScanner {
         }
 
         const debugSettings = this.settings.get('debug') ?? {};
+        const shouldMeasurePopupPipeline = debugSettings.debugmode === true &&
+            debugSettings.logpopup === true;
         const imageFilter = this.filter;
         const allowProtectedDeepScan = this.settings.get(
             'common',
@@ -267,6 +301,33 @@ export default class ImageScanner {
             popupQueueMs: 0,
             popupPipelineMs: 0,
             endToEndMs: 0
+        };
+        // ✴️ NEW 2026-10-11: Aggregates the popup-only DeepScan phases that follow hidden scanning.
+        const popupPipelineDetail = {
+            batches: 0,
+            rawCandidates: 0,
+            newURLCandidates: 0,
+            preparedCandidates: 0,
+            candidateSelectionMs: 0,
+            candidatePreparationMs: 0,
+            fileInfoRequests: 0,
+            fileInfoFailures: 0,
+            fileInfoMs: 0,
+            dimensionRequests: 0,
+            dimensionCacheHits: 0,
+            dimensionFailures: 0,
+            dimensionMs: 0,
+            candidateStoreMs: 0,
+            analyzerMs: 0,
+            visibleResultStoreMs: 0,
+            listReconciliationMs: 0,
+            listSortMs: 0,
+            postListUiMs: 0,
+            totalMs: 0,
+            maxCandidatePreparationMs: 0,
+            maxAnalyzerMs: 0,
+            maxListReconciliationMs: 0,
+            maxTotalMs: 0
         };
 
         const addTransportDuration = (name, value) => {
@@ -304,8 +365,59 @@ export default class ImageScanner {
                 name,
                 Number.isFinite(value) ? Math.round(value) : value
             ])),
+            popupPipelineDetail: Object.fromEntries(Object.entries(popupPipelineDetail).map(([name, value]) => [
+                name,
+                Number.isFinite(value) ? Math.round(value) : value
+            ])),
             note: 'Transport timings are wall-clock batch latencies; the hidden summary contains the non-overlapping DeepScan phase percentages.'
         });
+        const recordPopupPipelineDetail = (metrics) => {
+            if (!metrics || typeof metrics !== 'object') return;
+
+            const summedMetrics = [
+                'rawCandidates',
+                'newURLCandidates',
+                'preparedCandidates',
+                'candidateSelectionMs',
+                'candidatePreparationMs',
+                'fileInfoRequests',
+                'fileInfoFailures',
+                'fileInfoMs',
+                'dimensionRequests',
+                'dimensionCacheHits',
+                'dimensionFailures',
+                'dimensionMs',
+                'candidateStoreMs',
+                'analyzerMs',
+                'visibleResultStoreMs',
+                'listReconciliationMs',
+                'listSortMs',
+                'postListUiMs',
+                'totalMs'
+            ];
+
+            popupPipelineDetail.batches += 1;
+            summedMetrics.forEach((name) => {
+                if (Number.isFinite(metrics[name])) popupPipelineDetail[name] += metrics[name];
+            });
+            popupPipelineDetail.maxCandidatePreparationMs = Math.max(
+                popupPipelineDetail.maxCandidatePreparationMs,
+                metrics.candidatePreparationMs ?? 0
+            );
+            popupPipelineDetail.maxAnalyzerMs = Math.max(
+                popupPipelineDetail.maxAnalyzerMs,
+                metrics.analyzerMs ?? 0
+            );
+            popupPipelineDetail.maxListReconciliationMs = Math.max(
+                popupPipelineDetail.maxListReconciliationMs,
+                metrics.listReconciliationMs ?? 0
+            );
+            popupPipelineDetail.maxTotalMs = Math.max(
+                popupPipelineDetail.maxTotalMs,
+                metrics.totalMs ?? 0
+            );
+            console.info('[DeepScan Popup Pipeline]', metrics);
+        };
         let batchQueue = Promise.resolve();
         let resolveCompletion = null;
         let completionResult = null;
@@ -353,7 +465,13 @@ export default class ImageScanner {
                     return;
                 }
 
-                const result = await onCandidates(newCandidates, session.controller.signal, diagnostic);
+                const result = await onCandidates(
+                    newCandidates,
+                    session.controller.signal,
+                    diagnostic,
+                    shouldMeasurePopupPipeline
+                );
+                recordPopupPipelineDetail(result?.popupPipeline);
 
                 if ((result === false || result?.continue === false) ||
                     session.cancelled || session.controller.signal.aborted) {

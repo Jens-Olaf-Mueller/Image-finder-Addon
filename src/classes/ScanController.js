@@ -148,8 +148,14 @@ export default class ScanController {
             try {
                 const deepScanCandidates = await this.#scanner.scanDeepImages(
                     scanContext,
-                    (rawCandidates, signal, diagnostic = null) =>
-                        onDeepScanCandidates?.(rawCandidates, signal, diagnostic, scan)
+                    (rawCandidates, signal, diagnostic = null, measurePopupPipeline = false) =>
+                        onDeepScanCandidates?.(
+                            rawCandidates,
+                            signal,
+                            diagnostic,
+                            scan,
+                            measurePopupPipeline
+                        )
                 );
                 deepScanCandidateCount = deepScanCandidates.length;
             } catch (error) {
