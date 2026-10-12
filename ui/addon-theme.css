@@ -6,7 +6,8 @@
     --adn-icon-color: #101010;
     --adn-media-images: #6DBF39;
     --adn-media-videos: #EF4444;
-    --adn-media-audio: #285EFE;
+    --adn-media-audios: #285EFE;
+    /* --adn-media-none: #777; */
 
     --adn-media-color: var(--adn-media-images, #6DBF39);
 
@@ -25,9 +26,6 @@
     --adn-button-inset-border: silver;
     --adn-disabled-text: #777;
 
-    /* progressbar-colors: */
-    --adn-progressbar-bg-scan: #6DBF39; /* #32CD32 */
-    --adn-progressbar-bg-filter: #EF4444; /* tomato */
     --adn-progressbar-border: silver;
     --adn-progressbar-text: whitesmoke;
     --adn-control-accent: #285EFE; /* #006000 #32CD32 */
@@ -35,9 +33,6 @@
     --adn-led-bg: #cccccc;
     --adn-led-text: #000000;
     --adn-led-active-text: #000000;
-    --adn-led-scanner: #6DBF39;
-    --adn-led-filter: #EF4444; /* tomato */
-    --adn-led-deep-scan: gold;
 
     --adn-marker-new: #EF4444; /* tomato */
     --adn-marker-upgrade: #6DBF39; /* #32CD32 */

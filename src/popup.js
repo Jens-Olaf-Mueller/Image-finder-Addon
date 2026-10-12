@@ -59,10 +59,10 @@ async function runPopup() {
     await mediaController.run(async () => {
         if (!form) return;
 
-        const settingsPanel = new SettingsPanel(mediaController.settings, form, {
+        const panel = new SettingsPanel(mediaController.settings, form, {
             onSettingsChanged: () => mediaController.updateDownloadTitles()
         });
-        mediaController.popup.setSettingsPanel(settingsPanel);
-        await settingsPanel.run({loadSettings: false});
+        mediaController.popup.setSettingsPanel(panel);
+        await panel.run({loadSettings: false});
     });
 }

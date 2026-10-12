@@ -49,12 +49,13 @@ export default class Progressbar {
         this.#renderBackgroundColor();
     }
 
-    #backgroundColor = 'var(--adn-progressbar-bg-scan, #32CD32)';
+    // ✏️ EDIT 2026-10-12: Uses the active media color for every scan and filter phase.
+    #backgroundColor = 'var(--adn-media-color, #6DBF39)';
     get backgroundColor() { return this.#backgroundColor; }
-    set backgroundColor(value) {
-        if (typeof value !== 'string' || !value.trim()) return;
+    set backgroundColor(newBgColor) {
+        if (typeof newBgColor !== 'string' || !newBgColor.trim()) return;
 
-        this.#backgroundColor = value;
+        this.#backgroundColor = newBgColor;
         this.#renderBackgroundColor();
     }
 

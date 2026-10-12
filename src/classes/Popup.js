@@ -13,8 +13,13 @@ const SORT_DIRECTION_TITLES = Object.freeze({
     asc: 'ascending',
     desc: 'descending'
 });
-const SCAN_PROGRESS_COLOR = 'var(--adn-progressbar-bg-scan, #32CD32)';
-const FILTER_PROGRESS_COLOR = 'var(--adn-progressbar-bg-filter, tomato)';
+
+const MEDIA_MODES = Object.freeze({
+    1: 'image',
+    2: 'video',
+    3: 'audio'
+});
+
 const REOPEN_POPUP_AFTER_RESTART_STORAGE_KEY = 'reopenPopupAfterRestart';
 
 /**
@@ -33,6 +38,18 @@ export default class Popup {
         criterion: null,
         direction: 'asc'
     };
+
+    #mode = 1;
+    get mode() { return MEDIA_MODES[this.#mode]; }
+    set mode(newMode) {
+        if (typeof newMode !== 'number' || newMode < 1 || newMode > 3) return;
+        this.#mode = newMode;
+    }
+
+    get cssMediaColor() {
+        const cssVar = `--adn-media-${this.mode}s`;
+        return getComputedStyle(document.documentElement).getPropertyValue(cssVar).trim() || '#6DBF39';
+    }
 
     /**
      * Gives the currently selected result list item.
@@ -103,6 +120,9 @@ export default class Popup {
         this.#mediaList = new MediaList(this.DOM.lstImages);
         this.#mediaPreview = new MediaPreview(this.DOM.divPreview, this.DOM.spnStatusBar);
         this.#progressbar = new Progressbar(this.DOM.divProgressbar);
+        // ✴️ NEW 2026-10-12: Makes the selected media color available to every popup control.
+        document.documentElement.style.setProperty('--adn-media-color', this.cssMediaColor);
+        this.#progressbar.backgroundColor = this.cssMediaColor;
         this.#setEventListeners();
         window.addEventListener('pagehide', () => this.#stopDeepScanTitleTimer(), {once: true});
     }
@@ -145,6 +165,8 @@ export default class Popup {
         button.value = isActive ? 'true' : 'false';
         button.title = isActive ? 'Stop scan' : 'Find images';
         button.setAttribute('aria-label', button.title);
+        // ✏️ EDIT 2026-10-12: Locks the scan media type for every active scan generation.
+        this.DOM.btnMediaType.disabled = isActive;
     }
 
     /**
@@ -353,7 +375,8 @@ export default class Popup {
      * @param {Number} max Progress maximum.
      */
     showScanProgress(max) {
-        this.#progressbar.backgroundColor = SCAN_PROGRESS_COLOR;
+        // ✏️ EDIT 2026-10-12: Normal scans use the active media color.
+        this.#progressbar.backgroundColor = this.cssMediaColor;
         this.#showProgressbar(max);
     }
 
@@ -361,7 +384,7 @@ export default class Popup {
      * Resets normal scan progress without changing its visibility.
      */
     resetScanProgress() {
-        this.#progressbar.backgroundColor = SCAN_PROGRESS_COLOR;
+        this.#progressbar.backgroundColor = this.cssMediaColor;
         this.#progressbar.reset();
     }
 
@@ -384,7 +407,8 @@ export default class Popup {
         ];
         if (stages.length === 0) return null;
 
-        this.#progressbar.backgroundColor = FILTER_PROGRESS_COLOR;
+        // ✏️ EDIT 2026-10-12: Filtering shares the selected media color with both scan phases.
+        this.#progressbar.backgroundColor = this.cssMediaColor;
         this.#showProgressbar(100);
 
         const progressByStage = Object.fromEntries(stages.map((stage, index) => [
@@ -417,7 +441,7 @@ export default class Popup {
     finishFilteringProgress() {
         this.#progressbar.setValue(this.#progressbar.max);
         this.#hideProgressbar();
-        this.#progressbar.backgroundColor = SCAN_PROGRESS_COLOR;
+        this.#progressbar.backgroundColor = this.cssMediaColor;
     }
 
     /**
@@ -524,6 +548,20 @@ export default class Popup {
         if (!button || !this.DOM.divToolbar.contains(button)) return;
 
         switch (button.id) {
+            case 'btnMediaType':
+                this.#mode++;
+                if (this.#mode > 3) this.#mode = 1;
+                button.value = this.#mode;
+                button.title = `Scan for ${this.mode}${this.#mode !== 3 ? 's': ' files'}`;
+                const media = this.mode.charAt(0).toUpperCase() + this.mode.slice(1);
+                const icon = document.getElementById('useMedia');
+                icon.setAttribute('href', `../assets/icons/button-icons.svg#svgMedia${media}`);
+                document.documentElement.style.setProperty('--adn-media-color', this.cssMediaColor);
+                this.#progressbar.backgroundColor = this.cssMediaColor;
+
+                // TODO Apply the other mode logig here
+                break;
+
             case 'btnSettings':
                 await this.#toggleSettingsPanel();
                 break;

@@ -92,10 +92,6 @@
             <input type="checkbox" id="chkIgnoreDuplicates" name="ignoreDuplicates" checked/>
              Ignore duplicates
         </label>
-        <label id="lblIgnoreBlurredImages" class="control">
-            <input type="checkbox" id="chkIgnoreBlurredImages" name="ignoreBlurredImages" checked/>
-             Ignore blurred images
-        </label>
         <div class="control ctrl__vertical">
             <label>
                 <input type="checkbox" id="chkExcludeList" name="hasExcludeList">
@@ -103,6 +99,10 @@
             </label>
             <input type="text" id="inpExcludeList" name="excludeList" disabled>
         </div>
+        <label id="lblIgnoreBlurredImages" class="control">
+            <input type="checkbox" id="chkIgnoreBlurredImages" name="ignoreBlurredImages" checked/>
+             Ignore blurred images
+        </label>
     </fieldset>
 
     <fieldset name="imagetypes"><legend>Media Types</legend>
@@ -175,6 +175,18 @@
         </label>
 
         <!-- .mp3 | .wav | .acc | .ogg | .opus | .flac | . -->
+    </fieldset>
+
+    <fieldset name="blurfilter" style="display: flex; align-items: center;">
+        <legend>Blur filter</legend>
+        <img id="imgBlurSample" src="/assets/icons/icon512.png" alt="icon" width="256" height="236">
+        <input id="sldBlurTolerance" name="blurTolerance"
+            type="range"
+            min="0"
+            max="16"
+            value="2"
+            title="Tolerance value for blur filter"
+            style="width: 100%;">
     </fieldset>
 
     <fieldset name="sources"><legend>Image Sources</legend>

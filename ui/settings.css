@@ -38,6 +38,7 @@ form#frmSettings {
     flex-direction: column;
     align-items: flex-start;
     gap: 6px;
+    padding-bottom: 8px;
 }
 
 #frmSettings .control label:first-child {

@@ -155,7 +155,7 @@ img.preview:not([src]) {
     display: none;
     width: 0%; /* is going to be changed from 0 - 100% */
     height: 1.1rem;
-    background-color: var(--adn-progressbar-bg);
+    background-color: var(--adn-media-color, #6DBF39);
     border: 2px inset var(--adn-progressbar-border);
     color: var(--adn-progressbar-text);
     padding: 0 0.25rem;
@@ -266,24 +266,13 @@ img.preview:not([src]) {
     height: var(--adn-icon-size-small);
 }
 
-.toolbar-button.scanner-led.active[data-activity="scanner"] {
-    background-color: var(--adn-led-scanner);
-}
-
-.toolbar-button.scanner-led.active[data-activity="duplicateFinder"] {
-    background-color: var(--adn-led-filter);
-}
-
-.toolbar-button.scanner-led.active[data-activity="blurScanner"] {
-    background-color: var(--adn-led-filter);
-}
-
-.toolbar-button.scanner-led.active[data-activity="deepScan"] {
-    background-color: var(--adn-led-deep-scan);
+/* ✏️ EDIT 2026-10-12: Active scan states inherit the selected media color. */
+.toolbar-button.scanner-led.active {
+    background-color: var(--adn-media-color, #6DBF39);
 }
 
 @keyframes flash-led {
-    0%, 100% { background-color: var(--adn-led-deep-scan); }
+    0%, 100% { background-color: var(--adn-media-color, #6DBF39); }
     50% { background-color: var(--adn-led-bg); }
 }
 
@@ -321,6 +310,7 @@ html[data-mode="dark"] .toolbar-button.scanner-led.flash-led {
 
 #btnSearch[value="true"],
 #btnSettings[value="true"],
+.toolbar-button:has(svg.toolbar-button__media),
 .sorted {
     border: 1px inset var(--adn-button-inset-border);
     background: var(--adn-button-active-bg);
@@ -330,6 +320,22 @@ html[data-mode="dark"] .toolbar-button.scanner-led.flash-led {
 .folder-button:disabled {
     opacity: 0.4;
     cursor: default;
+}
+
+/* ✴️ NEW 2026-10-12: A locked media type must not retain its selectable-mode styling. */
+#btnMediaType:disabled {
+    border: 1px solid transparent;
+    background: transparent;
+}
+
+/* ✴️ NEW 2026-10-12: Matches the hover feedback of the other disabled toolbar buttons. */
+#btnMediaType:disabled:hover {
+    border-color: var(--adn-button-hover-border);
+    background: var(--adn-button-hover-bg);
+}
+
+#btnMediaType:disabled .toolbar-button__media {
+    color: var(--adn-disabled-text) !important;
 }
 
 .images li {
