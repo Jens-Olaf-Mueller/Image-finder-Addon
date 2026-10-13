@@ -3235,6 +3235,9 @@ export async function runHiddenFrameDeepScan({
     const documentTraverser = new DocumentTraverser({
         scrollStepFactor,
         minimumSettleMs,
+        // ✴️ NEW 2026-10-13: Keeps short document settles behind live DOM activity checks.
+        hasRecentActivity: () => Date.now() - lastRelevantMutationAt < quietSettleMs,
+        getRelevantMutationCount: () => relevantMutationCount,
         stableCycleLimit,
         getKnownTargetCount: () => knownTargets.size,
         getTargetElements,

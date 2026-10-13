@@ -2,9 +2,15 @@
  * Traverses the document in one direction while the caller retains collection,
  * wait, diagnostic, and run-lifecycle ownership.
  */
+const FAST_DOCUMENT_SETTLE_MS = 50;
+const MAX_CONSECUTIVE_FAST_DOCUMENT_SETTLES = 2;
+const STATIC_TARGET_STEPS_BEFORE_FAST_SETTLE = 2;
+
 export default class DocumentTraverser {
     #scrollStepFactor;
     #minimumSettleMs;
+    #hasRecentActivity;
+    #getRelevantMutationCount;
     #stableCycleLimit;
     #getKnownTargetCount;
     #getTargetElements;
@@ -19,10 +25,15 @@ export default class DocumentTraverser {
     #getScrollRange;
     #attemptedUpwardTargets = new WeakSet();
     #attemptedDownwardTargets = new WeakSet();
+    #lastTargetDirection = null;
+    #staticTargetSteps = 0;
+    #consecutiveFastTargetSettles = 0;
 
     constructor({
         scrollStepFactor,
         minimumSettleMs,
+        hasRecentActivity = () => true,
+        getRelevantMutationCount = () => 0,
         stableCycleLimit,
         getKnownTargetCount,
         getTargetElements,
@@ -38,6 +49,8 @@ export default class DocumentTraverser {
     } = {}) {
         this.#scrollStepFactor = scrollStepFactor;
         this.#minimumSettleMs = minimumSettleMs;
+        this.#hasRecentActivity = hasRecentActivity;
+        this.#getRelevantMutationCount = getRelevantMutationCount;
         this.#stableCycleLimit = stableCycleLimit;
         this.#getKnownTargetCount = getKnownTargetCount;
         this.#getTargetElements = getTargetElements;
@@ -102,6 +115,8 @@ export default class DocumentTraverser {
                 : this.#isAtCurrentDocumentBottom(before);
             let scrollResult = {scrolled: false, targetMovement: 0};
             let scrollMode = 'none';
+            let target = null;
+            const hadRecentActivity = this.#hasRecentActivity();
 
             const scrollActionStartedAt = performance.now();
             if (atEdge) {
@@ -113,7 +128,7 @@ export default class DocumentTraverser {
                     }
                 }
             } else {
-                const target = this.#getNextScrollTarget(direction);
+                target = this.#getNextScrollTarget(direction);
                 if (target) {
                     scrollMode = 'target';
                     if (direction === 'up') this.#attemptedUpwardTargets.add(target.element);
@@ -128,9 +143,22 @@ export default class DocumentTraverser {
             // ✴️ NEW 2026-10-12: Distinguishes target, anchor, and edge dwell movement plans.
             this.#addMetric(metrics, `document${scrollMode[0].toUpperCase()}${scrollMode.slice(1)}Steps`, 1);
 
+            const relevantMutationCountBefore = this.#getRelevantMutationCount();
+            const useFastSettle = this.#canUseFastDocumentSettle({
+                atEdge,
+                direction,
+                scrollMode,
+                target,
+                scrollResult,
+                hadRecentActivity
+            });
             const settleStartedAt = performance.now();
             if (!(await this.#waitForSettle({
-                minimumMs: atEdge ? 400 : this.#minimumSettleMs,
+                minimumMs: atEdge
+                    ? 400
+                    : useFastSettle
+                        ? Math.min(FAST_DOCUMENT_SETTLE_MS, this.#minimumSettleMs)
+                        : this.#minimumSettleMs,
                 scope: 'document',
                 direction,
                 phase: `document-${direction}`
@@ -199,6 +227,19 @@ export default class DocumentTraverser {
             }
 
             const traversalProgress = scrollMoved || scrollRangeGrew;
+            const hadRelevantMutation = this.#getRelevantMutationCount() > relevantMutationCountBefore;
+            this.#updateAdaptiveSettleState({
+                direction,
+                scrollMode,
+                target,
+                scrollMoved,
+                hadRecentActivity,
+                hadRelevantMutation,
+                newImages,
+                newTargets,
+                scrollRangeGrew,
+                useFastSettle
+            });
             this.#addMetric(metrics, 'newDomImages', newImages);
             this.#addMetric(metrics, 'newTargets', newTargets);
 
@@ -217,6 +258,80 @@ export default class DocumentTraverser {
 
     #getScrollElement() {
         return document.scrollingElement ?? document.documentElement;
+    }
+
+    // ✏️ EDIT 2026-10-13: Allows proven static image targets in both scan directions.
+    #canUseFastDocumentSettle({atEdge, direction, scrollMode, target, scrollResult, hadRecentActivity}) {
+        return atEdge !== true &&
+            (direction === 'up' || direction === 'down') &&
+            scrollMode === 'target' &&
+            scrollResult.scrolled === true &&
+            hadRecentActivity !== true &&
+            this.#lastTargetDirection === direction &&
+            this.#staticTargetSteps >= STATIC_TARGET_STEPS_BEFORE_FAST_SETTLE &&
+            this.#consecutiveFastTargetSettles < MAX_CONSECUTIVE_FAST_DOCUMENT_SETTLES &&
+            !this.#isPotentialLazyTarget(target?.element);
+    }
+
+    // ✏️ EDIT 2026-10-13: Resets the fast path for lazy work and direction changes.
+    #updateAdaptiveSettleState({
+        direction,
+        scrollMode,
+        target,
+        scrollMoved,
+        hadRecentActivity,
+        hadRelevantMutation,
+        newImages,
+        newTargets,
+        scrollRangeGrew,
+        useFastSettle
+    }) {
+        const directionChanged = this.#lastTargetDirection !== null &&
+            this.#lastTargetDirection !== direction;
+        this.#lastTargetDirection = direction;
+        const isStaticTargetStep = directionChanged !== true &&
+            (direction === 'up' || direction === 'down') &&
+            scrollMode === 'target' &&
+            scrollMoved === true &&
+            hadRecentActivity !== true &&
+            hadRelevantMutation !== true &&
+            newImages === 0 &&
+            newTargets === 0 &&
+            scrollRangeGrew !== true &&
+            !this.#isPotentialLazyTarget(target?.element);
+        if (!isStaticTargetStep) {
+            this.#staticTargetSteps = 0;
+            this.#consecutiveFastTargetSettles = 0;
+            return;
+        }
+
+        this.#staticTargetSteps += 1;
+        this.#consecutiveFastTargetSettles = useFastSettle
+            ? this.#consecutiveFastTargetSettles + 1
+            : 0;
+    }
+
+    // Deferred media can materialize after the short observation window.
+    #isPotentialLazyTarget(element) {
+        if (!(element instanceof HTMLImageElement)) return true;
+
+        return element.loading === 'lazy' ||
+            element.complete !== true ||
+            element.naturalWidth <= 0 ||
+            element.matches([
+                '[data-src]',
+                '[data-srcset]',
+                '[data-lazy-src]',
+                '[data-lazy-srcset]',
+                '[data-image]',
+                '[data-image-src]',
+                '[data-full]',
+                '[data-full-src]',
+                '[data-fullsize]',
+                '[data-large]',
+                '[data-original]',
+                '[data-lightbox-src]'
+            ].join(','));
     }
 
     #getNextScrollTarget(direction) {

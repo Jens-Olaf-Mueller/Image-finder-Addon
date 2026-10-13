@@ -335,7 +335,7 @@ html[data-mode="dark"] .toolbar-button.scanner-led.flash-led {
 }
 
 #btnMediaType:disabled .toolbar-button__media {
-    color: var(--adn-disabled-text) !important;
+    color: var(--adn-icon-color) !important;
 }
 
 .images li {
