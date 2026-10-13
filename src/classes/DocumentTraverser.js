@@ -311,11 +311,13 @@ export default class DocumentTraverser {
             : 0;
     }
 
-    // Deferred media can materialize after the short observation window.
+    // ✏️ EDIT 2026-10-13: Keeps only unfinished or custom-deferred images off the fast path.
     #isPotentialLazyTarget(element) {
         if (!(element instanceof HTMLImageElement)) return true;
 
-        return element.loading === 'lazy' ||
+        return (
+            // ❌ DELETED 2026-10-13: A completed native-lazy image is safe after static proof.
+            // element.loading === 'lazy' ||
             element.complete !== true ||
             element.naturalWidth <= 0 ||
             element.matches([
@@ -331,7 +333,8 @@ export default class DocumentTraverser {
                 '[data-large]',
                 '[data-original]',
                 '[data-lightbox-src]'
-            ].join(','));
+            ].join(','))
+        );
     }
 
     #getNextScrollTarget(direction) {

@@ -260,10 +260,10 @@ img.preview:not([src]) {
     border-radius: 0;
     background-color: var(--adn-led-bg);
     color: var(--adn-led-text);
-    font-size: x-small;
-    width: 2.75rem;
-    min-height: var(--adn-icon-size-small);
-    height: var(--adn-icon-size-small);
+    font-size: xx-small;
+    width: 3.75rem;
+    min-height: calc(var(--adn-icon-size-small) - 4px);
+    height: calc(var(--adn-icon-size-small) - 4px);
 }
 
 /* ✏️ EDIT 2026-10-12: Active scan states inherit the selected media color. */

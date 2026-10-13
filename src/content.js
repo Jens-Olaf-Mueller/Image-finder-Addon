@@ -1896,18 +1896,19 @@ export async function runHiddenFrameDeepScan({
     const domState = new DeepScanDOMState({
         scanDocument: document,
         mutationAttributes: DEEP_SCAN_MUTATION_ATTRIBUTES,
-        onActivity: ({records}) => {
+        onActivity: ({records, settleRecords = records}) => {
             // ✏️ EDIT 2026-10-11: Image loads remain queued as delta roots, but only
             // DOM mutations postpone the global settle timer after a scroll step.
-            if (records.length === 0) return;
-
             records.forEach(markKnownGenericRootsChanged);
+            // ✏️ EDIT 2026-10-13: Plain UI churn remains collectable but no longer delays settle.
+            if (settleRecords.length === 0) return;
+
             const mutationAt = Date.now();
             if (activeSettleWait?.firstMutationAt === null) {
                 activeSettleWait.firstMutationAt = mutationAt;
             }
             lastRelevantMutationAt = mutationAt;
-            relevantMutationCount += records.length;
+            relevantMutationCount += settleRecords.length;
         }
     });
     const createPerformanceMetrics = () => ({

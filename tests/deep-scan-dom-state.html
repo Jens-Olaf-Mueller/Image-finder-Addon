@@ -15,9 +15,11 @@
         };
 
         try {
+            const activities = [];
             const state = new DeepScanDOMState({
                 scanDocument: document,
-                mutationAttributes: ['src']
+                mutationAttributes: ['src'],
+                onActivity: (activity) => activities.push(activity)
             });
             state.start();
 
@@ -34,6 +36,32 @@
             const directScope = state.consumeScope();
             assert(directScope.roots.includes(directTarget),
                 'A changed direct target must become its own delta root.');
+
+            activities.length = 0;
+            const textOnlyElement = document.createElement('article');
+            textOnlyElement.textContent = 'This UI update contains no media source.';
+            testRoot.append(textOnlyElement);
+            await waitForMutations();
+
+            const textOnlyActivity = activities.at(-1);
+            assert(textOnlyActivity.records.length > 0,
+                'A text-only UI update must remain available to delta collection.');
+            assert(textOnlyActivity.settleRecords.length === 0,
+                'A text-only UI update must not postpone DeepScan settling.');
+            const textOnlyScope = state.consumeScope();
+            assert(textOnlyScope.roots.includes(textOnlyElement),
+                'A text-only UI update must retain its narrow delta root.');
+
+            activities.length = 0;
+            const addedImage = document.createElement('img');
+            addedImage.src = '/images/added.jpg';
+            testRoot.append(addedImage);
+            await waitForMutations();
+
+            const imageActivity = activities.at(-1);
+            assert(imageActivity.settleRecords.length > 0,
+                'A newly added image must postpone DeepScan settling.');
+            state.consumeScope();
 
             const carousel = document.createElement('section');
             carousel.className = 'carousel';
@@ -55,9 +83,13 @@
 
             state.markGenericRootProcessed(carousel);
             state.registerPendingGenericRoot(carousel);
+            activities.length = 0;
             carousel.setAttribute('aria-current', 'true');
             await waitForMutations();
 
+            const pendingStateActivity = activities.at(-1);
+            assert(pendingStateActivity.settleRecords.length > 0,
+                'A pending Carousel state change must postpone DeepScan settling.');
             const pendingStateScope = state.consumeScope();
             assert(pendingStateScope.roots.includes(carousel),
                 'A pending carousel state change must requeue its root.');

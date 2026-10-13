@@ -10,6 +10,36 @@ const GENERIC_CAROUSEL_STATE_ATTRIBUTES = [
     'data-swiper-slide-index'
 ];
 
+const SETTLE_SOURCE_SELECTOR = [
+    'img',
+    'video',
+    'audio',
+    'picture',
+    'source',
+    '[src]',
+    '[srcset]',
+    '[data-src]',
+    '[data-srcset]',
+    '[data-lazy-src]',
+    '[data-lazy-srcset]',
+    '[data-image]',
+    '[data-image-src]',
+    '[data-full]',
+    '[data-full-src]',
+    '[data-fullsize]',
+    '[data-large]',
+    '[data-original]',
+    '[data-original-src]',
+    '[data-lightbox-src]',
+    '[href]',
+    '[aria-controls]',
+    '[data-target]',
+    '[onclick]',
+    '[at-attr]',
+    '[data-carousel-id]',
+    '[data-gallery-id]'
+].join(',');
+
 /**
  * Tracks source-relevant DOM changes during one hidden DeepScan run.
  */
@@ -194,6 +224,9 @@ export default class DeepScanDOMState {
         const relevantRecords = records.filter((record) => this.#isRelevantMutation(record));
         if (relevantRecords.length === 0) return;
 
+        // ✴️ NEW 2026-10-13: Separates all delta roots from mutations that can reveal media now.
+        const settleRecords = relevantRecords.filter((record) => this.#isSettleRelevantMutation(record));
+
         relevantRecords.forEach((record) => {
             if (record.type === 'attributes') {
                 this.#metrics.attributeMutations += 1;
@@ -206,7 +239,7 @@ export default class DeepScanDOMState {
             this.#markKnownRootsDirty(record.target);
         });
         this.#metrics.relevantMutations += relevantRecords.length;
-        this.#onActivity?.({records: relevantRecords, imageLoads: 0});
+        this.#onActivity?.({records: relevantRecords, settleRecords, imageLoads: 0});
     }
 
     // Requeues a pending Carousel only when its own state attributes change.
@@ -220,7 +253,7 @@ export default class DeepScanDOMState {
         this.#pendingRoots.add(root);
         this.#dirtyGenericRoots.add(root);
         this.#metrics.pendingGenericRootStateChanges += records.length;
-        this.#onActivity?.({records, imageLoads: 0});
+        this.#onActivity?.({records, settleRecords: records, imageLoads: 0});
     }
 
     // Queues an added element or every added element of a document fragment.
@@ -292,5 +325,23 @@ export default class DeepScanDOMState {
         return Array.from(record.addedNodes ?? []).some((node) => !this.#isGeneratedScrollAnchor(node) && (
             node.nodeType === Node.ELEMENT_NODE || node.nodeType === Node.DOCUMENT_FRAGMENT_NODE
         ));
+    }
+
+    // ✴️ NEW 2026-10-13: Lets ordinary UI additions reach delta collection without extending settle.
+    #isSettleRelevantMutation(record) {
+        if (record.type === 'attributes') return true;
+
+        return Array.from(record.addedNodes ?? []).some((node) => this.#nodeContainsSettleSource(node));
+    }
+
+    // ✴️ NEW 2026-10-13: Recognizes direct or nested source-bearing nodes without scanning text UI.
+    #nodeContainsSettleSource(node) {
+        if (node?.nodeType === Node.DOCUMENT_FRAGMENT_NODE) {
+            return Array.from(node.children ?? []).some((elm) => this.#nodeContainsSettleSource(elm));
+        }
+        if (node?.nodeType !== Node.ELEMENT_NODE) return false;
+
+        return node.matches?.(SETTLE_SOURCE_SELECTOR) === true ||
+            Boolean(node.querySelector?.(SETTLE_SOURCE_SELECTOR));
     }
 }
