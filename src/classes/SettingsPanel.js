@@ -343,6 +343,14 @@ export class SettingsPanel {
                 this.#log('Cannot delete website profile:', 'warn', error);
             });
         });
+
+        // REVIEW
+        // TODO
+        // 1. #chkIgnoreBlurredImages must toggle the Blurfilter-Preview
+        // CSS-Blur-Filer and Laplacian value are not the same!
+        this.DOM.sldBlurTolerance.addEventListener('input', (e) => {
+            this.DOM.imgBlurSample.style.filter = `blur(${e.target.value}px)`;
+        })
         this.hasEventListeners = true;
     }
 

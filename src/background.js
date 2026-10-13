@@ -117,6 +117,7 @@ function createDebugCollector(job) {
             scanId: job.scanId,
             url: job.url ?? null,
             startedAt: new Date().toISOString(),
+            hiddenCompletedAt: null,
             endedAt: null,
             status: null,
             enabledSources: {...job.enabledDebugLogSources}
@@ -127,7 +128,8 @@ function createDebugCollector(job) {
         collectorSequence: 0,
         exportTimer: null,
         exported: false,
-        popupComplete: false
+        popupComplete: false,
+        popupDisconnected: false
     });
     activeDebugLogContext = {scanId: job.scanId, url: job.url ?? null};
     debugBackgroundLogger?.setContext(activeDebugLogContext);
@@ -219,6 +221,8 @@ function handleDebugContextComplete(message) {
     if (!collector || collector.exported) return;
 
     collector.popupComplete = true;
+    // ✏️ EDIT 2026-10-13: The popup closes its context only after all queued batches are processed.
+    collector.meta.endedAt = new Date().toISOString();
     if (!collector.meta.status) return;
     const flush = debugBackgroundLogger?.flush?.() ?? Promise.resolve();
     void flush.finally(() => {
@@ -226,23 +230,23 @@ function handleDebugContextComplete(message) {
     });
 }
 
-// ✴️ NEW 2026-10-11: Keeps an open popup's final debug records ahead of the fallback export.
-function isPopupDebugContextPending(job, collector) {
-    const clientId = job?.popupClientId;
-
+// ✏️ EDIT 2026-10-13: Waits for final popup records independently of port-registration timing.
+function isPopupDebugContextPending(collector) {
     return collector?.enabledSources?.popup === true &&
         collector.popupComplete !== true &&
-        typeof clientId === 'string' &&
-        popupDeepScanPorts.has(clientId);
+        collector.popupDisconnected !== true;
 }
 
 // ✴️ NEW 2026-10-11: Exports completed records when their popup can no longer close the context.
 function scheduleDisconnectedPopupDebugExports(clientId) {
     debugCollectorsByScanId.forEach((collector) => {
-        if (collector.popupClientId !== clientId || !collector.meta.status || collector.exported) {
+        if (collector.popupClientId !== clientId || collector.exported) {
             return;
         }
 
+        collector.popupDisconnected = true;
+        if (!collector.meta.status) return;
+        collector.meta.endedAt ??= new Date().toISOString();
         queueDebugCollectorExport(collector, DEBUG_LOG_EXPORT_DELAY_MS);
     });
 }
@@ -251,13 +255,17 @@ function scheduleDebugExport(job, status, reason = null) {
     const collector = debugCollectorsByScanId.get(job?.scanId);
     if (!collector || collector.exported) return;
 
-    collector.meta.endedAt = new Date().toISOString();
+    // ✏️ EDIT 2026-10-13: Retains hidden completion separately from the eventual popup completion.
+    collector.meta.hiddenCompletedAt ??= new Date().toISOString();
     collector.meta.status = status;
     if (typeof reason === 'string' && reason) collector.meta.reason = reason;
+    if (!isPopupDebugContextPending(collector)) {
+        collector.meta.endedAt ??= collector.meta.hiddenCompletedAt;
+    }
     const flush = debugBackgroundLogger?.flush?.() ?? Promise.resolve();
     void flush.finally(() => {
         // ✏️ EDIT 2026-10-11: An open popup flushes its own terminal records first.
-        if (isPopupDebugContextPending(job, collector)) return;
+        if (isPopupDebugContextPending(collector)) return;
         queueDebugCollectorExport(
             collector,
             collector.popupComplete ? DEBUG_LOG_POPUP_FINAL_DELAY_MS : DEBUG_LOG_EXPORT_DELAY_MS

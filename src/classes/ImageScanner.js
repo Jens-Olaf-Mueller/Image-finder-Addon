@@ -1,4 +1,5 @@
 import { scanImages } from '../content.js';
+import MediaPipeline from './MediaPipeline.js';
 
 const ISOLATED_DEEP_SCAN_TARGET = 'image-finder-isolated-deepscan';
 
@@ -69,6 +70,8 @@ export default class ImageScanner {
             : 'cancelled';
         session.cancelled = true;
         session.controller.abort();
+        // ✏️ EDIT 2026-10-13: Stops queued parallel preparation work with the DeepScan session.
+        session.mediaPipeline?.cancel();
         session.finish({status: 'cancelled', endReason: normalizedEndReason});
         try {
             await window.chrome.runtime.sendMessage({
@@ -112,11 +115,18 @@ export default class ImageScanner {
         }
     }
 
-    async scanDeepImages(scanContext, onCandidates = null) {
+    async scanDeepImages(scanContext, {
+        prepareCandidate = null,
+        onCandidates = null,
+        preparationConcurrency = 1
+    } = {}) {
         if (!scanContext?.isScannable || !Number.isInteger(scanContext.tabId)) {
             return [];
         }
 
+        // ✴️ NEW 2026-10-13: Separates user-visible DeepScan time from hidden discovery and queue drain.
+        const deepScanStartedAt = performance.now();
+        let hiddenDiscoveryCompletedAt = null;
         const debugSettings = this.settings.get('debug') ?? {};
         const shouldMeasurePopupPipeline = debugSettings.debugmode === true &&
             debugSettings.logpopup === true;
@@ -200,18 +210,33 @@ export default class ImageScanner {
             addTransportDuration('backgroundToPopupMs', popupReceivedAt - backgroundSentAt);
             addTransportDuration('endToEndMs', popupProcessingFinishedAt - emittedAt);
         };
-        const createTransportSummary = (completionResult) => ({
-            hidden: completionResult?.performance ?? null,
-            popupTransport: Object.fromEntries(Object.entries(transportMetrics).map(([name, value]) => [
-                name,
-                Number.isFinite(value) ? Math.round(value) : value
-            ])),
-            popupPipelineDetail: Object.fromEntries(Object.entries(popupPipelineDetail).map(([name, value]) => [
-                name,
-                Number.isFinite(value) ? Math.round(value) : value
-            ])),
-            note: 'Transport timings are wall-clock batch latencies; the hidden summary contains the non-overlapping DeepScan phase percentages.'
-        });
+        // ✏️ EDIT 2026-10-13: Includes the complete user-visible DeepScan duration.
+        const createTransportSummary = (completionResult, completedAt) => {
+            const totalMs = Math.max(0, completedAt - deepScanStartedAt);
+            const hiddenDiscoveryMs = hiddenDiscoveryCompletedAt === null
+                ? null
+                : Math.max(0, hiddenDiscoveryCompletedAt - deepScanStartedAt);
+
+            return {
+                duration: {
+                    totalMs: Math.round(totalMs),
+                    hiddenDiscoveryMs: hiddenDiscoveryMs === null ? null : Math.round(hiddenDiscoveryMs),
+                    pipelineDrainMs: hiddenDiscoveryMs === null
+                        ? null
+                        : Math.round(Math.max(0, totalMs - hiddenDiscoveryMs))
+                },
+                hidden: completionResult?.performance ?? null,
+                popupTransport: Object.fromEntries(Object.entries(transportMetrics).map(([name, value]) => [
+                    name,
+                    Number.isFinite(value) ? Math.round(value) : value
+                ])),
+                popupPipelineDetail: Object.fromEntries(Object.entries(popupPipelineDetail).map(([name, value]) => [
+                    name,
+                    Number.isFinite(value) ? Math.round(value) : value
+                ])),
+                note: 'duration.totalMs is the complete user-visible DeepScan time; hiddenDiscoveryMs ends when hidden source discovery completes, and pipelineDrainMs covers the remaining popup work.'
+            };
+        };
         const recordPopupPipelineDetail = (metrics) => {
             if (!metrics || typeof metrics !== 'object') return;
 
@@ -259,7 +284,6 @@ export default class ImageScanner {
             );
             console.info('[DeepScan Popup Pipeline]', metrics);
         };
-        let batchQueue = Promise.resolve();
         let resolveCompletion = null;
         let completionResult = null;
 
@@ -268,6 +292,7 @@ export default class ImageScanner {
         const session = {
             scanId,
             controller: new AbortController(),
+            mediaPipeline: null,
             cancelled: false,
             finished: false,
             finish: (result) => {
@@ -280,60 +305,90 @@ export default class ImageScanner {
             }
         };
 
-        const processCandidates = async (
+        const enqueueCandidates = (
             foundCandidates,
             diagnostic = null,
             popupReceivedAt = Date.now()
         ) => {
             if (session.cancelled || session.controller.signal.aborted) return;
 
-            const popupProcessingStartedAt = Date.now();
-            const pipelineStartedAt = performance.now();
-            try {
-                const newCandidates = [];
-                for (const candidate of foundCandidates ?? []) {
-                    if (typeof candidate?.url !== 'string') continue;
+            const newCandidates = [];
+            for (const candidate of foundCandidates ?? []) {
+                if (typeof candidate?.url !== 'string') continue;
 
-                    const existingCandidate = candidatesByURL.get(candidate.url);
-                    if (existingCandidate && getPixelCount(candidate) <= getPixelCount(existingCandidate)) {
-                        continue;
+                const existingCandidate = candidatesByURL.get(candidate.url);
+                if (existingCandidate && getPixelCount(candidate) <= getPixelCount(existingCandidate)) {
+                    continue;
+                }
+
+                candidatesByURL.set(candidate.url, candidate);
+                newCandidates.push(candidate);
+            }
+            mediaPipeline.enqueue({
+                rawCandidates: newCandidates,
+                diagnostic,
+                popupReceivedAt,
+                signal: session.controller.signal,
+                measurePopupPipeline: shouldMeasurePopupPipeline
+            });
+        };
+        // ✏️ EDIT 2026-10-13: Prepares DeepScan candidates concurrently and commits their batches in order.
+        const mediaPipeline = new MediaPipeline({
+            prepareCandidate: (candidate, batch) => typeof prepareCandidate === 'function'
+                ? prepareCandidate(candidate, batch)
+                : candidate,
+            commitBatch: async (batch, preparedCandidates) => {
+                // ✏️ EDIT 2026-10-13: Uses wall-clock time for transport metrics.
+                const popupProcessingStartedAt = batch.popupProcessingStartedAt ?? Date.now();
+                try {
+                    if (batch.rawCandidates.length === 0 || typeof onCandidates !== 'function') {
+                        return;
                     }
 
-                    candidatesByURL.set(candidate.url, candidate);
-                    newCandidates.push(candidate);
-                }
-                if (newCandidates.length === 0 || typeof onCandidates !== 'function') {
-                    return;
-                }
+                    const result = await onCandidates(
+                        batch.rawCandidates,
+                        preparedCandidates,
+                        batch.signal,
+                        batch.diagnostic,
+                        batch.measurePopupPipeline,
+                        batch
+                    );
+                    recordPopupPipelineDetail(result?.popupPipeline);
 
-                const result = await onCandidates(
-                    newCandidates,
-                    session.controller.signal,
-                    diagnostic,
-                    shouldMeasurePopupPipeline
-                );
-                recordPopupPipelineDetail(result?.popupPipeline);
-
-                if ((result === false || result?.continue === false) ||
-                    session.cancelled || session.controller.signal.aborted) {
-                    session.cancelled = true;
-                    session.controller.abort();
-                    session.finish({status: 'cancelled'});
-                    void window.chrome.runtime.sendMessage({
-                        target: ISOLATED_DEEP_SCAN_TARGET,
-                        action: 'cancel',
-                        scanId
-                    }).catch(() => undefined);
+                    if ((result === false || result?.continue === false) ||
+                        session.cancelled || session.controller.signal.aborted) {
+                        session.cancelled = true;
+                        session.controller.abort();
+                        session.finish({status: 'cancelled'});
+                        mediaPipeline.cancel();
+                        void window.chrome.runtime.sendMessage({
+                            target: ISOLATED_DEEP_SCAN_TARGET,
+                            action: 'cancel',
+                            scanId
+                        }).catch(() => undefined);
+                    }
+                } finally {
+                    recordTransportBatch(
+                        batch.diagnostic,
+                        batch.popupReceivedAt,
+                        popupProcessingStartedAt,
+                        Date.now()
+                    );
                 }
-            } finally {
-                recordTransportBatch(
-                    diagnostic,
-                    popupReceivedAt,
-                    popupProcessingStartedAt,
-                    Date.now()
-                );
-            }
-        };
+            },
+            onError: () => {
+                session.cancelled = true;
+                session.controller.abort();
+                session.finish({status: 'failed'});
+                void window.chrome.runtime.sendMessage({
+                    target: ISOLATED_DEEP_SCAN_TARGET,
+                    action: 'cancel',
+                    scanId
+                }).catch(() => undefined);
+            },
+            preparationConcurrency
+        });
+        session.mediaPipeline = mediaPipeline;
 
         const onMessage = (message, _sender, sendResponse) => {
             if (message?.target !== ISOLATED_DEEP_SCAN_TARGET || message.source !== 'background') return;
@@ -342,26 +397,14 @@ export default class ImageScanner {
 
             if (message.action === 'batch' && Array.isArray(message.candidates)) {
                 const popupReceivedAt = Date.now();
-                batchQueue = batchQueue.then(() => processCandidates(
-                    message.candidates,
-                    message.diagnostic ?? null,
-                    popupReceivedAt
-                )).catch(() => {
-                    session.cancelled = true;
-                    session.controller.abort();
-                    session.finish({status: 'failed'});
-                    void window.chrome.runtime.sendMessage({
-                        target: ISOLATED_DEEP_SCAN_TARGET,
-                        action: 'cancel',
-                        scanId
-                    }).catch(() => undefined);
-                });
+                enqueueCandidates(message.candidates, message.diagnostic ?? null, popupReceivedAt);
                 return;
             }
 
             if (message.action === 'complete') {
                 sendResponse?.({success: true, scanId, clientId: this.#deepScanClientId ?? null});
-                void batchQueue.then(() => {
+                hiddenDiscoveryCompletedAt ??= performance.now();
+                void mediaPipeline.waitForIdle().then(() => {
                     session.finish(message);
                 });
             }
@@ -399,7 +442,10 @@ export default class ImageScanner {
             session.finish({status: 'failed'});
         } finally {
             session.finish({status: 'finished'});
-            console.info('[DeepScan Performance]', createTransportSummary(completionResult));
+            console.info('[DeepScan Performance]', createTransportSummary(
+                completionResult,
+                performance.now()
+            ));
             // ✏️ EDIT 2026-10-11: Keep the context until ImageFinder logged DeepScan RESULT.
         }
 

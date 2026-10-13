@@ -78,7 +78,9 @@ export default class ScanController {
      * @param {Function|null} [options.onNormalScanResults=null] - Stores and filters normal scan results.
      * @param {Function|null} [options.shouldStartDeepScan=null] - Decides whether a DeepScan may start.
      * @param {Function|null} [options.onDeepScanStart=null] - Prepares caller-owned DeepScan UI state.
+     * @param {Function|null} [options.onPrepareDeepScanCandidate=null] - Prepares one raw DeepScan candidate.
      * @param {Function|null} [options.onDeepScanCandidates=null] - Stores and filters a DeepScan batch.
+     * @param {Number} [options.deepScanPreparationConcurrency=1] - Maximum simultaneous DeepScan preparations.
      * @param {Function|null} [options.onDeepScanFinished=null] - Finalizes caller-owned DeepScan state.
      * @param {Function|null} [options.onScanCompleted=null] - Updates caller-owned completed scan state.
      * @param {Function|null} [options.onScanError=null] - Receives an unexpected normal scan error.
@@ -92,7 +94,9 @@ export default class ScanController {
         onNormalScanResults = null,
         shouldStartDeepScan = null,
         onDeepScanStart = null,
+        onPrepareDeepScanCandidate = null,
         onDeepScanCandidates = null,
+        deepScanPreparationConcurrency = 1,
         onDeepScanFinished = null,
         onScanCompleted = null,
         onScanError = null,
@@ -148,14 +152,29 @@ export default class ScanController {
             try {
                 const deepScanCandidates = await this.#scanner.scanDeepImages(
                     scanContext,
-                    (rawCandidates, signal, diagnostic = null, measurePopupPipeline = false) =>
-                        onDeepScanCandidates?.(
+                    {
+                        prepareCandidate: (rawCandidate, batch) =>
+                            typeof onPrepareDeepScanCandidate === 'function'
+                                ? onPrepareDeepScanCandidate(rawCandidate, batch, scan)
+                                : rawCandidate,
+                        onCandidates: (
                             rawCandidates,
+                            preparedCandidates,
+                            signal,
+                            diagnostic = null,
+                            measurePopupPipeline = false,
+                            batch
+                        ) => onDeepScanCandidates?.(
+                            rawCandidates,
+                            preparedCandidates,
                             signal,
                             diagnostic,
                             scan,
-                            measurePopupPipeline
-                        )
+                            measurePopupPipeline,
+                            batch
+                        ),
+                        preparationConcurrency: deepScanPreparationConcurrency
+                    }
                 );
                 deepScanCandidateCount = deepScanCandidates.length;
             } catch (error) {

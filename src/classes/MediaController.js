@@ -240,14 +240,28 @@ export class MediaController {
                 deepScanInitialCandidates = this.candidates.size;
                 this.popup.setInfo('Image preview');
             },
-            onDeepScanCandidates: (rawCandidates, signal, diagnostic, scan, measurePopupPipeline) =>
+            onPrepareDeepScanCandidate: (rawCandidate, batch, scan) =>
+                this.#prepareDeepScanCandidate(rawCandidate, batch, scan.generation),
+            onDeepScanCandidates: (
+                rawCandidates,
+                preparedCandidates,
+                signal,
+                diagnostic,
+                scan,
+                measurePopupPipeline,
+                batch
+            ) =>
                 this.#processDeepScanCandidates(
                     rawCandidates,
+                    preparedCandidates,
                     signal,
                     diagnostic,
                     scan.generation,
-                    measurePopupPipeline
+                    measurePopupPipeline,
+                    batch
                 ),
+            // ✏️ EDIT 2026-10-13: Limits all parallel DeepScan preparations to the tested safe cluster size.
+            deepScanPreparationConcurrency: MEDIA_CLUSTER_SIZE,
             onDeepScanFinished: async ({failed, candidateCount}) => {
                 const completionInfo = `Deep scan completed after ${this.popup.deepScanElapsedTime}`;
 
@@ -443,39 +457,41 @@ export class MediaController {
         this.#updateLEDActivity();
     }
 
-    // ✴️ NEW 2026-10-10: Processes one DeepScan batch while ScanController owns its lifecycle.
+    // ✏️ EDIT 2026-10-13: Prepares individual DeepScan candidates for the shared bounded pipeline.
+    async #prepareDeepScanCandidate(rawCandidate, batch, scanGeneration) {
+        if (batch?.signal?.aborted || !this.scanController.isCurrent(scanGeneration)) return null;
+
+        const popupPipeline = batch?.measurePopupPipeline === true
+            ? batch.popupPipeline ??= this.#createDeepScanPipelineMetrics(batch.rawCandidates)
+            : null;
+        const candidates = await this.mediaProvider.prepareCandidates(
+            [rawCandidate],
+            this.scanContext.tabId,
+            {
+                signal: batch?.signal ?? null,
+                metrics: popupPipeline,
+                clusterSize: 1
+            }
+        );
+        return candidates[0] ?? null;
+    }
+
+    // ✏️ EDIT 2026-10-13: Commits one prepared DeepScan batch while ScanController owns its lifecycle.
     async #processDeepScanCandidates(
         rawCandidates,
+        preparedCandidates,
         signal,
         diagnostic,
         scanGeneration,
-        measurePopupPipeline = false
+        measurePopupPipeline = false,
+        batch = null
     ) {
         if (signal?.aborted || !this.scanController.isCurrent(scanGeneration)) return false;
 
         // ✴️ NEW 2026-10-11: Measures popup-only DeepScan stages without changing their order.
-        const popupPipeline = {
-            rawCandidates: rawCandidates.length,
-            newURLCandidates: 0,
-            preparedCandidates: 0,
-            candidateSelectionMs: 0,
-            candidatePreparationMs: 0,
-            fileInfoRequests: 0,
-            fileInfoFailures: 0,
-            fileInfoMs: 0,
-            dimensionRequests: 0,
-            dimensionCacheHits: 0,
-            dimensionFailures: 0,
-            dimensionMs: 0,
-            candidateStoreMs: 0,
-            analyzerMs: 0,
-            visibleResultStoreMs: 0,
-            listReconciliationMs: 0,
-            listSortMs: 0,
-            postListUiMs: 0,
-            totalMs: 0
-        };
-        const batchStartedAt = performance.now();
+        const popupPipeline = batch?.popupPipeline ??
+            this.#createDeepScanPipelineMetrics(rawCandidates);
+        const batchStartedAt = batch?.preparationStartedAt ?? performance.now();
         const visibleImagesBefore = this.images.size;
         const visibleURLsBefore = new Set(
             Array.from(this.images.values(), (item) => item.url)
@@ -507,15 +523,25 @@ export class MediaController {
                 : true;
         }
 
-        const candidatePreparationStartedAt = performance.now();
-        const candidates = newCandidates.length > 0
-            ? await this.mediaProvider.prepareCandidates(newCandidates, this.scanContext.tabId, {
-                signal,
-                metrics: measurePopupPipeline ? popupPipeline : null,
-                clusterSize: MEDIA_CLUSTER_SIZE
-            })
-            : [];
-        popupPipeline.candidatePreparationMs = performance.now() - candidatePreparationStartedAt;
+        const preparedByURL = new Map();
+        rawCandidates.forEach((rawCandidate, idx) => {
+            const preparedCandidate = preparedCandidates?.[idx];
+            if (!preparedCandidate) return;
+
+            const existingPrepared = preparedByURL.get(rawCandidate.url);
+            if (!existingPrepared || this.resultStore.getPixelCount(rawCandidate) >
+                this.resultStore.getPixelCount(existingPrepared.rawCandidate)) {
+                preparedByURL.set(rawCandidate.url, {rawCandidate, preparedCandidate});
+            }
+        });
+        const candidates = newCandidates.flatMap((rawCandidate) => {
+            const prepared = preparedByURL.get(rawCandidate.url)?.preparedCandidate;
+            if (!prepared) return [];
+
+            prepared.visuallyBlurred = rawCandidate.visuallyBlurred;
+            return [prepared];
+        });
+        popupPipeline.candidatePreparationMs = batch?.candidatePreparationMs ?? 0;
         popupPipeline.preparedCandidates = candidates.length;
         if (signal?.aborted || !this.scanController.isCurrent(scanGeneration)) return false;
         if (candidates.length === 0 && !existingCandidatesUpdated) {
@@ -574,6 +600,30 @@ export class MediaController {
                     totalMs: performance.now() - batchStartedAt
                 }
             } : {})
+        };
+    }
+
+    #createDeepScanPipelineMetrics(rawCandidates) {
+        return {
+            rawCandidates: rawCandidates?.length ?? 0,
+            newURLCandidates: 0,
+            preparedCandidates: 0,
+            candidateSelectionMs: 0,
+            candidatePreparationMs: 0,
+            fileInfoRequests: 0,
+            fileInfoFailures: 0,
+            fileInfoMs: 0,
+            dimensionRequests: 0,
+            dimensionCacheHits: 0,
+            dimensionFailures: 0,
+            dimensionMs: 0,
+            candidateStoreMs: 0,
+            analyzerMs: 0,
+            visibleResultStoreMs: 0,
+            listReconciliationMs: 0,
+            listSortMs: 0,
+            postListUiMs: 0,
+            totalMs: 0
         };
     }
 

@@ -3,7 +3,7 @@ import { MediaType } from './MediaType.js';
 const DEFAULT_BYTES_PER_PIXEL = 0.1;
 const UTF8_ENCODER = new TextEncoder();
 
-// ✴️ NEW 2026-10-11: Limits concurrent DeepScan metadata requests without changing candidate order.
+// ✏️ EDIT 2026-10-13: Defines the tested global DeepScan preparation cluster size.
 export const MEDIA_CLUSTER_SIZE = 8; // 6 may be more stable eventually
 
 /**
