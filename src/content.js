@@ -793,6 +793,13 @@ export async function scanPhotoSwipeImages({
             rootMediaElements: 0,
             maxSlidesPerRoot: 0,
             maxMediaElementsPerRoot: 0,
+            // ✴️ NEW 2026-10-14: Explains the result of a generic carousel navigation wait.
+            nextStateOutcomes: {
+                changed: 0,
+                stableState: 0,
+                controlDisabled: 0,
+                controlUnavailable: 0
+            },
             resultCount: 0
         },
         direct: {
@@ -1990,7 +1997,18 @@ export async function runHiddenFrameDeepScan({
         slowCalls: 0,
         maxCallMs: 0,
         direct: {calls: 0, totalMs: 0, maxCallMs: 0, discoveryMs: 0},
-        generic: {calls: 0, totalMs: 0, maxCallMs: 0, discoveryMs: 0},
+        generic: {
+            calls: 0,
+            totalMs: 0,
+            maxCallMs: 0,
+            discoveryMs: 0,
+            nextStateOutcomes: {
+                changed: 0,
+                stableState: 0,
+                controlDisabled: 0,
+                controlUnavailable: 0
+            }
+        },
         rootReuse: {
             rootsSeen: 0,
             newRoots: 0,
@@ -2081,6 +2099,7 @@ export async function runHiddenFrameDeepScan({
             rootMediaElements: detail.generic.rootMediaElements,
             maxSlidesPerRoot: detail.generic.maxSlidesPerRoot,
             maxMediaElementsPerRoot: detail.generic.maxMediaElementsPerRoot,
+            nextStateOutcomes: {...detail.generic.nextStateOutcomes},
             resultCount: detail.generic.resultCount
         },
         direct: {
@@ -2136,6 +2155,10 @@ export async function runHiddenFrameDeepScan({
             performanceMetrics.genericCarouselMs
         );
         photoSwipeDetail.generic.discoveryMs += detail.generic.discoveryMs;
+        Object.keys(photoSwipeDetail.generic.nextStateOutcomes).forEach((name) => {
+            photoSwipeDetail.generic.nextStateOutcomes[name] +=
+                detail.generic.nextStateOutcomes[name];
+        });
         photoSwipeDetail.rootReuse.newRoots += detail.generic.rootsNew;
         photoSwipeDetail.rootReuse.repeatedRootChecks += detail.generic.rootsRechecked;
         photoSwipeDetail.rootReuse.changedRootChecks += detail.generic.rootsChangedSincePreviousCall;
@@ -2404,6 +2427,8 @@ export async function runHiddenFrameDeepScan({
         }));
         const photoSwipeSummary = {
             ...photoSwipeDetail,
+            // ✴️ NEW 2026-10-14: Kept flat so DebugLogger can export the values without max-depth truncation.
+            genericNextStateOutcomes: {...photoSwipeDetail.generic.nextStateOutcomes},
             waitPurposeSummary: getPhotoSwipeWaitPurposeSummary(),
             totalMs: roundPhotoSwipeValue(photoSwipeDetail.totalMs),
             maxCallMs: roundPhotoSwipeValue(photoSwipeDetail.maxCallMs),

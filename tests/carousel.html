@@ -529,6 +529,18 @@
                 </div>
             </section>
 
+            <section id="stalledCarousel" class="carousel" data-carousel-id="stalled-control">
+                <div class="carousel-heading">
+                    <h2>Carousel 7</h2>
+                    <p>non-responsive controls · one retained source</p>
+                </div>
+                <div class="carousel-stage">
+                    <button class="carousel-control" data-carousel-prev rel="prev" aria-label="Previous image">←</button>
+                    <div class="carousel-active"></div>
+                    <button class="carousel-control" data-carousel-next rel="next" aria-label="Next image">→</button>
+                </div>
+            </section>
+
             <div id="chatAfter"></div>
         </main>
 
@@ -684,6 +696,12 @@
             startIndex: 11,
             slides: chatImages.slice(19, 43)
         };
+        // ✴️ NEW 2026-10-14: Covers a generic Carousel whose controls never change its state.
+        const stalledCarouselData = {
+            id: 'stalled-control',
+            slide: 'images/Wasbek-large1500.jpg'
+        };
+        const stalledCarouselActions = {forward: 0, backward: 0};
 
         const menuItems = [
             ['Home', '../assets/icons/deprecated/_icon64.png'],
@@ -1109,6 +1127,32 @@
             render();
         };
 
+        // ✴️ NEW 2026-10-14: Initializes the non-responsive Carousel performance regression case.
+        const initializeStalledCarousel = () => {
+            const root = document.getElementById('stalledCarousel');
+            const active = root.querySelector('.carousel-active');
+            const target = document.createElement('button');
+            target.type = 'button';
+            target.className = 'carousel-slide';
+            target.dataset.slideIndex = '1';
+            target.setAttribute('aria-current', 'true');
+
+            const image = document.createElement('img');
+            image.alt = 'Retained source for a non-responsive carousel';
+            image.setAttribute('data-lazy-src', imageURL(stalledCarouselData.slide));
+            target.append(image);
+            active.append(target);
+
+            root.querySelector('[data-carousel-prev]').addEventListener('click', () => {
+                stalledCarouselActions.backward += 1;
+                root.querySelector('[data-carousel-prev]').disabled = true;
+            });
+            root.querySelector('[data-carousel-next]').addEventListener('click', () => {
+                stalledCarouselActions.forward += 1;
+                root.querySelector('[data-carousel-next]').disabled = true;
+            });
+        };
+
         const initializeCarousels = () => {
             carouselData.forEach((carousel) => {
                 const root = document.getElementById(carousel.id);
@@ -1143,6 +1187,7 @@
         initializeCarousels();
         createShadowLazyCarousel();
         initializeVirtualCarousel();
+        initializeStalledCarousel();
 
         const runDeepScanCarouselFixture = async () => {
             if (!new URLSearchParams(location.search).has('runDeepScanCarousel')) return;
@@ -1184,7 +1229,8 @@
                 ...carouselData.flatMap((carousel) => carousel.slides),
                 ...shadowLazyCarousel.slides,
                 ...shadowLazyCarousel.fullSlides.slice(0, 1),
-                ...virtualCarouselData.slides
+                ...virtualCarouselData.slides,
+                stalledCarouselData.slide
             ].map((path) => new URL(imageURL(path), location.href).href);
             const missing = expectedURLs.filter((url) => !foundURLs.has(url));
             document.documentElement.dataset.deepScanCarouselResult = missing.length === 0
@@ -1194,6 +1240,10 @@
             document.documentElement.dataset.deepScanCarouselFound = String(
                 expectedURLs.length - missing.length
             );
+            document.documentElement.dataset.deepScanCarouselStalled =
+                stalledCarouselActions.forward === 1 && stalledCarouselActions.backward === 1
+                    ? 'passed'
+                    : 'failed';
             const detail = photoSwipePerformance[0]?.detail;
             const reuseDetail = photoSwipePerformance[1]?.detail;
             document.documentElement.dataset.deepScanCarouselInstrumentation = detail &&
@@ -1201,6 +1251,8 @@
                 Number.isFinite(detail.phases.genericCarouselDiscoveryMs) &&
                 Number.isFinite(detail.phases.candidateClassificationMs) &&
                 detail.waitPurposeSummary.includes('generic-next-state') &&
+                detail.generic.nextStateOutcomes.changed > 0 &&
+                detail.generic.nextStateOutcomes.controlDisabled === 2 &&
                 reuseDetail?.generic.rootsPreviouslySeen > 0 &&
                 reuseDetail.generic.rootsAlreadyProcessed > 0 &&
                 reuseDetail.generic.rootsUnchangedSincePreviousCall > 0

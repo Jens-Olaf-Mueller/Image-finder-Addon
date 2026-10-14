@@ -65,6 +65,8 @@ export default class CarouselScanner {
         ];
         const genericGalleryTokens = /(?:carousel|gallery|slider|swiper)/i;
         const genericSlideTokens = /(?:slide|item|media)/i;
+        // ✴️ NEW 2026-10-14: Preserves delayed carousel state updates before accepting its end signal.
+        const GENERIC_CONTROL_END_GRACE_MS = 300;
         const effectiveScanRoots = Array.isArray(scanRoots) && scanRoots.length > 0
             ? scanRoots
             : [scanDocument];
@@ -169,16 +171,23 @@ export default class CarouselScanner {
             control.getAttribute?.('rel') || control.getAttribute?.('aria-label') ||
             control.getAttribute?.('title') ? 'semantic' : 'structural'
         );
-        const getGenericControlAvailability = (control) => {
-            const phaseStartedAt = getPhaseStartedAt();
-            if (!control || !control.isConnected) return {usable: false, reason: 'control-unavailable'};
+        // ✴️ NEW 2026-10-14: Reads only the reliable end signals of an already clicked control.
+        const getGenericControlEndReason = (control) => {
+            if (!control || !control.isConnected) return 'control-unavailable';
             if (control.hasAttribute('disabled') || control.hasAttribute('hidden') ||
                 control.hasAttribute('inert') || control.getAttribute('aria-disabled') === 'true' ||
                 /(?:^|\s)(?:disabled|swiper-button-disabled)(?:\s|$)/i.test(
                     getElementClassText(control)
-                )) {
+                )) return 'control-disabled';
+
+            return null;
+        };
+        const getGenericControlAvailability = (control) => {
+            const phaseStartedAt = getPhaseStartedAt();
+            const endReason = getGenericControlEndReason(control);
+            if (endReason) {
                 recordPhase('styleAttributeGeometryMs', phaseStartedAt);
-                return {usable: false, reason: 'control-disabled'};
+                return {usable: false, reason: endReason};
             }
             try {
                 const style = getComputedStyle(control);
@@ -466,6 +475,18 @@ export default class CarouselScanner {
             this.#genericGalleries.set(root, gallery);
             return gallery;
         };
+        // ✴️ NEW 2026-10-14: Records why a generic carousel navigation did or did not advance.
+        const recordNextStateOutcome = (name) => {
+            const outcomes = performanceDetail?.generic?.nextStateOutcomes;
+            if (outcomes?.[name] === undefined) return;
+
+            outcomes[name] += 1;
+        };
+        const getNextStateOutcome = (reason) => {
+            if (reason === 'stable-state') return 'stableState';
+            if (reason === 'control-disabled') return 'controlDisabled';
+            return 'controlUnavailable';
+        };
         const traverseGenericCarousel = async (root, gallery) => {
             // ✏️ EDIT 2026-10-11: Retry state-less roots only after their own state changes.
             const initialState = getGenericCarouselState(root, gallery);
@@ -534,14 +555,39 @@ export default class CarouselScanner {
                         return {kind: 'failed', reason: 'control-action-failed'};
                     }
 
-                    const nextState = await waitFor(() => {
+                    // ✏️ EDIT 2026-10-14: Resolve a confirmed end signal instead of waiting
+                    // for a state change that can no longer occur after the button was disabled.
+                    let controlEndStartedAt = null;
+                    const nextStep = await waitFor(() => {
                         const state = getGenericCarouselState(root, gallery);
-                        return state && state.key !== beforeState.key ? state : null;
+                        if (state && state.key !== beforeState.key) return {kind: 'state', state};
+
+                        const endReason = getGenericControlEndReason(controlState.control);
+                        if (!endReason) {
+                            controlEndStartedAt = null;
+                            return null;
+                        }
+
+                        controlEndStartedAt ??= performance.now();
+                        return performance.now() - controlEndStartedAt >= GENERIC_CONTROL_END_GRACE_MS
+                            ? {kind: 'edge', reason: endReason}
+                            : null;
                     }, 3000, 'generic-next-state');
                     if (isAborted()) return {kind: 'aborted'};
-                    if (!nextState) {
+                    if (nextStep?.kind === 'edge') {
+                        recordNextStateOutcome(getNextStateOutcome(nextStep.reason));
+                        reportCarousel(
+                            'CAROUSEL EDGE',
+                            'gallery=' + gallery.key,
+                            'direction=' + direction,
+                            'reason=' + nextStep.reason
+                        );
+                        return {kind: 'edge', reason: nextStep.reason};
+                    }
+                    if (!nextStep) {
                         const settledControl = getGenericCarouselControl(root, direction);
                         const reason = settledControl.control ? 'stable-state' : settledControl.reason;
+                        recordNextStateOutcome(getNextStateOutcome(reason));
                         reportCarousel(
                             'CAROUSEL EDGE',
                             'gallery=' + gallery.key,
@@ -551,9 +597,15 @@ export default class CarouselScanner {
                         return {kind: 'edge', reason};
                     }
 
+                    recordNextStateOutcome('changed');
                     successfulTransitions += 1;
-                    const wasVisited = gallery.visitedStates.has(nextState.key);
-                    const stateResult = await processGenericCarouselState(root, gallery, nextState, direction);
+                    const wasVisited = gallery.visitedStates.has(nextStep.state.key);
+                    const stateResult = await processGenericCarouselState(
+                        root,
+                        gallery,
+                        nextStep.state,
+                        direction
+                    );
                     if (isAborted()) return {kind: 'aborted'};
                     if (direction === 'forward' && wasVisited && successfulTransitions > 1 &&
                         stateResult.newSources === 0) {
@@ -563,7 +615,7 @@ export default class CarouselScanner {
                             'gallery=' + gallery.key,
                             'type=cyclic',
                             'visitedStates=' + gallery.visitedStates.size,
-                            'totalHint=' + (nextState.totalHint ?? 'unknown'),
+                            'totalHint=' + (nextStep.state.totalHint ?? 'unknown'),
                             'reason=cycle-complete'
                         );
                         return {kind: 'cycle', reason: 'cycle-complete'};
@@ -574,6 +626,22 @@ export default class CarouselScanner {
 
             const forward = await traverseDirection('forward');
             if (forward.kind === 'aborted' || forward.kind === 'cycle' || forward.kind === 'failed') return;
+            // ❌ DELETED 2026-10-14
+            // // Treating only "stable-state" as no progress missed the measured
+            // // "control-disabled" end signal and did not shorten the real timeout path.
+            // if (forward.reason === 'stable-state') {
+            //     gallery.type = 'stalled';
+            //     reportCarousel(
+            //         'CAROUSEL END',
+            //         'gallery=' + gallery.key,
+            //         'type=stalled',
+            //         'visitedStates=' + gallery.visitedStates.size,
+            //         'totalHint=' + (initialState.totalHint ?? 'unknown'),
+            //         'reason=forward-control-no-progress'
+            //     );
+            //     return;
+            // }
+            // ❌
             const backward = await traverseDirection('backward');
             if (backward.kind !== 'edge' || isAborted()) return;
 
