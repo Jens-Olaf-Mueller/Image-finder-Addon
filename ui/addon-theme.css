@@ -7,8 +7,6 @@
     --adn-media-images: #6DBF39;
     --adn-media-videos: #EF4444;
     --adn-media-audios: #285EFE;
-    /* --adn-media-none: #777; */
-
     --adn-media-color: var(--adn-media-images, #6DBF39);
 
     --adn-page-bg: #f4f4f4;
@@ -17,7 +15,7 @@
     --adn-toolbar-bg: #dddddd;
     --adn-text: #202020;
     --adn-muted-text: #777;
-    /* --adn-settings-legend-text: #222; */
+
     --adn-border: #b0b0b0;
     --adn-control-border: silver;
     --adn-button-hover-border: #a0a0a0;
@@ -26,8 +24,8 @@
     --adn-button-inset-border: silver;
     --adn-disabled-text: #777;
 
-    --adn-progressbar-border: silver;
-    --adn-progressbar-text: whitesmoke;
+    /* --adn-progressbar-border: silver; */
+    --adn-progressbar-text: var(--adn-text);
     --adn-control-accent: #285EFE; /* #006000 #32CD32 */
 
     --adn-led-bg: #cccccc;
@@ -62,6 +60,7 @@ html[data-mode="dark"] {
     --adn-disabled-text: #6a6a6a;
 
     --adn-result-selected-bg: dimgray;
+    --adn-progressbar-text: #202020;
 
     --adn-led-bg: #3c3c3c;
     --adn-led-text: #d4d4d4;

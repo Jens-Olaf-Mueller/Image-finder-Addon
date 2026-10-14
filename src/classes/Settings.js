@@ -38,6 +38,9 @@ const PIXEL_BLUR_SETTINGS_VERSION = 2;
  * - {@link setDefaultDownloadFolder}         - Stores the shared browser download folder.
  * - {@link getMostLikelyDownloadFolder}      - Finds the most frequent recent folder.
  *
+ * - {@link getMediaMode} - Returns the globally selected media mode.
+ * - {@link setMediaMode} - Saves the globally selected media mode.
+ *
  * ---------------------------------------------------------------
  * II. Private Methods
  * ---------------------------------------------------------------
@@ -238,6 +241,41 @@ export class Settings {
                 themeMode: mode === 'dark' ? 'dark' : 'light'
             }
         });
+    }
+
+    // ✴️ NEW 2026-10-14: Keeps the last selected popup media mode in global settings.
+    /**
+     * Returns the global popup media mode without a website-profile override.
+     *
+     * @returns {1|2|3} The image, video, or audio media mode.
+     */
+    getMediaMode() {
+        const mediaMode = Number(this.#globalData.common?.mediaMode);
+        return [1, 2, 3].includes(mediaMode) ? mediaMode : 1;
+    }
+
+    /**
+     * Saves the global popup media mode independently from a website profile.
+     *
+     * @param {number} mode The requested image, video, or audio mode.
+     * @returns {Promise<1|2|3>} The persisted media mode.
+     */
+    async setMediaMode(mode) {
+        const mediaMode = [1, 2, 3].includes(Number(mode)) ? Number(mode) : 1;
+        const globalData = Settings.#normalizeSettings({
+            ...this.#globalData,
+            common: {
+                ...(this.#globalData.common ?? {}),
+                mediaMode
+            }
+        });
+
+        this.#globalData = Settings.#cloneData(globalData);
+        if (!this.#activeWebsiteProfile) this.data = Settings.#cloneData(globalData);
+        await window.chrome.storage.local.set({
+            [this.storageKey]: Settings.#cloneData(globalData)
+        });
+        return mediaMode;
     }
 
     // ✴️ NEW 2026-10-10: Keeps the browser download folder global while profiles retain subfolders.
@@ -753,6 +791,8 @@ export const DEFAULT_SETTINGS = {
     common: {
         scanOnStart: true,
         themeMode: 'light',
+        // ✴️ NEW 2026-10-14: Starts in image mode until the user chooses another media type.
+        mediaMode: 1,
         allowBackgroundScan: false,
         allowProtectedDeepScan: false,
         saveSettingsForURL: false,

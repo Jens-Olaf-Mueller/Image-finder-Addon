@@ -48,6 +48,8 @@ export class MediaController {
             onClearMedia: () => this.clearMedia(),
             onReloadCurrentTab: () => this.reloadCurrentTab(),
             onThemeChange: (mode) => this.#setThemeMode(mode),
+            // ✴️ NEW 2026-10-14: Stores the popup media choice independently from profiles.
+            onMediaModeChange: (mode) => this.#setMediaMode(mode),
             onSettingsClosed: () => {
                 this.updateDownloadTitles();
                 this.#updateLEDActivity();
@@ -68,9 +70,14 @@ export class MediaController {
         await this.setWebsiteURLFromActiveTab();
         await this.settings.run();
         this.popup.applyThemeMode(this.settings.getThemeMode());
+        // ✴️ NEW 2026-10-14: Restores the global media mode before an optional automatic scan.
+        const mediaMode = this.settings.getMediaMode();
+        this.popup.applyMediaMode(mediaMode);
         if (typeof onSettingsReady === 'function') await onSettingsReady();
         this.updateDownloadTitles();
-        if (this.settings.get('common', 'scanOnStart', true)) await this.scan();
+        if (this.settings.get('common', 'scanOnStart', true) && mediaMode === 1) {
+            await this.scan();
+        }
     }
 
     async setWebsiteURLFromActiveTab() {
@@ -154,6 +161,7 @@ export class MediaController {
 
         return {
             themeMode: this.settings.getThemeMode(),
+            mediaMode: this.settings.getMediaMode(),
             downloadFolder: this.getEffectiveDownloadFolder()
         };
     }
@@ -165,6 +173,15 @@ export class MediaController {
             await this.settings.setThemeMode(themeMode);
         } catch (error) {
             console.warn('Cannot save theme mode:', error);
+        }
+    }
+
+    // ✴️ NEW 2026-10-14: Persists the last selected popup mode independently from website profiles.
+    async #setMediaMode(mode) {
+        try {
+            await this.settings.setMediaMode(mode);
+        } catch (error) {
+            console.warn('Cannot save media mode:', error);
         }
     }
 

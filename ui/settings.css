@@ -23,10 +23,18 @@ form#frmSettings {
     background-color: var(--adn-preview-bg);
 }
 
+#frmSettings fieldset[name]:disabled {
+    filter: grayscale(1);
+}
+
 #frmSettings fieldset[name] legend {
     color: var(--adn-text);
     font-weight: bold;
     transform: translateY(1rem);
+}
+
+#frmSettings fieldset[name]:disabled legend {
+    color: var(--adn-disabled-text);
 }
 
 #frmSettings .control {

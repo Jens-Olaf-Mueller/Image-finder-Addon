@@ -120,9 +120,7 @@ export default class Popup {
         this.#mediaList = new MediaList(this.DOM.lstImages);
         this.#mediaPreview = new MediaPreview(this.DOM.divPreview, this.DOM.spnStatusBar);
         this.#progressbar = new Progressbar(this.DOM.divProgressbar);
-        // ✴️ NEW 2026-10-12: Makes the selected media color available to every popup control.
-        document.documentElement.style.setProperty('--adn-media-color', this.cssMediaColor);
-        this.#progressbar.backgroundColor = this.cssMediaColor;
+        this.applyMediaMode(this.#mode);
         this.#setEventListeners();
         window.addEventListener('pagehide', () => this.#stopDeepScanTitleTimer(), {once: true});
     }
@@ -152,6 +150,33 @@ export default class Popup {
 
         document.documentElement.dataset.mode = themeMode;
         if (this.DOM.chkTheme) this.DOM.chkTheme.checked = themeMode === 'dark';
+    }
+
+    // ✴️ NEW 2026-10-14: Synchronizes the popup media controls with a selected media mode.
+    /**
+     * Applies a media mode to the popup controls and its shared media color.
+     *
+     * @param {Number} newMode The image, video, or audio media mode.
+     * @returns {Boolean} Whether the requested mode was applied.
+     */
+    applyMediaMode(newMode) {
+        if (!Object.hasOwn(MEDIA_MODES, newMode)) return false;
+
+        this.mode = newMode;
+        const button = this.DOM.btnMediaType;
+        const modeLabel = this.#mode === 3 ? 'audio files' : `${this.mode}s`;
+        if (button) {
+            button.value = String(this.#mode);
+            button.title = `Scan for ${modeLabel}`;
+            button.setAttribute('aria-label', button.title);
+        }
+
+        const media = this.mode.charAt(0).toUpperCase() + this.mode.slice(1);
+        this.DOM.useMedia?.setAttribute('href', `../assets/icons/button-icons.svg#svgMedia${media}`);
+        // ✴️ NEW 2026-10-14: Makes the selected media color available to every popup control.
+        document.documentElement.style.setProperty('--adn-media-color', this.cssMediaColor);
+        this.#progressbar.backgroundColor = this.cssMediaColor;
+        return true;
     }
 
     /**
@@ -549,15 +574,10 @@ export default class Popup {
 
         switch (button.id) {
             case 'btnMediaType':
-                this.#mode++;
-                if (this.#mode > 3) this.#mode = 1;
-                button.value = this.#mode;
-                button.title = `Scan for ${this.mode}${this.#mode !== 3 ? 's': ' files'}`;
-                const media = this.mode.charAt(0).toUpperCase() + this.mode.slice(1);
-                const icon = document.getElementById('useMedia');
-                icon.setAttribute('href', `../assets/icons/button-icons.svg#svgMedia${media}`);
-                document.documentElement.style.setProperty('--adn-media-color', this.cssMediaColor);
-                this.#progressbar.backgroundColor = this.cssMediaColor;
+                // ✏️ EDIT 2026-10-14: Applies and persists each user-selected media mode.
+                const nextMode = this.#mode === 3 ? 1 : this.#mode + 1;
+                if (!this.applyMediaMode(nextMode)) break;
+                await this.#eventHandlers.onMediaModeChange?.(this.#mode);
 
                 // TODO Apply the other mode logig here
                 break;
@@ -702,6 +722,7 @@ export default class Popup {
         await this.#settingsPanel?.waitForPendingSave();
         const resetState = await this.#eventHandlers.onResetSettings?.();
         if (resetState?.themeMode) this.applyThemeMode(resetState.themeMode);
+        if (Number.isInteger(resetState?.mediaMode)) this.applyMediaMode(resetState.mediaMode);
         if (typeof resetState?.downloadFolder === 'string') {
             this.updateDownloadTitles(resetState.downloadFolder);
         }

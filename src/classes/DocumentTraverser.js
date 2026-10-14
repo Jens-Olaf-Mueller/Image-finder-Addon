@@ -13,7 +13,7 @@ export default class DocumentTraverser {
     #getRelevantMutationCount;
     #stableCycleLimit;
     #getKnownTargetCount;
-    #getTargetElements;
+    #getKnownTargets;
     #isInsideLowPriorityStructureContainer;
     #isActive;
     #registerTargets;
@@ -36,7 +36,7 @@ export default class DocumentTraverser {
         getRelevantMutationCount = () => 0,
         stableCycleLimit,
         getKnownTargetCount,
-        getTargetElements,
+        getKnownTargets,
         isInsideLowPriorityStructureContainer,
         isActive,
         registerTargets,
@@ -53,7 +53,7 @@ export default class DocumentTraverser {
         this.#getRelevantMutationCount = getRelevantMutationCount;
         this.#stableCycleLimit = stableCycleLimit;
         this.#getKnownTargetCount = getKnownTargetCount;
-        this.#getTargetElements = getTargetElements;
+        this.#getKnownTargets = getKnownTargets;
         this.#isInsideLowPriorityStructureContainer = isInsideLowPriorityStructureContainer;
         this.#isActive = isActive;
         this.#registerTargets = registerTargets;
@@ -337,35 +337,48 @@ export default class DocumentTraverser {
         );
     }
 
+    // ✏️ EDIT 2026-10-14: Selects directly from persistent targets without global queries or sorting.
     #getNextScrollTarget(direction) {
         const viewportHeight = Math.max(window.innerHeight, 1);
         const minimumTargetTop = Math.ceil(viewportHeight * this.#scrollStepFactor);
         const attemptedTargets = direction === 'up'
             ? this.#attemptedUpwardTargets
             : this.#attemptedDownwardTargets;
-        const targets = this.#getTargetElements().flatMap((element) => {
-            if (attemptedTargets.has(element) || this.#isInsideLowPriorityStructureContainer(element)) {
-                return [];
+        const upperTargetTop = Math.max(0, viewportHeight - minimumTargetTop);
+        let nextTarget = null;
+        let fallbackTarget = null;
+
+        this.#getKnownTargets().forEach((elm) => {
+            if (attemptedTargets.has(elm) || this.#isInsideLowPriorityStructureContainer(elm)) {
+                return;
             }
 
             try {
-                const rect = element.getBoundingClientRect();
-                if (rect.width <= 0 || rect.height <= 0 || rect.bottom <= 0) return [];
+                const rect = elm.getBoundingClientRect();
+                if (rect.width <= 0 || rect.height <= 0 || rect.bottom <= 0) return;
 
-                return [{element, rect}];
+                if (direction === 'up') {
+                    if (rect.top < upperTargetTop &&
+                        (!nextTarget || rect.top > nextTarget.rect.top)) {
+                        nextTarget = {element: elm, rect};
+                    }
+                    return;
+                }
+
+                if (rect.top >= minimumTargetTop) {
+                    if (!nextTarget || rect.top < nextTarget.rect.top) {
+                        nextTarget = {element: elm, rect};
+                    }
+                } else if (rect.bottom > viewportHeight &&
+                    (!fallbackTarget || rect.top < fallbackTarget.rect.top)) {
+                    fallbackTarget = {element: elm, rect};
+                }
             } catch {
-                return [];
+                // One page-owned target must not prevent document traversal.
             }
-        }).sort((first, second) => first.rect.top - second.rect.top);
+        });
 
-        if (direction === 'up') {
-            const upperTargetTop = Math.max(0, viewportHeight - minimumTargetTop);
-            return targets.filter(({rect}) => rect.top < upperTargetTop)
-                .sort((first, second) => second.rect.top - first.rect.top)[0] ?? null;
-        }
-
-        return targets.find(({rect}) => rect.top >= minimumTargetTop) ??
-            targets.find(({rect}) => rect.bottom > viewportHeight) ?? null;
+        return nextTarget ?? fallbackTarget;
     }
 
     #getBottomDwellTarget() {

@@ -1866,6 +1866,8 @@ export async function runHiddenFrameDeepScan({
     const seenCandidatesByURL = new Map();
     const seenCandidateURLsByBase = new Map();
     const knownTargets = new Set();
+    // ✴️ NEW 2026-10-14: Refreshes the persistent scroll-target registry only after DOM changes.
+    let targetDiscoveryDirty = true;
     const photoSwipeScanner = new PhotoSwipeScanner();
     const carouselScanner = new CarouselScanner();
     // ✏️ EDIT 2026-10-11: Retained for detailed PhotoSwipe performance reporting.
@@ -1897,6 +1899,7 @@ export async function runHiddenFrameDeepScan({
         scanDocument: document,
         mutationAttributes: DEEP_SCAN_MUTATION_ATTRIBUTES,
         onActivity: ({records, settleRecords = records}) => {
+            if (settleRecords.length > 0) targetDiscoveryDirty = true;
             // ✏️ EDIT 2026-10-11: Image loads remain queued as delta roots, but only
             // DOM mutations postpone the global settle timer after a scroll step.
             records.forEach(markKnownGenericRootsChanged);
@@ -2591,15 +2594,32 @@ export async function runHiddenFrameDeepScan({
         '[data-original]',
         '[data-lightbox-src]'
     ].join(',')));
+    // ✴️ NEW 2026-10-14: Removes target nodes no longer present in virtualized documents.
+    const getKnownTargets = () => {
+        const targets = [];
+
+        knownTargets.forEach((elm) => {
+            if (elm?.isConnected === true) {
+                targets.push(elm);
+            } else {
+                knownTargets.delete(elm);
+            }
+        });
+        return targets;
+    };
+    // ✏️ EDIT 2026-10-14: Avoids rediscovering all document targets without DOM activity.
     const registerTargets = () => {
+        if (!targetDiscoveryDirty) return 0;
+
         let added = 0;
 
-        getTargetElements().forEach((element) => {
-            if (knownTargets.has(element)) return;
+        getTargetElements().forEach((elm) => {
+            if (knownTargets.has(elm)) return;
 
-            knownTargets.add(element);
+            knownTargets.add(elm);
             added += 1;
         });
+        targetDiscoveryDirty = false;
         return added;
     };
     const getCandidateURLClass = (candidateURL) => {
@@ -3241,7 +3261,7 @@ export async function runHiddenFrameDeepScan({
         getRelevantMutationCount: () => relevantMutationCount,
         stableCycleLimit,
         getKnownTargetCount: () => knownTargets.size,
-        getTargetElements,
+        getKnownTargets,
         isInsideLowPriorityStructureContainer,
         isActive,
         registerTargets,

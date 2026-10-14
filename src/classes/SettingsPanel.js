@@ -41,6 +41,7 @@
  * ---------------------------------------------------------------
  * - {@link #setEventListeners()}             - Registers panel event listeners.
  * - {@link #updateImageSizeControls()}       - Updates image-size controls.
+ * - {@link #updateBlurFilterControls()}      - Updates blur-filter controls.
  * - {@link #updateDeepScanControls()}        - Updates DeepScan controls.
  * - {@link #updateDebugControls()}           - Updates debug-log controls.
  * - {@link #updateDownloadFolderControls()}  - Updates download-folder controls.
@@ -136,6 +137,7 @@ export class SettingsPanel {
         this.#updateDeepScanControls();
         this.#updateDebugControls();
         this.#updateImageSizeControls();
+        this.#updateBlurFilterControls();
         this.#updateDownloadFolderControls();
         this.#updateExcludeListControls();
         this.#updateWebsiteProfileControls();
@@ -323,6 +325,7 @@ export class SettingsPanel {
         this.form.addEventListener('change', () => {
             this.#updateDeepScanControls();
             this.#updateDebugControls();
+            this.#updateBlurFilterControls();
             const data = this.getFormData();
 
             this.enqueue(async () => {
@@ -362,6 +365,13 @@ export class SettingsPanel {
         this.DOM.inpMinHeight.disabled = disabled;
         this.DOM.inpMinimumFileSize.disabled = disabled;
         this.DOM.spnMinSize.toggleAttribute('disabled', disabled);
+    }
+
+    // ✴️ NEW 2026-10-14: Disables the blur controls whenever their filter is inactive.
+    #updateBlurFilterControls() {
+        if (!this.DOM.fldBlurFilter || !this.DOM.chkIgnoreBlurredImages) return;
+
+        this.DOM.fldBlurFilter.disabled = this.DOM.chkIgnoreBlurredImages.checked !== true;
     }
 
     // Updates the protected DeepScan control state.
