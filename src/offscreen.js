@@ -6,6 +6,7 @@ const OFFSCREEN_ANALYZER_EVENT_TARGET = 'image-finder-offscreen-analyzer-event';
 
 const objectUrlsByToken = new Map();
 const tokensByDownloadId = new Map();
+const mediaZipBlobChunksByTransferId = new Map();
 let isolatedDeepScanHost = null;
 const analyzersBySession = new Map();
 
@@ -24,8 +25,51 @@ async function dataUrlToBlob(dataUrl) {
     return response.blob();
 }
 
-// ✴️ NEW 2026-10-15: Resolves one serializable media source while the ZIP stays inside this document.
-async function resolveMediaZipBytes(media) {
+// ✴️ NEW 2026-10-15: Restores one bounded, tab-local Blob transfer for the current ZIP entry.
+function takeMediaZipBlobBytes(transferId) {
+    const chunks = mediaZipBlobChunksByTransferId.get(transferId);
+    if (!chunks) throw new Error('The page Blob ZIP transfer is unavailable');
+
+    mediaZipBlobChunksByTransferId.delete(transferId);
+    const parts = chunks.map(chunk => Uint8Array.from(atob(chunk), char => char.charCodeAt(0)));
+    const byteLength = parts.reduce((total, part) => total + part.byteLength, 0);
+    const bytes = new Uint8Array(byteLength);
+    let offset = 0;
+
+    for (const part of parts) {
+        bytes.set(part, offset);
+        offset += part.byteLength;
+    }
+
+    return bytes.buffer;
+}
+
+// ✴️ NEW 2026-10-15: Requests one page-local Blob through the bounded source-tab transfer.
+async function resolvePageBlobZipBytes(media, jobId) {
+    const transferId = crypto.randomUUID();
+
+    try {
+        const response = await window.chrome.runtime.sendMessage({
+            target: OFFSCREEN_TARGET,
+            source: 'offscreen',
+            action: 'resolveMediaZipBlob',
+            jobId,
+            tabId: media.tabId,
+            blobUrl: media.url,
+            transferId
+        });
+        if (response?.success !== true) {
+            throw new Error(response?.error || 'Cannot resolve the page Blob for ZIP creation');
+        }
+
+        return takeMediaZipBlobBytes(transferId);
+    } finally {
+        mediaZipBlobChunksByTransferId.delete(transferId);
+    }
+}
+
+// ✏️ EDIT 2026-10-15: Resolves page-local Blob images through the bounded source-tab transfer.
+async function resolveMediaZipBytes(media, jobId) {
     if (!media || typeof media.url !== 'string' || !media.url.trim()) {
         throw new Error('The ZIP media URL is invalid');
     }
@@ -35,7 +79,7 @@ async function resolveMediaZipBytes(media) {
         return (await dataUrlToBlob(media.url)).arrayBuffer();
     }
     if (source === 'blobimages') {
-        throw new Error('A page-local Blob URL must be resolved before ZIP creation');
+        return resolvePageBlobZipBytes(media, jobId);
     }
 
     // ✴️ NEW 2026-10-15: Fetches protected media with the browser credentials available to the extension.
@@ -96,7 +140,7 @@ async function createMediaZip(media, jobId) {
     for (let i = 0; i < media.length; i++) {
         const item = media[i];
         try {
-            const data = await resolveMediaZipBytes(item);
+            const data = await resolveMediaZipBytes(item, jobId);
             const fileName = getUniqueZipFileName(item?.fileName, usedNames);
             zip.file(fileName, data);
             results.push({
@@ -259,6 +303,37 @@ window.chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => 
             (error) => sendResponse({success: false, error: getErrorMessage(error)})
         );
         return true;
+    }
+
+    if (message.action === 'startMediaZipBlobTransfer') {
+        const transferId = message.transferId;
+        const byteLength = Number(message.byteLength);
+        if (typeof transferId !== 'string' || !transferId ||
+            !Number.isFinite(byteLength) || byteLength < 0 ||
+            mediaZipBlobChunksByTransferId.has(transferId)) {
+            sendResponse({success: false, error: 'The ZIP Blob transfer is invalid'});
+            return undefined;
+        }
+
+        mediaZipBlobChunksByTransferId.set(transferId, []);
+        sendResponse({success: true});
+        return undefined;
+    }
+
+    if (message.action === 'storeMediaZipBlobChunk') {
+        const transferId = message.transferId;
+        const index = message.index;
+        const data = message.data;
+        const chunks = mediaZipBlobChunksByTransferId.get(transferId);
+        if (!chunks || !Number.isInteger(index) || index !== chunks.length ||
+            typeof data !== 'string' || !data) {
+            sendResponse({success: false, error: 'The ZIP Blob fragment is invalid'});
+            return undefined;
+        }
+
+        chunks.push(data);
+        sendResponse({success: true});
+        return undefined;
     }
 
     if (message.action === 'createMediaZip') {

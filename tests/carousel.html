@@ -453,6 +453,10 @@
                 Carousel 1 and 2 are placed in the upper third; Carousel 3 and
                 4 in the lower third.
             </p>
+            <article id="zipBlobFixture" class="normal-media">
+                <header>Known PNG Blob ZIP test image · source: <code>blob:</code></header>
+                <img width="1280" height="720" alt="Known Blob ZIP fixture image">
+            </article>
             <div id="chatBefore"></div>
 
             <section id="carousel1" class="carousel" data-carousel-id="carousel1" data-carousel-type="cyclic">
@@ -755,6 +759,38 @@
             context.textBaseline = 'middle';
             context.fillText(initial, 72, 76);
             return canvas.toDataURL('image/webp', .9);
+        };
+
+        // ✴️ NEW 2026-10-15: Provides one known page-local Blob image for ZIP-download testing.
+        const createZipBlobFixture = async () => {
+            const image = document.querySelector('#zipBlobFixture img');
+            const canvas = document.createElement('canvas');
+            const context = canvas.getContext('2d');
+
+            canvas.width = 1280;
+            canvas.height = 720;
+            context.fillStyle = '#285efe';
+            context.fillRect(0, 0, canvas.width, canvas.height);
+            context.fillStyle = '#6dbf39';
+            context.beginPath();
+            context.arc(640, 360, 218, 0, Math.PI * 2);
+            context.fill();
+            context.fillStyle = '#ffffff';
+            context.font = '66px system-ui, sans-serif';
+            context.textAlign = 'center';
+            context.fillText('Image Finder', 640, 338);
+            context.font = '48px system-ui, sans-serif';
+            context.fillText('Known PNG Blob ZIP Fixture', 640, 424);
+
+            const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+            if (!blob) throw new Error('Cannot create the known PNG Blob ZIP fixture');
+
+            const blobURL = URL.createObjectURL(blob);
+
+            image.src = blobURL;
+            document.documentElement.dataset.zipBlobFixtureURL = blobURL;
+            document.documentElement.dataset.zipBlobFixtureType = blob.type;
+            window.addEventListener('pagehide', () => URL.revokeObjectURL(blobURL), {once: true});
         };
 
         const renderMenu = () => {
@@ -1183,6 +1219,9 @@
         appendChatImages('chatBetweenTwoThree', chatImages.slice(12, 40));
         appendChatImages('chatBetweenThreeFour', chatImages.slice(40, 46));
         appendChatImages('chatAfter', chatImages.slice(46));
+        void createZipBlobFixture().catch(error => {
+            console.error('Cannot create known PNG Blob ZIP fixture:', error);
+        });
         renderOverview();
         initializeCarousels();
         createShadowLazyCarousel();

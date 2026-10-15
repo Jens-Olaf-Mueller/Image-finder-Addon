@@ -25,7 +25,7 @@
  * - {@link run}                              - Initializes the panel.
  * - {@link refresh}                          - Synchronizes the form with settings.
  * - {@link updateUI}                         - Updates dependent control states.
- * - {@link setDefaultDownloadFolder}         - Stores missing download folders.
+ * - {@link setDefaultDownloadFolder}         - Stores the detected browser download folder.
  * - {@link enqueue}                          - Queues a settings save operation.
  * - {@link waitForPendingSave}               - Waits for the queued save operation.
  * - {@link deleteCurrentWebsiteProfile}      - Deletes the active profile.
@@ -144,6 +144,7 @@ export class SettingsPanel {
         await this.#updateDeleteProfileButton();
     }
 
+    // ✏️ EDIT 2026-10-15: Stores the direct browser-folder probe instead of a history guess.
     /**
      * Stores a detected browser download folder without assigning it as a profile subfolder.
      *
@@ -153,7 +154,7 @@ export class SettingsPanel {
         let defaultFolder = '';
 
         try {
-            defaultFolder = await this.settings.getMostLikelyDownloadFolder();
+            defaultFolder = await this.settings.detectDefaultDownloadFolder();
         } catch (error) {
             this.#log('Could not determine download folder:', 'warn', error);
             return;

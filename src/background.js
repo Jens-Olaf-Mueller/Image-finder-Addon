@@ -15,6 +15,7 @@ const DEBUG_LOG_TARGET = 'image-finder-debug-log';
 const DOWNLOADER_EVENT_TARGET = 'image-finder-downloader';
 const DEBUG_LOG_EXPORT_DELAY_MS = 5000;
 const DEBUG_LOG_POPUP_FINAL_DELAY_MS = 250;
+const ZIP_BLOB_TRANSFER_CHUNK_BYTES = 512 * 1024;
 const DEBUG_LOG_SETTINGS_BY_SOURCE = Object.freeze({
     popup: 'logpopup',
     tab: 'logtab',
@@ -31,6 +32,7 @@ if (typeof importScripts === 'function') {
 
 const backgroundObjectUrlsByDownloadId = new Map();
 const offscreenTokensByDownloadId = new Map();
+const activeZipBlobTransfers = new Set();
 let creatingOffscreenDocument = null;
 let activeIsolatedDeepScan = null;
 let activeHiddenDeepScan = null;
@@ -566,6 +568,108 @@ async function resolvePageBlob(tabId, blobUrl) {
     }
 
     return dataUrl;
+}
+
+// ✴️ NEW 2026-10-15: Reads a page-local Blob in bounded chunks from its source tab.
+async function streamPageBlobToExtension(blobUrl, transferId, chunkSize) {
+    if (typeof blobUrl !== 'string' || !/^blob:/i.test(blobUrl)) {
+        throw new Error('The page Blob URL is invalid');
+    }
+    if (typeof transferId !== 'string' || !transferId || !Number.isInteger(chunkSize) || chunkSize <= 0) {
+        throw new Error('The ZIP Blob transfer is invalid');
+    }
+
+    const response = await fetch(blobUrl);
+    if (!response.ok) throw new Error('Cannot read the page Blob URL');
+
+    const blob = await response.blob();
+    const sendChunk = async (action, payload = {}) => {
+        const result = await chrome.runtime.sendMessage({
+            target: 'image-finder-offscreen',
+            source: 'zip-blob-transfer',
+            action,
+            transferId,
+            ...payload
+        });
+        if (result?.success !== true) {
+            throw new Error(result?.error || 'Cannot transfer the page Blob for ZIP creation');
+        }
+    };
+    const encodeBase64 = (buffer) => {
+        const bytes = new Uint8Array(buffer);
+        const characterChunkSize = 0x8000;
+        let binary = '';
+
+        for (let offset = 0; offset < bytes.length; offset += characterChunkSize) {
+            binary += String.fromCharCode(...bytes.subarray(offset, offset + characterChunkSize));
+        }
+
+        return btoa(binary);
+    };
+
+    await sendChunk('startMediaZipBlobTransfer', {byteLength: blob.size});
+
+    let index = 0;
+    for (let offset = 0; offset < blob.size; offset += chunkSize) {
+        const part = await blob.slice(offset, Math.min(offset + chunkSize, blob.size)).arrayBuffer();
+
+        await sendChunk('storeMediaZipBlobChunk', {
+            index: index++,
+            data: encodeBase64(part)
+        });
+    }
+
+    return {byteLength: blob.size, chunks: index};
+}
+
+// ✴️ NEW 2026-10-15: Streams one tab-local Blob into the offscreen ZIP document without a large message.
+async function streamPageBlobToOffscreen(tabId, blobUrl, transferId) {
+    if (!Number.isInteger(tabId)) {
+        throw new Error('The Blob image source tab is missing');
+    }
+    if (typeof transferId !== 'string' || !transferId) {
+        throw new Error('The ZIP Blob transfer is invalid');
+    }
+
+    activeZipBlobTransfers.add(transferId);
+    try {
+        await chrome.scripting.executeScript({
+            target: {tabId},
+            func: streamPageBlobToExtension,
+            args: [blobUrl, transferId, ZIP_BLOB_TRANSFER_CHUNK_BYTES]
+        });
+    } catch (error) {
+        throw new Error(`Cannot stream Blob image from its source tab: ${getErrorMessage(error)}`);
+    } finally {
+        activeZipBlobTransfers.delete(transferId);
+    }
+}
+
+// ✴️ NEW 2026-10-15: Relays one bounded source-tab Blob fragment to the offscreen ZIP document.
+async function relayPageBlobZipTransfer(message) {
+    const transferId = message?.transferId;
+    if (typeof transferId !== 'string' || !activeZipBlobTransfers.has(transferId)) {
+        throw new Error('The ZIP Blob transfer is no longer active');
+    }
+
+    if (message.action === 'startMediaZipBlobTransfer') {
+        await sendOffscreenMessage('startMediaZipBlobTransfer', {
+            transferId,
+            byteLength: message.byteLength
+        });
+        return;
+    }
+
+    if (message.action === 'storeMediaZipBlobChunk') {
+        await sendOffscreenMessage('storeMediaZipBlobChunk', {
+            transferId,
+            index: message.index,
+            data: message.data
+        });
+        return;
+    }
+
+    throw new Error('The ZIP Blob transfer action is invalid');
 }
 
 function releaseBackgroundObjectUrl(downloadId) {
@@ -1317,7 +1421,30 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         // ✏️ EDIT 2026-10-15: Relays compact ZIP preparation progress from the offscreen document.
         if (message.source === 'offscreen' && message.action === 'zipProgress') {
             downLoader?.updateJob(message.jobId, message.progress);
+            return undefined;
         }
+
+        if (message.source === 'offscreen' && message.action === 'resolveMediaZipBlob') {
+            Promise.resolve(streamPageBlobToOffscreen(
+                message.tabId,
+                message.blobUrl,
+                message.transferId
+            )).then(
+                () => sendResponse({success: true, transferId: message.transferId}),
+                (error) => sendResponse({success: false, error: getErrorMessage(error)})
+            );
+            return true;
+        }
+
+        if (message.source === 'zip-blob-transfer' &&
+            ['startMediaZipBlobTransfer', 'storeMediaZipBlobChunk'].includes(message.action)) {
+            Promise.resolve(relayPageBlobZipTransfer(message)).then(
+                () => sendResponse({success: true}),
+                (error) => sendResponse({success: false, error: getErrorMessage(error)})
+            );
+            return true;
+        }
+
         return undefined;
     }
 

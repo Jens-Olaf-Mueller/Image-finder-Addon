@@ -3,6 +3,8 @@ const MIN_PROFILE_DURATION_DAYS = 1;
 const MAX_PROFILE_DURATION_DAYS = 365;
 const MILLISECONDS_PER_DAY = 86400000;
 const PIXEL_BLUR_SETTINGS_VERSION = 2;
+const DOWNLOAD_FOLDER_PROBE_TIMEOUT_MS = 10000;
+const DOWNLOAD_FOLDER_PROBE_FILE_PREFIX = 'image-finder-download-folder-probe-';
 
 /**
  * @file Settings.js
@@ -21,7 +23,7 @@ const PIXEL_BLUR_SETTINGS_VERSION = 2;
  * - Website profiles:            Persists settings for a specific website URL.
  * - Settings migration:          Normalizes legacy and incomplete stored data.
  * - Theme support:               Provides the validated light or dark theme mode.
- * - Folder detection:            Identifies the most likely recent download folder.
+ * - Folder detection:            Detects the configured browser download folder.
  *
  * ---------------------------------------------------------------
  * I. Public Methods
@@ -36,7 +38,7 @@ const PIXEL_BLUR_SETTINGS_VERSION = 2;
  * - {@link getThemeMode}                     - Returns the validated theme mode.
  * - {@link setThemeMode}                     - Saves the requested theme mode.
  * - {@link setDefaultDownloadFolder}         - Stores the shared browser download folder.
- * - {@link getMostLikelyDownloadFolder}      - Finds the most frequent recent folder.
+ * - {@link detectDefaultDownloadFolder}      - Detects the configured browser download folder.
  *
  * - {@link getMediaMode} - Returns the globally selected media mode.
  * - {@link setMediaMode} - Saves the globally selected media mode.
@@ -57,6 +59,7 @@ const PIXEL_BLUR_SETTINGS_VERSION = 2;
  * - {@link #removeWebsiteProfileScope()}     - Removes the retired profile scope.
  * - {@link #migrateSettings()}               - Runs all settings migrations.
  * - {@link #normalizeWebsiteURL()}           - Normalizes supported website URLs.
+ * - {@link #waitForDownloadCompletion()}     - Waits for the temporary folder probe download.
  * - {@link #normalizeFolderPath()}           - Normalizes a browser-reported folder path.
  * - {@link #normalizeDownloadSubfolder()}    - Converts legacy folders to a download subfolder.
  * - {@link #normalizeDownloadSettings()}     - Normalizes the complete download settings section.
@@ -324,41 +327,48 @@ export class Settings {
         return this.data;
     }
 
+    // ✏️ EDIT 2026-10-15: Uses a temporary direct download instead of guessing from the history.
     /**
-     * Finds the most frequently used folder among recent completed downloads.
+     * Detects the configured browser download folder through a temporary empty file.
      *
-     * @param {number} [limit=50] - The maximum number of recent downloads to inspect.
-     * @returns {Promise<string>} The likely folder path, or an empty string when unknown.
+     * The Chrome Downloads API reports the absolute filename for the probe, so its parent
+     * directory is the actual browser default rather than an arbitrary extension subfolder.
+     * The probe file and its history entry are removed before this method resolves.
+     *
+     * @returns {Promise<string>} The detected browser download folder, or an empty string.
      */
-    async getMostLikelyDownloadFolder(limit = 50) {
-        const downloads = await window.chrome.downloads.search({
-            state: 'complete',
-            orderBy: ['-startTime'],
-            limit
-        });
+    async detectDefaultDownloadFolder() {
+        const filename = `${DOWNLOAD_FOLDER_PROBE_FILE_PREFIX}${crypto.randomUUID()}.txt`;
+        let downloadID = null;
+        let isCompleted = false;
 
-        const folders = new Map();
+        try {
+            downloadID = await window.chrome.downloads.download({
+                url: 'data:text/plain;charset=utf-8,',
+                filename,
+                conflictAction: 'uniquify',
+                saveAs: false
+            });
 
-        for (const dwnl of downloads) {
-            if (!dwnl.filename) continue;
+            const download = await Settings.#waitForDownloadCompletion(downloadID);
+            isCompleted = true;
 
-            const folder = dwnl.filename.replace(/[\\/][^\\/]+$/, '');
-            if (!folder || folder === dwnl.filename) continue;
+            return Settings.#normalizeFolderPath(
+                download.filename.replace(/[\\/][^\\/]+$/, '')
+            );
+        } finally {
+            if (Number.isInteger(downloadID)) {
+                if (!isCompleted) {
+                    await window.chrome.downloads.cancel(downloadID).catch(() => undefined);
+                }
 
-            folders.set(folder, (folders.get(folder) ?? 0) + 1);
-        }
+                if (isCompleted) {
+                    await window.chrome.downloads.removeFile(downloadID).catch(() => undefined);
+                }
 
-        let likelyFolder = '';
-        let highestCount = 0;
-
-        for (const [folder, count] of folders) {
-            if (count > highestCount) {
-                highestCount = count;
-                likelyFolder = folder;
+                await window.chrome.downloads.erase({id: downloadID}).catch(() => undefined);
             }
         }
-
-        return likelyFolder;
     }
 
     // Loads global data, applies migrations, and selects an active website profile.
@@ -585,6 +595,63 @@ export class Settings {
             migrated: blurMigration.migrated || duplicateMigration.migrated ||
                 scopeMigration.migrated
         };
+    }
+
+    // ✴️ NEW 2026-10-15: Waits for the direct download-folder probe before cleaning it up.
+    /**
+     * Resolves the final DownloadItem for a successful temporary probe download.
+     *
+     * @param {number} downloadID - The DownloadItem identifier to observe.
+     * @returns {Promise<chrome.downloads.DownloadItem>} The completed probe download.
+     */
+    static async #waitForDownloadCompletion(downloadID) {
+        const findDownload = async () => {
+            const [download] = await window.chrome.downloads.search({id: downloadID});
+            return download ?? null;
+        };
+
+        return new Promise((resolve, reject) => {
+            let isSettled = false;
+            let timeoutID = null;
+            const finish = (callback, value) => {
+                if (isSettled) return;
+
+                isSettled = true;
+                window.clearTimeout(timeoutID);
+                window.chrome.downloads.onChanged.removeListener(onDownloadChanged);
+                callback(value);
+            };
+            const onDownloadChanged = (delta) => {
+                if (delta.id !== downloadID || !delta.state) return;
+
+                if (delta.state.current === 'interrupted') {
+                    finish(reject, new Error('Download folder probe was interrupted'));
+                    return;
+                }
+                if (delta.state.current !== 'complete') return;
+
+                findDownload().then(download => {
+                    if (download) {
+                        finish(resolve, download);
+                    } else {
+                        finish(reject, new Error('Completed download folder probe was not found'));
+                    }
+                }).catch(error => finish(reject, error));
+            };
+
+            window.chrome.downloads.onChanged.addListener(onDownloadChanged);
+            timeoutID = window.setTimeout(() => {
+                finish(reject, new Error('Download folder probe timed out'));
+            }, DOWNLOAD_FOLDER_PROBE_TIMEOUT_MS);
+
+            findDownload().then(download => {
+                if (download?.state === 'complete') {
+                    finish(resolve, download);
+                } else if (download?.state === 'interrupted') {
+                    finish(reject, new Error('Download folder probe was interrupted'));
+                }
+            }).catch(error => finish(reject, error));
+        });
     }
 
     // Returns a normalized HTTP(S) origin and pathname, or null.
