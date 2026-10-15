@@ -24,6 +24,121 @@ async function dataUrlToBlob(dataUrl) {
     return response.blob();
 }
 
+// ✴️ NEW 2026-10-15: Resolves one serializable media source while the ZIP stays inside this document.
+async function resolveMediaZipBytes(media) {
+    if (!media || typeof media.url !== 'string' || !media.url.trim()) {
+        throw new Error('The ZIP media URL is invalid');
+    }
+
+    const source = media.source;
+    if (source === 'dataimages') {
+        return (await dataUrlToBlob(media.url)).arrayBuffer();
+    }
+    if (source === 'blobimages') {
+        throw new Error('A page-local Blob URL must be resolved before ZIP creation');
+    }
+
+    // ✴️ NEW 2026-10-15: Fetches protected media with the browser credentials available to the extension.
+    const response = await fetch(media.url, {credentials: 'include'});
+    if (!response.ok) throw new Error(`Cannot fetch media for ZIP: ${response.status}`);
+
+    return response.arrayBuffer();
+}
+
+// ✴️ NEW 2026-10-15: Keeps duplicate ZIP entries while giving each archive name a unique suffix.
+function getUniqueZipFileName(fileName, usedNames) {
+    const baseName = String(fileName ?? '')
+        .trim()
+        .split(/[\\/]/)
+        .pop();
+    if (!baseName) throw new Error('The ZIP media file name is invalid');
+
+    const extensionIndex = baseName.lastIndexOf('.');
+    const stem = extensionIndex > 0 ? baseName.slice(0, extensionIndex) : baseName;
+    const extension = extensionIndex > 0 ? baseName.slice(extensionIndex) : '';
+
+    let number = 1;
+    let candidate = baseName;
+    while (usedNames.has(candidate)) {
+        number += 1;
+        candidate = `${stem} (${number})${extension}`;
+    }
+
+    usedNames.add(candidate);
+    return candidate;
+}
+
+// ✴️ NEW 2026-10-15: Reports compact ZIP preparation updates without transferring archive data.
+function emitZipProgress(jobId, progress) {
+    if (typeof jobId !== 'string' || !jobId) return;
+
+    void window.chrome.runtime.sendMessage({
+        target: OFFSCREEN_TARGET,
+        source: 'offscreen',
+        action: 'zipProgress',
+        jobId,
+        progress
+    }).catch(() => undefined);
+}
+
+// ✏️ EDIT 2026-10-15: Creates a ZIP Blob URL locally while reporting throttled preparation progress.
+async function createMediaZip(media, jobId) {
+    if (typeof JSZip !== 'function') {
+        throw new Error('JSZip is not available in the offscreen document');
+    }
+
+    const zip = new JSZip();
+    const results = [];
+    const usedNames = new Set();
+    const progressStep = Math.max(1, Math.ceil(media.length / 100));
+    let failed = 0;
+
+    for (let i = 0; i < media.length; i++) {
+        const item = media[i];
+        try {
+            const data = await resolveMediaZipBytes(item);
+            const fileName = getUniqueZipFileName(item?.fileName, usedNames);
+            zip.file(fileName, data);
+            results.push({
+                imageId: item?.imageId,
+                url: item?.url,
+                success: true
+            });
+        } catch (error) {
+            const message = getErrorMessage(error);
+            console.warn('Cannot add media to ZIP:', item?.url, error);
+            failed += 1;
+            results.push({
+                imageId: item?.imageId,
+                url: item?.url,
+                success: false,
+                error: message
+            });
+        }
+
+        const completed = i + 1;
+        if (completed === 1 || completed === media.length || completed % progressStep === 0) {
+            emitZipProgress(jobId, {state: 'preparing', completed, failed});
+        }
+    }
+
+    const successfulResults = results.filter(item => item.success);
+    if (successfulResults.length === 0) {
+        throw new Error('Cannot create ZIP: no media could be resolved');
+    }
+
+    emitZipProgress(jobId, {state: 'compressing', completed: media.length, failed});
+    const zipBlob = await zip.generateAsync({
+        type: 'blob',
+        mimeType: 'application/zip'
+    });
+    const token = crypto.randomUUID();
+    const objectUrl = URL.createObjectURL(zipBlob);
+    objectUrlsByToken.set(token, objectUrl);
+
+    return {token, objectUrl, results};
+}
+
 function releaseObjectUrl(token) {
     const objectUrl = objectUrlsByToken.get(token);
     if (!objectUrl) return false;
@@ -130,6 +245,7 @@ function createAnalysisEventEmitter({sessionId, requestId}) {
 }
 
 window.chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    if (message?.source === 'offscreen') return undefined;
     if (message?.target !== OFFSCREEN_TARGET) return undefined;
 
     if (message.action === 'createObjectUrl') {
@@ -140,6 +256,19 @@ window.chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => 
                 objectUrlsByToken.set(token, objectUrl);
                 sendResponse({success: true, token, objectUrl});
             },
+            (error) => sendResponse({success: false, error: getErrorMessage(error)})
+        );
+        return true;
+    }
+
+    if (message.action === 'createMediaZip') {
+        if (!Array.isArray(message.media) || message.media.length === 0) {
+            sendResponse({success: false, error: 'The ZIP media list is invalid'});
+            return undefined;
+        }
+
+        createMediaZip(message.media, message.jobId).then(
+            (result) => sendResponse({success: true, ...result}),
             (error) => sendResponse({success: false, error: getErrorMessage(error)})
         );
         return true;

@@ -12,6 +12,7 @@ const POPUP_DEEP_SCAN_PORT_NAME = 'image-finder-popup-deepscan';
 const REOPEN_POPUP_AFTER_RESTART_STORAGE_KEY = 'reopenPopupAfterRestart';
 const REOPEN_POPUP_AFTER_RESTART_MAX_AGE_MS = 60 * 1000;
 const DEBUG_LOG_TARGET = 'image-finder-debug-log';
+const DOWNLOADER_EVENT_TARGET = 'image-finder-downloader';
 const DEBUG_LOG_EXPORT_DELAY_MS = 5000;
 const DEBUG_LOG_POPUP_FINAL_DELAY_MS = 250;
 const DEBUG_LOG_SETTINGS_BY_SOURCE = Object.freeze({
@@ -23,6 +24,8 @@ const DEBUG_LOG_SETTINGS_BY_SOURCE = Object.freeze({
 if (typeof importScripts === 'function') {
     importScripts('debug-logger.js');
     importScripts('isolated-deepscan-host.js');
+    // ✴️ NEW 2026-10-15: Loads the persistent download service into the classic service worker.
+    importScripts('classes/DownLoader.js');
     if (typeof JSZip === 'undefined') importScripts('../vendor/jszip.min.js');
 }
 
@@ -42,6 +45,16 @@ const debugBackgroundLogger = globalThis.ImageFinderDebugLogger?.createLogger({
     source: 'service-worker',
     sendRecords: (records) => collectDebugRecords(records)
 })?.install();
+// ✴️ NEW 2026-10-15: Keeps media download and ZIP preparation independent from popup lifetime.
+const downLoader = typeof globalThis.DownLoader === 'function'
+    ? new globalThis.DownLoader({
+        createZipDownload: downloadMediaZipInOffscreen,
+        downloadBlob,
+        getErrorMessage,
+        resolvePageBlob,
+        onJobUpdate: sendDownLoaderEvent
+    })
+    : null;
 
 async function reopenPopupAfterExtensionRestart() {
     let restartRequestedAt = null;
@@ -78,6 +91,15 @@ async function reopenPopupAfterExtensionRestart() {
 
 function getErrorMessage(error) {
     return error instanceof Error ? error.message : String(error);
+}
+
+// ✴️ NEW 2026-10-15: Broadcasts background download job changes to any open popup.
+function sendDownLoaderEvent(event) {
+    void chrome.runtime.sendMessage({
+        target: DOWNLOADER_EVENT_TARGET,
+        source: 'background',
+        ...event
+    }).catch(() => undefined);
 }
 
 function getDebugManifestMeta() {
@@ -479,17 +501,6 @@ async function removeHiddenDeepScanFrameRule(scanId = null) {
 void removeProtectedDeepScanFrameRule();
 void removeHiddenDeepScanFrameRule();
 
-async function dataUrlToBlob(dataUrl) {
-    if (!/^data:image\//i.test(dataUrl)) {
-        throw new Error('The data-image download URL is invalid');
-    }
-
-    const response = await fetch(dataUrl);
-    if (!response.ok) throw new Error('Cannot convert data image to Blob');
-
-    return response.blob();
-}
-
 function arrayBufferToBase64(buffer) {
     const bytes = new Uint8Array(buffer);
     const chunkSize = 0x8000;
@@ -618,6 +629,51 @@ async function sendOffscreenMessage(action, payload = {}) {
     }
 
     return response;
+}
+
+// ✴️ NEW 2026-10-15: Lets the offscreen document create large ZIP Blobs without runtime-message payloads.
+async function downloadMediaZipInOffscreen(media, options, jobId) {
+    await ensureOffscreenDocument();
+    const response = await sendOffscreenMessage('createMediaZip', {media, jobId});
+
+    if (typeof response.token !== 'string' || typeof response.objectUrl !== 'string') {
+        throw new Error('The offscreen ZIP service returned an invalid Blob URL');
+    }
+
+    if (!Array.isArray(response.results)) {
+        throw new Error('The offscreen ZIP service returned invalid results');
+    }
+
+    let downloadId;
+    try {
+        downloadId = await chrome.downloads.download({
+            url: response.objectUrl,
+            ...options
+        });
+    } catch (error) {
+        try {
+            await sendOffscreenMessage('releaseObjectUrl', {token: response.token});
+        } catch (releaseError) {
+            console.warn('Cannot release failed offscreen ZIP URL:', releaseError);
+        }
+        throw error;
+    }
+
+    offscreenTokensByDownloadId.set(downloadId, response.token);
+
+    try {
+        await sendOffscreenMessage('associateDownload', {downloadId, token: response.token});
+    } catch (error) {
+        if (await releaseFinishedDownloadUrl(downloadId)) return response.results;
+        throw error;
+    }
+
+    await releaseFinishedDownloadUrl(downloadId);
+
+    return response.results.map(item => item.success === true
+        ? {...item, downloadId}
+        : item
+    );
 }
 
 async function sendDeepScanClientMessage(job, message) {
@@ -1197,160 +1253,6 @@ async function downloadBlob(blob, options) {
     return downloadBlobWithOffscreenDocument(blob, options);
 }
 
-async function downloadDataImage(dataUrl, options) {
-    return downloadBlob(await dataUrlToBlob(dataUrl), options);
-}
-
-function getDownloadRequest(image) {
-    if (!image || typeof image.url !== 'string' || !image.url.trim()) {
-        throw new Error('The image download URL is invalid');
-    }
-
-    return {
-        url: image.url.trim(),
-        source: image.source,
-        tabId: image.tabId,
-        options: image.options && typeof image.options === 'object'
-            ? image.options
-            : {}
-    };
-}
-
-async function startImageDownload(image) {
-    const {url, source, tabId, options} = getDownloadRequest(image);
-
-    if (source === 'dataimages') {
-        return downloadDataImage(url, options);
-    }
-
-    if (source === 'blobimages') {
-        const dataUrl = await resolvePageBlob(tabId, url);
-        return downloadDataImage(dataUrl, options);
-    }
-
-    return chrome.downloads.download({url, ...options});
-}
-
-async function resolveImageBytes(image) {
-    const {url, source, tabId} = getDownloadRequest(image);
-    const dataUrl = source === 'blobimages'
-        ? await resolvePageBlob(tabId, url)
-        : source === 'dataimages'
-            ? url
-            : null;
-
-    if (dataUrl) {
-        return (await dataUrlToBlob(dataUrl)).arrayBuffer();
-    }
-
-    const response = await fetch(url);
-    if (!response.ok) {
-        throw new Error(`Cannot fetch image for ZIP: ${response.status}`);
-    }
-
-    return response.arrayBuffer();
-}
-
-function getUniqueZipFileName(fileName, usedNames) {
-    const baseName = String(fileName ?? '')
-        .trim()
-        .split(/[\\/]/)
-        .pop();
-    if (!baseName) throw new Error('The ZIP image file name is invalid');
-
-    const extensionIndex = baseName.lastIndexOf('.');
-    const stem = extensionIndex > 0 ? baseName.slice(0, extensionIndex) : baseName;
-    const extension = extensionIndex > 0 ? baseName.slice(extensionIndex) : '';
-
-    let number = 1;
-    let candidate = baseName;
-    while (usedNames.has(candidate)) {
-        number += 1;
-        candidate = `${stem} (${number})${extension}`;
-    }
-
-    usedNames.add(candidate);
-    return candidate;
-}
-
-async function downloadImageZip(images, options) {
-    if (typeof JSZip !== 'function') {
-        throw new Error('JSZip is not available in the background context');
-    }
-
-    const zip = new JSZip();
-    const results = [];
-    const usedNames = new Set();
-
-    for (const image of images) {
-        try {
-            const data = await resolveImageBytes(image);
-            const fileName = getUniqueZipFileName(image?.fileName, usedNames);
-            zip.file(fileName, data);
-            results.push({
-                imageId: image?.imageId,
-                url: image?.url,
-                success: true
-            });
-        } catch (error) {
-            const message = getErrorMessage(error);
-            console.warn('Cannot add image to ZIP:', image?.url, error);
-            results.push({
-                imageId: image?.imageId,
-                url: image?.url,
-                success: false,
-                error: message
-            });
-        }
-    }
-
-    const successfulResults = results.filter((result) => result.success);
-    if (successfulResults.length === 0) {
-        throw new Error('Cannot create ZIP: no images could be resolved');
-    }
-
-    const zipBlob = await zip.generateAsync({
-        type: 'blob',
-        mimeType: 'application/zip'
-    });
-    const downloadId = await downloadBlob(zipBlob, options);
-
-    successfulResults.forEach((result) => {
-        result.downloadId = downloadId;
-    });
-
-    return results;
-}
-
-async function downloadImageList(images, zipOptions = null) {
-    if (zipOptions) return downloadImageZip(images, zipOptions);
-
-    const results = [];
-
-    for (const image of images) {
-        try {
-            const downloadId = await startImageDownload(image);
-            results.push({
-                imageId: image?.imageId,
-                url: image?.url,
-                success: true,
-                downloadId
-            });
-        } catch (error) {
-            const message = getErrorMessage(error);
-            console.warn('Cannot download image from list:', image?.url, error);
-            results.push({
-                imageId: image?.imageId,
-                url: image?.url,
-                success: false,
-                error: message
-            });
-        }
-    }
-
-    return results;
-}
-
 chrome.downloads.onChanged.addListener((delta) => {
     const state = delta.state?.current;
     if (!isTerminalDownloadState(state)) return;
@@ -1412,6 +1314,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     }
 
     if (message?.target === OFFSCREEN_TARGET) {
+        // ✏️ EDIT 2026-10-15: Relays compact ZIP preparation progress from the offscreen document.
+        if (message.source === 'offscreen' && message.action === 'zipProgress') {
+            downLoader?.updateJob(message.jobId, message.progress);
+        }
         return undefined;
     }
 
@@ -1468,7 +1374,12 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     }
 
     if (message?.action === 'downloadImage') {
-        Promise.resolve(startImageDownload(message)).then(
+        if (!downLoader) {
+            sendResponse({success: false, error: 'The background download service is unavailable'});
+            return undefined;
+        }
+
+        Promise.resolve(downLoader.download(message)).then(
             (downloadId) => sendResponse({success: true, downloadId}),
             (error) => sendResponse({success: false, error: getErrorMessage(error)})
         );
@@ -1486,12 +1397,21 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         return undefined;
     }
 
-    const zipOptions = zipRequested ? message.zip.options : null;
+    if (!downLoader) {
+        sendResponse({success: false, error: 'The background download service is unavailable'});
+        return undefined;
+    }
 
-    downloadImageList(message.images, zipOptions).then(
-        (results) => sendResponse({success: true, results}),
-        (error) => sendResponse({success: false, error: getErrorMessage(error)})
-    );
+    try {
+        // ✏️ EDIT 2026-10-15: A list request now starts a background job immediately.
+        const job = downLoader.startList(
+            message.images,
+            zipRequested ? message.zip.options : null
+        );
+        sendResponse({success: true, job});
+    } catch (error) {
+        sendResponse({success: false, error: getErrorMessage(error)});
+    }
 
-    return true;
+    return undefined;
 });

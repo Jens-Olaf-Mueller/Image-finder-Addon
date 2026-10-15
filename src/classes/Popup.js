@@ -223,12 +223,16 @@ export default class Popup {
         }
     }
 
+    // ✏️ EDIT 2026-10-15: Preserves the result count until the user selects one list item.
     /**
-     * Updates the result counter in the scanner LED.
+     * Updates the scanner LED with either the result count or the selected item position.
      * @param {Number} imageCount Number of visible results.
      */
     setImageCount(imageCount) {
-        this.DOM.divLED.textContent = imageCount;
+        const index = this.listIndex;
+        this.DOM.divLED.textContent = index < 0
+            ? imageCount
+            : `${index + 1}/${this.listItems.length}`;
     }
 
     /**
@@ -659,6 +663,8 @@ export default class Popup {
                 void this.#eventHandlers.onDeleteMedia?.(this.selectedMediaId);
                 return;
             case 'Enter':
+                // ✏️ EDIT 2026-10-15: Makes keyboard download activation honor the disabled toolbar action.
+                if (this.DOM.btnDownload.disabled) return;
                 void this.#eventHandlers.onDownloadMedia?.(this.selectedMediaId);
                 return;
             default:
@@ -742,11 +748,13 @@ export default class Popup {
         window.chrome.runtime.reload();
     }
 
-    // Applies popup-local selection styling and scroll positioning.
+    // ✏️ EDIT 2026-10-15: Restores the generic preview label when a list item becomes selected.
     #selectListItem(item, {focusList = false} = {}) {
-        this.setInfo('Image preview');
+        this.setInfo('Media preview');
         this.selectedItem?.classList.remove('selected');
         item.classList.add('selected');
+        // ✏️ EDIT 2026-10-15: Shows the selected one-based position in the widened scanner LED.
+        this.setImageCount(this.listItems.length);
         if (focusList) this.DOM.lstImages.focus();
         item.scrollIntoView({block: 'nearest'});
     }
