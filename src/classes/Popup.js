@@ -562,7 +562,17 @@ export default class Popup {
             this.#selectListItem(item, {focusList: true});
             void this.#eventHandlers.onMediaSelected?.(item.dataset.imageId);
         });
+        this.DOM.lstImages.addEventListener('dblclick', (e) => {
+            const item = e.target.closest('li');
+            if (!item || item.classList.contains('saved')) return;
+
+            void this.#eventHandlers.onDownloadMedia?.(item.dataset.imageId, {
+                skipCompleted: true
+            });
+        });
         this.DOM.lstImages.addEventListener('keydown', (e) => this.#onListKeyDown(e));
+        document.addEventListener('click', (e) => this.#onDocumentClick(e));
+        document.addEventListener('keydown', (e) => this.#onPopupKeyDown(e));
         this.DOM.chkTheme?.addEventListener('change', () => {
             const mode = this.DOM.chkTheme.checked ? 'dark' : 'light';
             this.applyThemeMode(mode);
@@ -676,6 +686,20 @@ export default class Popup {
         void this.#eventHandlers.onMediaSelected?.(item.dataset.imageId);
     }
 
+    // Clears a preview selection when the user leaves the result list.
+    #onDocumentClick(event) {
+        if (this.DOM.lstImages.contains(event.target)) return;
+
+        this.#clearSelectedMedia();
+    }
+
+    // Escape follows the same deselection path as an outside click.
+    #onPopupKeyDown(event) {
+        if (event.key !== 'Escape' || event.isComposing || !this.#clearSelectedMedia()) return;
+
+        event.preventDefault();
+    }
+
     // Closes the settings panel on Enter while it owns focus.
     #onSettingsKeyDown(event) {
         if (!this.isSettingsPanelOpen || event.key !== 'Enter' || event.isComposing) return;
@@ -757,6 +781,20 @@ export default class Popup {
         this.setImageCount(this.listItems.length);
         if (focusList) this.DOM.lstImages.focus();
         item.scrollIntoView({block: 'nearest'});
+    }
+
+    // Restores the unselected list state without changing the available media results.
+    #clearSelectedMedia() {
+        const selectedItem = this.selectedItem;
+        if (!selectedItem) return false;
+
+        selectedItem.classList.remove('selected');
+        this.showPreviewPlaceholder();
+        this.setActionDisabled('download', true);
+        this.setActionDisabled('delete', true);
+        this.setActionDisabled('openDownloadFolder', true);
+        this.setImageCount(this.listItems.length);
+        return true;
     }
 
     // Shows a progress bar while hiding the status text.

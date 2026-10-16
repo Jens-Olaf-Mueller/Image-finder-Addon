@@ -45,7 +45,7 @@ export class MediaController {
             onStopScan: (options) => this.stopScan(options),
             onMediaSelected: (imageId) => this.#showMediaPreviewSafely(imageId),
             onDeleteMedia: (imageId) => this.deleteMedia(imageId),
-            onDownloadMedia: (imageId) => this.downloadMedia(imageId),
+            onDownloadMedia: (imageId, options) => this.downloadMedia(imageId, options),
             onDownloadAllMedia: () => this.downloadAllMedia(),
             onOpenDownloadFolder: (imageId) => this.openMediaDownloadFolder(imageId),
             onClearMedia: () => this.clearMedia(),
@@ -325,13 +325,14 @@ export class MediaController {
         });
     }
 
-    async downloadMedia(imageId) {
+    async downloadMedia(imageId, {skipCompleted = false} = {}) {
         const image = imageId ? this.images.get(imageId) ?? null : null;
         if (!image) return;
 
-        // ✏️ EDIT 2026-10-15: Enforces the completed-download setting for keyboard-triggered downloads too.
-        if (this.shouldDisableDownloadWhenCompleted &&
-            this.resultStore.getDownload(imageId)?.completed === true) {
+        const alreadyCompleted = this.resultStore.getDownload(imageId)?.completed === true;
+        // Keyboard and toolbar activation retain their setting-controlled behavior. A list-item
+        // double click always skips a media file that has already finished downloading.
+        if ((skipCompleted || this.shouldDisableDownloadWhenCompleted) && alreadyCompleted) {
             this.#updateSelectedMediaActions(imageId);
             return;
         }
