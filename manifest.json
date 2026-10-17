@@ -1,11 +1,14 @@
 {
     "manifest_version": 3,
     "name": "Image Finder",
-    "version": "0.1.41",
-    "version_name": "Beta 0.1.41",
+    "version": "0.1.42",
+    "version_name": "Beta 0.1.42",
     "description": "Find images on the current website.",
     "icons": {
-        "64": "assets/icons/icon512.png"
+        "16": "assets/icons/icon16.png",
+        "32": "assets/icons/icon32.png",
+        "48": "assets/icons/icon48.png",
+        "128": "assets/icons/icon128.png"
     },
     "host_permissions": [
         "http://*/*",
@@ -20,10 +23,6 @@
         "declarativeNetRequestWithHostAccess"
     ],
     "background": {
-        "scripts": [
-            "vendor/jszip.min.js",
-            "src/background.js"
-        ],
         "service_worker": "src/background.js"
     },
     "content_scripts": [
@@ -59,7 +58,12 @@
     ],
     "action": {
         "default_title": "Image Finder",
-        "default_icon": "assets/icons/icon512.png",
+        "default_icon": {
+            "16": "assets/icons/icon16.png",
+            "32": "assets/icons/icon32.png",
+            "48": "assets/icons/icon48.png",
+            "128": "assets/icons/icon128.png"
+        },
         "default_popup": "ui/popup.html"
     },
     "options_ui": {

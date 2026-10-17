@@ -357,13 +357,9 @@ export class SettingsPanel {
             });
         });
 
-        // REVIEW
-        // TODO
-        // 1. #chkIgnoreBlurredImages must toggle the Blurfilter-Preview
-        // CSS-Blur-Filer and Laplacian value are not the same!
-        this.DOM.sldBlurTolerance.addEventListener('input', (e) => {
-            this.DOM.imgBlurSample.style.filter = `blur(${e.target.value}px)`;
-        })
+        this.DOM.sldBlurTolerance.addEventListener('input', () => {
+            this.#updateBlurFilterControls();
+        });
         this.hasEventListeners = true;
     }
 
@@ -382,6 +378,12 @@ export class SettingsPanel {
         if (!this.DOM.fldBlurFilter || !this.DOM.chkIgnoreBlurredImages) return;
 
         this.DOM.fldBlurFilter.disabled = this.DOM.chkIgnoreBlurredImages.checked !== true;
+        const blurTolerance = Number(this.DOM.sldBlurTolerance?.value);
+        const previewBlur = Number.isFinite(blurTolerance) ? blurTolerance : 2;
+
+        if (this.DOM.imgBlurSample) {
+            this.DOM.imgBlurSample.style.filter = `blur(${previewBlur}px)`;
+        }
     }
 
     // Updates the protected DeepScan control state.

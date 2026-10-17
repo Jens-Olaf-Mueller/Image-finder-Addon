@@ -60,6 +60,7 @@ class DownLoader {
             media,
             zipOptions: zipOptions && typeof zipOptions === 'object' ? zipOptions : null,
             state: 'preparing',
+            progress: 0,
             completed: 0,
             failed: 0,
             startedAt: Date.now(),
@@ -92,14 +93,22 @@ class DownLoader {
         const job = typeof jobId === 'string' ? this.#jobs.get(jobId) : null;
         if (!job) return false;
 
-        const {completed, failed, state} = progress;
+        const {completed, failed, state, percent} = progress;
         if (Number.isInteger(completed)) {
             job.completed = Math.min(job.media.length, Math.max(0, completed));
         }
         if (Number.isInteger(failed)) {
             job.failed = Math.min(job.media.length, Math.max(0, failed));
         }
-        if (state === 'preparing' || state === 'compressing') job.state = state;
+        const phaseOrder = {preparing: 0, compressing: 1, downloading: 2};
+        const advancesPhase = Object.hasOwn(phaseOrder, state) &&
+            phaseOrder[state] >= (phaseOrder[job.state] ?? -1);
+        if (Number.isFinite(percent) && (state === undefined || advancesPhase)) {
+            job.progress = Math.min(100, Math.max(0, percent));
+        }
+        if (advancesPhase) {
+            job.state = state;
+        }
 
         this.#emitJobUpdate('progress', job);
         return true;
@@ -148,6 +157,7 @@ class DownLoader {
             }
 
             job.completed += 1;
+            job.progress = job.media.length > 0 ? job.completed * 100 / job.media.length : 0;
             this.#emitJobUpdate('progress', job);
         }
 
@@ -164,6 +174,7 @@ class DownLoader {
         job.completed = job.media.length;
         job.failed = results.filter(item => item.success !== true).length;
         job.state = 'downloading';
+        job.progress = 100;
         this.#emitJobUpdate('progress', job);
         return results;
     }
@@ -232,6 +243,7 @@ class DownLoader {
             id: job.id,
             type: job.zipOptions ? 'zip' : 'list',
             state: job.state,
+            progress: job.progress,
             completed: job.completed,
             total: job.media.length,
             failed: job.failed,

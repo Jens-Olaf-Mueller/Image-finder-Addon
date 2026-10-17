@@ -21,6 +21,7 @@ const MEDIA_MODES = Object.freeze({
 });
 
 const REOPEN_POPUP_AFTER_RESTART_STORAGE_KEY = 'reopenPopupAfterRestart';
+const DOWNLOAD_COMPLETION_DISPLAY_MS = 2500;
 
 /**
  * Renders the popup interface and forwards user actions to application services.
@@ -29,9 +30,12 @@ export default class Popup {
     #activity = 'none';
     #deepScanStartedAt = null;
     #deepScanTitleInterval = null;
+    #downloadCompletionTimer = null;
+    #downloadRunning = false;
     #eventHandlers = {};
     #mediaList;
     #mediaPreview;
+    #previewInfo = null;
     #progressbar;
     #settingsPanel = null;
     #sortState = {
@@ -122,7 +126,10 @@ export default class Popup {
         this.#progressbar = new Progressbar(this.DOM.divProgressbar);
         this.applyMediaMode(this.#mode);
         this.#setEventListeners();
-        window.addEventListener('pagehide', () => this.#stopDeepScanTitleTimer(), {once: true});
+        window.addEventListener('pagehide', () => {
+            this.#stopDeepScanTitleTimer();
+            this.#clearDownloadCompletionTimer();
+        }, {once: true});
     }
 
     /**
@@ -173,6 +180,7 @@ export default class Popup {
 
         const media = this.mode.charAt(0).toUpperCase() + this.mode.slice(1);
         this.DOM.useMedia?.setAttribute('href', `../assets/icons/button-icons.svg#svgMedia${media}`);
+        this.#mediaPreview.setIdleMediaType(this.mode);
         // ✴️ NEW 2026-10-14: Makes the selected media color available to every popup control.
         document.documentElement.style.setProperty('--adn-media-color', this.cssMediaColor);
         this.#progressbar.backgroundColor = this.cssMediaColor;
@@ -201,6 +209,7 @@ export default class Popup {
      */
     setActivity(activity, imageCount) {
         this.#activity = activity;
+        if (activity === 'none' && !this.#downloadRunning) this.#previewInfo = null;
         this.DOM.divLED.classList.toggle('active', activity !== 'none');
         this.DOM.divLED.classList.toggle('flash-led', activity === 'deepScan');
         this.DOM.divLED.dataset.activity = activity;
@@ -240,7 +249,15 @@ export default class Popup {
      * @param {String} text Preview title.
      */
     setInfo(text) {
-        this.#mediaPreview.info = text;
+        this.#clearDownloadCompletionTimer();
+        if (typeof text !== 'string' || !text.trim()) return;
+
+        this.#previewInfo = text;
+        // A selected item owns the preview. Keep the live scan status for when
+        // that selection is cleared, but never replace its image.
+        if (this.selectedItem) return;
+
+        this.#mediaPreview.showStatus(text);
     }
 
     /**
@@ -256,8 +273,59 @@ export default class Popup {
      * Restores the empty preview state.
      */
     showPreviewPlaceholder() {
+        this.#clearDownloadCompletionTimer();
+        if (this.selectedItem) return;
+
+        if ((this.#activity !== 'none' || this.#downloadRunning) && this.#previewInfo) {
+            this.#mediaPreview.showStatus(this.#previewInfo);
+            this.showAddonVersion();
+            return;
+        }
+
         this.#mediaPreview.showPlaceholder();
         this.showAddonVersion();
+    }
+
+    /**
+     * Displays a ZIP phase and its numeric progress in the dedicated progress bar.
+     * @param {String} text Preview status text.
+     * @param {Number} percent Current phase progress from 0 through 100.
+     */
+    showDownloadProgress(text, percent = 0) {
+        this.#downloadRunning = true;
+        this.setInfo(text);
+        this.#progressbar.backgroundColor = this.cssMediaColor;
+        this.#showProgressbar(100);
+        this.#progressbar.setValue(percent);
+    }
+
+    /**
+     * Confirms a completed ZIP download, then restores the selected idle-mode icon.
+     */
+    showDownloadCompleted() {
+        this.#downloadRunning = false;
+        this.#clearDownloadCompletionTimer();
+        this.#previewInfo = 'Download completed';
+        if (!this.selectedItem) this.#mediaPreview.showStatus('Download completed');
+        this.#progressbar.backgroundColor = this.cssMediaColor;
+        this.#showProgressbar(100);
+        this.#progressbar.setValue(100);
+        this.#downloadCompletionTimer = setTimeout(() => {
+            this.#downloadCompletionTimer = null;
+            this.#progressbar.hide();
+            this.showPreviewPlaceholder();
+        }, DOWNLOAD_COMPLETION_DISPLAY_MS);
+    }
+
+    /**
+     * Leaves a download error visible until another user action replaces it.
+     * @param {String} text Error description.
+     */
+    showDownloadFailure(text) {
+        this.#downloadRunning = false;
+        this.#clearDownloadCompletionTimer();
+        this.setInfo(text);
+        this.#hideProgressbar();
     }
 
     // ✏️ EDIT 2026-10-09: Delegates preview rendering to the dedicated MediaPreview component.
@@ -768,9 +836,8 @@ export default class Popup {
         window.chrome.runtime.reload();
     }
 
-    // ✏️ EDIT 2026-10-15: Restores the generic preview label when a list item becomes selected.
     #selectListItem(item, {focusList = false} = {}) {
-        this.setInfo('Media preview');
+        this.#clearDownloadCompletionTimer();
         this.selectedItem?.classList.remove('selected');
         item.classList.add('selected');
         // ✏️ EDIT 2026-10-15: Shows the selected one-based position in the widened scanner LED.
@@ -803,6 +870,13 @@ export default class Popup {
     #hideProgressbar() {
         this.#progressbar.hide();
         this.showAddonVersion();
+    }
+
+    #clearDownloadCompletionTimer() {
+        if (this.#downloadCompletionTimer === null) return;
+
+        clearTimeout(this.#downloadCompletionTimer);
+        this.#downloadCompletionTimer = null;
     }
 
     // Updates sort button styling and accessible titles.

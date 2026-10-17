@@ -162,7 +162,12 @@ async function createMediaZip(media, jobId) {
 
         const completed = i + 1;
         if (completed === 1 || completed === media.length || completed % progressStep === 0) {
-            emitZipProgress(jobId, {state: 'preparing', completed, failed});
+            emitZipProgress(jobId, {
+                state: 'preparing',
+                percent: completed * 100 / media.length,
+                completed,
+                failed
+            });
         }
     }
 
@@ -171,10 +176,28 @@ async function createMediaZip(media, jobId) {
         throw new Error('Cannot create ZIP: no media could be resolved');
     }
 
-    emitZipProgress(jobId, {state: 'compressing', completed: media.length, failed});
+    let lastCompressionPercent = -1;
+    emitZipProgress(jobId, {
+        state: 'compressing',
+        percent: 0,
+        completed: media.length,
+        failed
+    });
     const zipBlob = await zip.generateAsync({
         type: 'blob',
         mimeType: 'application/zip'
+    }, (metadata) => {
+        const percent = Math.min(100, Math.max(0, Number(metadata?.percent) || 0));
+        const roundedPercent = Math.round(percent);
+        if (roundedPercent === lastCompressionPercent) return;
+
+        lastCompressionPercent = roundedPercent;
+        emitZipProgress(jobId, {
+            state: 'compressing',
+            percent: roundedPercent,
+            completed: media.length,
+            failed
+        });
     });
     const token = crypto.randomUUID();
     const objectUrl = URL.createObjectURL(zipBlob);

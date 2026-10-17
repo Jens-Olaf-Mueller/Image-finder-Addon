@@ -1,12 +1,29 @@
 import Heuristik from './Heuristik.js';
 
 const SQUARE_ASPECT_RATIO_TOLERANCE = 0.15;
+export const DEFAULT_BLUR_TOLERANCE = 2;
+export const MIN_BLUR_TOLERANCE = 0;
+export const MAX_BLUR_TOLERANCE = 12;
+export const STRICT_LAPLACIAN_BLUR_THRESHOLD = 85;
 export const GLOBAL_LAPLACIAN_BLUR_THRESHOLD = 75;
+const LAPLACIAN_THRESHOLD_PER_TOLERANCE_STEP = 5;
 export const BLUR_CLASSIFICATIONS = Object.freeze({
     blurred: 'blurred',
     sharp: 'sharp',
     uncertain: 'uncertain'
 });
+
+// Keeps the continuous preview slider and the scanner in the same direction:
+// left means sharp/strict, right means more blur is still accepted.
+export function getLaplacianBlurThreshold(blurTolerance = DEFAULT_BLUR_TOLERANCE) {
+    const numericTolerance = Number(blurTolerance);
+    const tolerance = Number.isFinite(numericTolerance)
+        ? Math.min(MAX_BLUR_TOLERANCE, Math.max(MIN_BLUR_TOLERANCE, numericTolerance))
+        : DEFAULT_BLUR_TOLERANCE;
+
+    return STRICT_LAPLACIAN_BLUR_THRESHOLD -
+        tolerance * LAPLACIAN_THRESHOLD_PER_TOLERANCE_STEP;
+}
 
 // ✴️ NEW 2026-10-04: Add the required class module JSDoc header.
 /**
@@ -112,9 +129,11 @@ export default class BlurScanner extends Heuristik {
         }
     }
 
-    classify(measurement) {
+    classify(measurement, blurTolerance = DEFAULT_BLUR_TOLERANCE) {
+        const threshold = getLaplacianBlurThreshold(blurTolerance);
+
         return Number.isFinite(measurement?.globalLaplacian) &&
-            measurement.globalLaplacian < GLOBAL_LAPLACIAN_BLUR_THRESHOLD
+            measurement.globalLaplacian < threshold
             ? BLUR_CLASSIFICATIONS.blurred
             : BLUR_CLASSIFICATIONS.uncertain;
     }

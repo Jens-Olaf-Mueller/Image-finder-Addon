@@ -80,6 +80,14 @@ img.preview:not([src]) {
     color: var(--adn-muted-text);
 }
 
+.preview__mode-icon {
+    width: min(192px, 100%);
+    height: min(192px, 100%);
+    max-width: 100%;
+    max-height: 100%;
+    color: var(--adn-muted-text, #9d9d9d);
+}
+
 /* Toolbars */
 .toolbar {
     display: flex;

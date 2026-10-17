@@ -150,6 +150,7 @@ export default class AnalyzerClient {
     #getFilterKey(filters) {
         return JSON.stringify({
             ignoreBlurredImages: filters.ignoreBlurredImages === true,
+            blurTolerance: filters.blurTolerance,
             ignoreDuplicates: filters.ignoreDuplicates === true
         });
     }

@@ -158,6 +158,7 @@ export default class Analyzer {
     #getFilterKey(filters) {
         return JSON.stringify({
             ignoreBlurredImages: filters.ignoreBlurredImages === true,
+            blurTolerance: filters.blurTolerance,
             ignoreDuplicates: filters.ignoreDuplicates === true
         });
     }
@@ -327,7 +328,10 @@ export default class Analyzer {
                             }
                         }
                     );
-                    const classification = this.#blurScanner.classify(measurement);
+                    const classification = this.#blurScanner.classify(
+                        measurement,
+                        filters.blurTolerance
+                    );
 
                     if (classification !== 'blurred') {
                         record.blurAccepted = true;

@@ -1177,6 +1177,15 @@ async function downloadMediaZipInOffscreen(media, options, jobId) {
         throw error;
     }
 
+    // chrome.downloads.download() only confirms that Chrome accepted the request. Keep the ZIP
+    // job in its downloading phase until the browser has actually finished writing the file.
+    downLoader?.updateJob(jobId, {state: 'downloading', percent: 0});
+    await waitForDownloadCompletion(downloadId, {
+        onProgress: (percent) => downLoader?.updateJob(jobId, {
+            state: 'downloading',
+            percent
+        })
+    });
     await releaseFinishedDownloadUrl(downloadId);
 
     return response.results.map(item => item.success === true
@@ -1701,6 +1710,67 @@ async function releaseFinishedDownloadUrl(downloadId) {
         console.warn('Cannot read download status:', downloadId, error);
         return false;
     }
+}
+
+// Waits for Chrome's terminal download state instead of treating a successful enqueue request
+// as a completed file. ZIP status text and the popup progress bar both use this lifecycle.
+function waitForDownloadCompletion(downloadId, {onProgress = null} = {}) {
+    if (!Number.isInteger(downloadId)) {
+        return Promise.reject(new Error('The browser download identifier is invalid'));
+    }
+
+    return new Promise((resolve, reject) => {
+        let settled = false;
+        let bytesReceived = null;
+        let totalBytes = null;
+        const finish = (state, error = null) => {
+            if (settled || !isTerminalDownloadState(state)) return;
+
+            settled = true;
+            chrome.downloads.onChanged.removeListener(onChanged);
+            if (state === 'complete') {
+                onProgress?.(100);
+                resolve();
+                return;
+            }
+            reject(new Error(error || 'The browser download was interrupted'));
+        };
+        const reportProgress = () => {
+            if (!Number.isFinite(bytesReceived) || !Number.isFinite(totalBytes) || totalBytes <= 0) {
+                return;
+            }
+            onProgress?.(Math.min(100, Math.max(0, bytesReceived * 100 / totalBytes)));
+        };
+        const onChanged = (delta) => {
+            if (delta?.id !== downloadId) return;
+
+            if (Number.isFinite(delta.bytesReceived?.current)) {
+                bytesReceived = delta.bytesReceived.current;
+            }
+            if (Number.isFinite(delta.totalBytes?.current)) {
+                totalBytes = delta.totalBytes.current;
+            }
+            reportProgress();
+            finish(delta.state?.current, delta.error?.current);
+        };
+
+        chrome.downloads.onChanged.addListener(onChanged);
+        void chrome.downloads.search({id: downloadId}).then(([download]) => {
+            if (!download) {
+                finish('interrupted', 'The browser download disappeared');
+                return;
+            }
+            if (Number.isFinite(download.bytesReceived)) bytesReceived = download.bytesReceived;
+            if (Number.isFinite(download.totalBytes)) totalBytes = download.totalBytes;
+            reportProgress();
+            finish(download.state, download.error);
+        }, (error) => {
+            if (settled) return;
+            settled = true;
+            chrome.downloads.onChanged.removeListener(onChanged);
+            reject(error);
+        });
+    });
 }
 
 async function downloadBlobWithBackgroundObjectUrl(blob, options) {

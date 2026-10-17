@@ -109,13 +109,13 @@ export class MediaController {
         return this.stopScan({endReason});
     }
 
-    // ✏️ EDIT 2026-10-15: Restores the generic preview label after a cancelled scan.
     async stopScan({endReason = 'user-abort'} = {}) {
         if (!this.isScanRunning) return false;
 
         this.analyzerClient.clear();
-        this.popup.setInfo('Media preview');
-        return this.scanController.stop({endReason});
+        const stopped = await this.scanController.stop({endReason});
+        this.popup.showPreviewPlaceholder();
+        return stopped;
     }
 
     get isDeepScanRunning() {
@@ -261,11 +261,10 @@ export class MediaController {
                 return allowBackgroundScan === true &&
                     this.scanContext.isScannable && Number.isInteger(this.scanContext.tabId);
             },
-            // ✏️ EDIT 2026-10-15: Uses the generic preview label during the current image-only scan.
             onDeepScanStart: () => {
                 deepScanInitialVisibleImages = this.images.size;
                 deepScanInitialCandidates = this.candidates.size;
-                this.popup.setInfo('Media preview');
+                this.popup.showPreviewPlaceholder();
             },
             onPrepareDeepScanCandidate: (rawCandidate, batch, scan) =>
                 this.#prepareDeepScanCandidate(rawCandidate, batch, scan.generation),
@@ -306,13 +305,13 @@ export class MediaController {
 
                 return completionInfo;
             },
-            // ✏️ EDIT 2026-10-15: Restores the generic preview label after every scan path.
-            onScanCompleted: ({deepScanStarted, deepScanCompletion}) => {
-                this.popup.setInfo(deepScanStarted
-                    ? deepScanCompletion ?? 'Media preview'
-                    : this.images.size > 0
-                        ? 'Media preview'
-                        : 'No images found!');
+            onScanCompleted: () => {
+                if (this.images.size > 0) {
+                    this.popup.showPreviewPlaceholder();
+                    return;
+                }
+
+                this.popup.setInfo('No images found!');
             },
             onScanError: () => {
                 console.warn('Cannot scan this page:', this.scanner.currentTab?.url);
@@ -384,7 +383,7 @@ export class MediaController {
 
             // ✏️ EDIT 2026-10-15: Keeps the save-all action disabled until its background job finishes.
             this.#activeDownloadJobId = response.job.id;
-            this.popup.setInfo(this.#getDownloadJobInfo(response.job));
+            this.#showDownloadJobProgress(response.job);
         } catch (error) {
             console.warn('Cannot download image list:', error);
             this.isSavingAll = false;
@@ -824,7 +823,7 @@ export class MediaController {
         if (!job || job.id !== this.#activeDownloadJobId) return;
 
         if (message.action === 'progress') {
-            this.popup.setInfo(this.#getDownloadJobInfo(job));
+            this.#showDownloadJobProgress(job);
             return;
         }
 
@@ -837,32 +836,46 @@ export class MediaController {
 
                 this.#trackDownload(result.imageId, result.downloadId);
             }
-            // ✏️ EDIT 2026-10-15: Confirms the terminal ZIP handoff with a concise completion message.
-            this.popup.setInfo(job.type === 'zip'
-                ? 'Download completed.'
-                : 'Downloads started.');
+            if (job.type === 'zip') this.popup.showDownloadCompleted();
+            else this.popup.setInfo('Downloads started.');
             this.#finishDownloadJob();
             return;
         }
 
         if (message.action === 'failed') {
             console.warn('Cannot download image list:', job.error);
-            this.popup.setInfo(`Download failed: ${job.error || 'unknown error'}`);
+            if (job.type === 'zip') {
+                this.popup.showDownloadFailure(`Download failed: ${job.error || 'unknown error'}`);
+            } else {
+                this.popup.setInfo(`Download failed: ${job.error || 'unknown error'}`);
+            }
             this.#finishDownloadJob();
         }
     }
 
-    // ✏️ EDIT 2026-10-15: Creates concise status lines for one background download job.
-    #getDownloadJobInfo(job) {
-        const progress = `${job?.completed ?? 0}/${job?.total ?? 0}`;
-
-        if (job?.type === 'zip') {
-            if (job.state === 'compressing') return 'Compressing ZIP file...';
-            if (job.state === 'downloading') return 'Downloading...';
-            return `Preparing ZIP file (${progress})...`;
+    #showDownloadJobProgress(job) {
+        if (job?.type !== 'zip') {
+            this.popup.setInfo(this.#getDownloadJobInfo(job));
+            return;
         }
 
-        return `Starting downloads (${progress})...`;
+        const progress = Number.isFinite(job.progress)
+            ? job.progress
+            : job.total > 0
+                ? job.completed * 100 / job.total
+                : 0;
+        this.popup.showDownloadProgress(this.#getDownloadJobInfo(job), progress);
+    }
+
+    // Creates concise status lines for one background download job.
+    #getDownloadJobInfo(job) {
+        if (job?.type === 'zip') {
+            if (job.state === 'compressing') return 'Compressing .zip file...';
+            if (job.state === 'downloading') return 'Downloading...';
+            return 'Creating .zip file...';
+        }
+
+        return 'Starting downloads...';
     }
 
     // ✴️ NEW 2026-10-15: Restores the save-all action after a terminal background job event.

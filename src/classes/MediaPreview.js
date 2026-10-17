@@ -2,6 +2,11 @@ import { MediaType } from './MediaType.js';
 import { getAddonVersionName } from '../addon-info.js';
 
 const PREVIEW_MODES = new Set(['idle', 'image', 'video', 'audio']);
+const IDLE_MEDIA_ICONS = Object.freeze({
+    image: 'Image',
+    video: 'Video',
+    audio: 'Audio'
+});
 
 /**
  * Displays the selected media result and its associated metadata in the popup.
@@ -9,6 +14,8 @@ const PREVIEW_MODES = new Set(['idle', 'image', 'video', 'audio']);
 export default class MediaPreview {
     #currentBlobPreview = null;
     #image = null;
+    #idleIcon = null;
+    #idleIconUse = null;
     #statusbar = null;
 
     #info = null;
@@ -34,13 +41,18 @@ export default class MediaPreview {
 
         const image = newPanel.querySelector('#imgPreview');
         const info = newPanel.querySelector('#h2_Preview');
-        if (!(image instanceof HTMLImageElement) || !(info instanceof HTMLHeadingElement)) {
+        const idleIcon = newPanel.querySelector('#svgPreviewModeIcon');
+        const idleIconUse = newPanel.querySelector('#usePreviewMedia');
+        if (!(image instanceof HTMLImageElement) || !(info instanceof HTMLHeadingElement) ||
+            !(idleIcon instanceof SVGSVGElement) || !(idleIconUse instanceof SVGUseElement)) {
             throw new TypeError('The preview panel is incomplete');
         }
 
         this.#panel = newPanel;
         this.#image = image;
         this.#info = info;
+        this.#idleIcon = idleIcon;
+        this.#idleIconUse = idleIconUse;
         this.#image.dataset.mode = 'image';
         this.#setMediaElementVisibility();
     }
@@ -73,6 +85,22 @@ export default class MediaPreview {
         this.#statusbar = statusbar;
         this.panel = panel;
         this.mode = 'idle';
+        this.showPlaceholder();
+    }
+
+    /**
+     * Chooses the icon shown while no media result or transient status is displayed.
+     * @param {'image'|'video'|'audio'} mediaType Active addon media mode.
+     */
+    setIdleMediaType(mediaType) {
+        const iconName = IDLE_MEDIA_ICONS[mediaType];
+        if (!iconName) return;
+
+        this.#idleIconUse.setAttribute(
+            'href',
+            `../assets/icons/button-icons.svg#svgMedia${iconName}`
+        );
+        this.#idleIcon.setAttribute('aria-label', `${mediaType} mode`);
     }
 
     /**
@@ -121,6 +149,7 @@ export default class MediaPreview {
 
         this.mode = 'image';
         this.#image.src = previewSource;
+        this.#idleIcon.style.display = 'none';
         this.#info.style.display = 'none';
         this.#statusbar.style.display = 'none';
 
@@ -147,8 +176,23 @@ export default class MediaPreview {
         this.#currentBlobPreview = null;
         this.#image.removeAttribute('src');
         this.mode = 'idle';
+        this.#idleIcon.style.display = 'block';
+        this.#info.style.display = 'none';
+    }
+
+    /**
+     * Replaces the idle icon with a transient operation or result message.
+     * @param {String} text Status text for the preview area.
+     */
+    showStatus(text) {
+        if (typeof text !== 'string' || !text.trim()) return;
+
+        this.#currentBlobPreview = null;
+        this.#image.removeAttribute('src');
+        this.mode = 'idle';
+        this.#idleIcon.style.display = 'none';
         this.#info.style.display = 'block';
-        this.info = 'Media preview';
+        this.info = text;
     }
 
     /**

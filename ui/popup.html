@@ -91,7 +91,11 @@
         <!-- Media preview -->
         <div id="divPreview" class="preview">
             <img id="imgPreview" class="preview">
-            <h2 id="h2_Preview">Media preview</h2>
+            <svg id="svgPreviewModeIcon" class="preview__mode-icon"
+                role="img" aria-label="Image mode">
+                <use id="usePreviewMedia" href="../assets/icons/button-icons.svg#svgMediaImage"></use>
+            </svg>
+            <h2 id="h2_Preview" aria-live="polite"></h2>
         </div>
     </main>
 

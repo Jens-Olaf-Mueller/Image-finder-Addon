@@ -902,6 +902,7 @@ export const DEFAULT_SETTINGS = {
     filters: {
         ignoreDuplicates: true,
         ignoreBlurredImages: true,
+        blurTolerance: 2,
         blurSettingsVersion: PIXEL_BLUR_SETTINGS_VERSION,
         hasExcludeList: false,
         excludeList: 'logo, avatar'
