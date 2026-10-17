@@ -612,10 +612,6 @@ export default class Popup {
                 }
                 break;
 
-            case 'btnScan':
-                // TODO re-scan the selected image for a better version
-                break;
-
             case 'btnDownload':
                 await this.#eventHandlers.onDownloadMedia?.(this.selectedMediaId);
                 break;

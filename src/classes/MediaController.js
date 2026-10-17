@@ -415,7 +415,11 @@ export class MediaController {
             .trim()
             .replaceAll('\\', '/')
             .replace(/^\/+|\/+$/g, '');
-        const defaultFolder = String(downloads.defaultFolder ?? '')
+        const defaultFolder = String(
+            typeof downloads.defaultFolder === 'string'
+                ? downloads.defaultFolder
+                : ''
+        )
             .trim()
             .replaceAll('\\', '/')
             .replace(/\/+$/, '');

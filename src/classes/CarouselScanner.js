@@ -374,7 +374,7 @@ export default class CarouselScanner {
                     return didZoomStateChange(beforeZoom, afterZoom, photoSwipe)
                         ? {activeSlide, afterZoom}
                         : null;
-                }, 3000, 'generic-photo-swipe-zoom');
+                }, 150, 'generic-photo-swipe-zoom');
                 if (zoomedSlide) addCandidates(...collectPhotoSwipeCandidates(
                     zoomedSlide.activeSlide.photoSwipe,
                     {includePreloaded: true}

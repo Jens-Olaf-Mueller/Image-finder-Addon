@@ -144,13 +144,16 @@ export class SettingsPanel {
         await this.#updateDeleteProfileButton();
     }
 
-    // ✏️ EDIT 2026-10-15: Stores the direct browser-folder probe instead of a history guess.
+    // ✏️ EDIT 2026-10-15: Probes the browser folder only when its persisted cache is unknown.
     /**
      * Stores a detected browser download folder without assigning it as a profile subfolder.
      *
      * @returns {Promise<void>}
      */
     async setDefaultDownloadFolder() {
+        const cachedFolder = this.settings.get('downloads', 'defaultFolder', null);
+        if (typeof cachedFolder === 'string' && cachedFolder.trim()) return;
+
         let defaultFolder = '';
 
         try {
@@ -316,6 +319,12 @@ export class SettingsPanel {
             return;
         }
 
+        // ✴️ NEW 2026-10-15: A possible browser-folder change makes the cached path unknown.
+        await this.enqueue(async () => {
+            await this.settings.setDefaultDownloadFolder(null);
+            await this.refresh();
+            await this.notifySettingsChanged();
+        });
         await window.chrome.tabs.create({url: 'chrome://settings/downloads'});
     }
 
@@ -410,11 +419,14 @@ export class SettingsPanel {
     #updateDownloadFolderControls() {
         const selected = Array.from(this.downloadFolderRadios).find(rad => rad.checked);
         const disabled = selected?.value !== 'user';
-        const defaultFolder = String(this.settings.get('downloads', 'defaultFolder', '')).trim();
+        const defaultFolder = this.settings.get('downloads', 'defaultFolder', null);
+        const folderTitle = typeof defaultFolder === 'string' && defaultFolder.trim()
+            ? `Download folder: ${defaultFolder}`
+            : 'Download folder: unknown';
 
         this.DOM.inpUserFolder.disabled = disabled;
         this.DOM.btnDownloadFolder.disabled = disabled;
-        this.DOM.btnDownloadFolder.title = `Download folder: ${defaultFolder}`;
+        this.DOM.btnDownloadFolder.title = folderTitle;
     }
 
     // Updates the exclude-list input state.

@@ -259,7 +259,7 @@ export default class PhotoSwipeScanner {
                 return didZoomStateChange(beforeZoom, afterZoom, activeSlide.photoSwipe)
                     ? {activeSlide, afterZoom}
                     : null;
-            }, 3000, 'direct-carousel-zoom');
+            }, 150, 'direct-carousel-zoom');
             if (isAborted()) return {alreadyVisited: false, newSources: sourcesBeforeZoom};
             if (!zoomedSlide) {
                 reportZoom(imageDimensions(beforeZoom) + ' no-upgrade');

@@ -281,6 +281,7 @@
             const result = await runHiddenFrameDeepScan({
                 minimumImageWidth: message.minimumImageWidth,
                 minimumImageHeight: message.minimumImageHeight,
+                collectContainerDiagnostics: message.collectContainerDiagnostics === true,
                 signal: scan.controller.signal,
                 onBatch: async (candidates, diagnostic = null) => {
                     if (activeHiddenDeepScanFrame !== scan || scan.controller.signal.aborted) return;
@@ -344,7 +345,9 @@
                 status,
                 ...(typeof reason === 'string' && reason ? {reason} : {}),
                 ...(typeof endReason === 'string' && endReason ? {endReason} : {}),
-                ...(performance && typeof performance === 'object' ? {performance} : {})
+                ...(performance && typeof performance === 'object'
+                    ? {performance}
+                    : {})
             });
         } finally {
             clearHiddenDeepScanHost(scan);
@@ -408,7 +411,8 @@
                 scanId: scan.scanId,
                 token: scan.token,
                 minimumImageWidth: scan.minimumImageWidth,
-                minimumImageHeight: scan.minimumImageHeight
+                minimumImageHeight: scan.minimumImageHeight,
+                collectContainerDiagnostics: scan.collectContainerDiagnostics === true
             }, scan.frameOrigin);
         } catch {
             logHiddenError('initialization', 'HIDDEN_FRAME_START_FAILED');
@@ -460,6 +464,7 @@
             frameOrigin,
             minimumImageWidth: message.minimumImageWidth,
             minimumImageHeight: message.minimumImageHeight,
+            collectContainerDiagnostics: message.collectContainerDiagnostics === true,
             wrapper,
             frame,
             finished: false,

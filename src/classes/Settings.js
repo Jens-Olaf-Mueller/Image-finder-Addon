@@ -123,7 +123,7 @@ export class Settings {
             }
 
             // ✏️ EDIT 2026-10-10: Profiles inherit the shared browser folder instead of storing one.
-            const sharedDefaultFolder = this.#globalData.downloads?.defaultFolder ||
+            const sharedDefaultFolder = this.#globalData.downloads?.defaultFolder ??
                 nextData.downloads.defaultFolder;
 
             nextData.downloads = Settings.#normalizeDownloadSettings(
@@ -281,24 +281,25 @@ export class Settings {
         return mediaMode;
     }
 
-    // ✴️ NEW 2026-10-10: Keeps the browser download folder global while profiles retain subfolders.
+    // ✏️ EDIT 2026-10-15: Keeps the browser download folder as a nullable global cache.
     /**
-     * Stores the browser's download folder globally and migrates the active profile to it.
+     * Stores or invalidates the browser's global download folder cache.
      *
-     * @param {string} folder - Absolute browser download folder reported by a completed download.
+     * @param {string|null} folder - Absolute browser download folder, or null when unknown.
      * @returns {Promise<Object>} The normalized active settings data.
      */
     async setDefaultDownloadFolder(folder) {
-        const defaultFolder = Settings.#normalizeFolderPath(folder);
-        if (!defaultFolder) return this.data;
+        const defaultFolder = typeof folder === 'string'
+            ? Settings.#normalizeFolderPath(folder) || null
+            : null;
 
         const normalizeData = (data) => {
             const nextData = Settings.#cloneData(data);
 
-            nextData.downloads = Settings.#normalizeDownloadSettings(
-                nextData.downloads,
+            nextData.downloads = Settings.#normalizeDownloadSettings({
+                ...nextData.downloads,
                 defaultFolder
-            );
+            });
             return nextData;
         };
 
@@ -327,7 +328,7 @@ export class Settings {
         return this.data;
     }
 
-    // ✏️ EDIT 2026-10-15: Uses a temporary direct download instead of guessing from the history.
+    // ✏️ EDIT 2026-10-15: Uses a temporary direct download when the cached folder is unknown.
     /**
      * Detects the configured browser download folder through a temporary empty file.
      *
@@ -677,7 +678,7 @@ export class Settings {
     }
 
     // Converts a legacy full path or a user value to a canonical /subfolder value.
-    static #normalizeDownloadSubfolder(userFolder, defaultFolder = '') {
+    static #normalizeDownloadSubfolder(userFolder, defaultFolder = null) {
         const normalizedUserFolder = Settings.#normalizeFolderPath(userFolder);
         const normalizedDefaultFolder = Settings.#normalizeFolderPath(defaultFolder);
 
@@ -695,11 +696,15 @@ export class Settings {
         return `/${normalizedUserFolder.replace(/^\/+/, '')}`;
     }
 
+    // ✏️ EDIT 2026-10-15: Preserves null as the explicit unknown-folder cache state.
     // Normalizes shared folder metadata and the profile-local download subfolder.
-    static #normalizeDownloadSettings(downloads = {}, defaultFolder = '') {
-        const normalizedDefaultFolder = Settings.#normalizeFolderPath(
-            defaultFolder || downloads.defaultFolder
-        );
+    static #normalizeDownloadSettings(downloads = {}, defaultFolder = undefined) {
+        const sourceFolder = defaultFolder === undefined
+            ? downloads.defaultFolder
+            : defaultFolder;
+        const normalizedDefaultFolder = typeof sourceFolder === 'string'
+            ? Settings.#normalizeFolderPath(sourceFolder) || null
+            : null;
 
         return {
             ...downloads,
@@ -740,9 +745,9 @@ export class Settings {
     }
 
     // ✏️ EDIT 2026-10-10: Creates a profile without a browser-specific download folder.
-    static #createProfile(settings, expiresAt, defaultFolder = '') {
+    static #createProfile(settings, expiresAt, defaultFolder = null) {
         const profileSettings = Settings.#normalizeSettings(settings);
-        const profileDefaultFolder = profileSettings.downloads.defaultFolder || defaultFolder;
+        const profileDefaultFolder = profileSettings.downloads.defaultFolder ?? defaultFolder;
         const downloadSettings = Settings.#normalizeDownloadSettings(
             profileSettings.downloads,
             profileDefaultFolder
@@ -868,7 +873,7 @@ export const DEFAULT_SETTINGS = {
     downloads: {
         downloadFolder: 'prompt',
         userFolder: '',
-        defaultFolder: '',
+        defaultFolder: null,
         zipFileList: false,
         disableDownloadWhenDone: false
     },

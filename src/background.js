@@ -3,6 +3,7 @@ const OFFSCREEN_TARGET = 'image-finder-offscreen';
 const OFFSCREEN_ANALYZER_CONTROL_TARGET = 'image-finder-offscreen-analyzer-control';
 const ISOLATED_DEEP_SCAN_TARGET = 'image-finder-isolated-deepscan';
 const HIDDEN_DEEP_SCAN_TARGET = 'image-finder-hidden-deepscan';
+const ONLYFANS_MAIN_WORLD_TARGET = 'image-finder-onlyfans-main-world';
 const TERMINAL_DOWNLOAD_STATES = new Set(['complete', 'interrupted']);
 const PROTECTED_DEEP_SCAN_FRAME_RULE_ID = 10001;
 const HIDDEN_DEEP_SCAN_FRAME_RULE_ID = 10002;
@@ -93,6 +94,410 @@ async function reopenPopupAfterExtensionRestart() {
 
 function getErrorMessage(error) {
     return error instanceof Error ? error.message : String(error);
+}
+
+// This function is deliberately self-contained: chrome.scripting serializes it into the page's
+// MAIN execution world, where Vue's DOM expandos are visible.  The visible-tab trace showed that
+// MessagesList.onUserScrollIntent() followed by MessagesList.onScroll() is the page's own route
+// to the top-history loader.  Do exactly that route once; do not reset Vue state, fabricate an
+// InfiniteLoading $state object, or call a collection of unrelated methods.
+async function triggerOnlyFansHistoryLoaderInMainWorld() {
+    const chatSelector = '.b-chats__scrollbar.b-chat__messages';
+    const loaderSelector = '.infinite-loading-container.b-chat__loading-top';
+    const result = {
+        containerFound: false,
+        loaderFound: false,
+        componentFound: false,
+        invoked: false,
+        method: null,
+        framework: null,
+        componentHostDepth: null,
+        componentParentDepth: null,
+        componentName: null,
+        receiverScope: null,
+        candidateCount: 0,
+        isLoadingBefore: null,
+        isLoadingAfter: null,
+        isComplete: null,
+        networkRequestTriggered: false,
+        reason: null
+    };
+    const container = document.querySelector(chatSelector);
+    if (!container) {
+        result.reason = 'CHAT_CONTAINER_NOT_FOUND';
+        return result;
+    }
+    result.containerFound = true;
+
+    const loader = container.querySelector(loaderSelector);
+    if (!loader) {
+        result.isComplete = true;
+        result.reason = 'TOP_LOADER_NOT_FOUND_COMPLETE';
+        return result;
+    }
+    result.loaderFound = true;
+
+    const isObject = (value) => value !== null &&
+        (typeof value === 'object' || typeof value === 'function');
+    const candidates = [];
+    const seen = new WeakSet();
+    const componentName = (component, framework) => {
+        try {
+            return framework === 'vue2'
+                ? component.$options?.name ?? component.$options?._componentTag ?? null
+                : component.type?.name ?? component.type?.__name ?? null;
+        } catch {
+            return null;
+        }
+    };
+    const addCandidate = (component, framework, hostDepth, parentDepth) => {
+        if (!isObject(component) || seen.has(component)) return;
+        seen.add(component);
+        candidates.push({
+            component,
+            framework,
+            hostDepth,
+            parentDepth,
+            name: componentName(component, framework)
+        });
+    };
+    const addVue2Children = (component, hostDepth, childDepth = 1) => {
+        if (!isObject(component) || childDepth > 3) return;
+        let children;
+        try {
+            children = component.$children;
+        } catch {
+            return;
+        }
+        if (!Array.isArray(children)) return;
+        for (const child of children) {
+            addCandidate(child, 'vue2', hostDepth, -childDepth);
+            addVue2Children(child, hostDepth, childDepth + 1);
+        }
+    };
+
+    let element = loader;
+    for (let hostDepth = 0; element && hostDepth < 10; hostDepth += 1) {
+        let vue2 = null;
+        let vue3 = null;
+        try {
+            vue2 = element.__vue__;
+            vue3 = element.__vueParentComponent;
+        } catch {
+            // Continue at the parent DOM node when a page proxy rejects access.
+        }
+        for (let parentDepth = 0; isObject(vue2) && parentDepth < 8; parentDepth += 1) {
+            addCandidate(vue2, 'vue2', hostDepth, parentDepth);
+            if (parentDepth <= 1) addVue2Children(vue2, hostDepth);
+            try {
+                vue2 = vue2.$parent;
+            } catch {
+                break;
+            }
+        }
+        for (let parentDepth = 0; isObject(vue3) && parentDepth < 8; parentDepth += 1) {
+            addCandidate(vue3, 'vue3', hostDepth, parentDepth);
+            try {
+                vue3 = vue3.parent;
+            } catch {
+                break;
+            }
+        }
+        element = element.parentElement;
+    }
+
+    result.candidateCount = candidates.length;
+    result.componentFound = candidates.length > 0;
+    if (!result.componentFound) {
+        result.reason = 'VUE_COMPONENT_NOT_FOUND';
+        return result;
+    }
+
+    const getReceivers = (candidate) => {
+        try {
+            if (candidate.framework === 'vue2') {
+                return [
+                    {receiver: candidate.component, thisArg: candidate.component, scope: 'instance'},
+                    {
+                        receiver: candidate.component.$options?.methods,
+                        thisArg: candidate.component,
+                        scope: 'options.methods'
+                    }
+                ];
+            }
+            const proxy = candidate.component.proxy;
+            return [
+                {receiver: proxy, thisArg: proxy ?? candidate.component, scope: 'proxy'},
+                {receiver: candidate.component.ctx, thisArg: proxy ?? candidate.component, scope: 'ctx'},
+                {
+                    receiver: candidate.component.type?.methods,
+                    thisArg: proxy ?? candidate.component,
+                    scope: 'type.methods'
+                }
+            ];
+        } catch {
+            return [];
+        }
+    };
+    const findMethod = (candidate, name) => {
+        for (const {receiver, thisArg, scope} of getReceivers(candidate)) {
+            if (!isObject(receiver)) continue;
+            try {
+                const method = receiver[name];
+                if (typeof method === 'function') return {method, thisArg, scope};
+            } catch {
+                // Inspect the next public receiver.
+            }
+        }
+        return null;
+    };
+    const isLoading = () => {
+        try {
+            return candidates.some(({component}) => component.isLoading === true || component.status === 1);
+        } catch {
+            return null;
+        }
+    };
+    const messagesList = candidates.find((candidate) => candidate.name === 'MessagesList');
+    const scrollIntent = messagesList ? findMethod(messagesList, 'onUserScrollIntent') : null;
+    const onScroll = messagesList ? findMethod(messagesList, 'onScroll') : null;
+    const infiniteLoading = candidates.find((candidate) => candidate.name === 'InfiniteLoading');
+    const attemptLoad = infiniteLoading ? findMethod(infiniteLoading, 'attemptLoad') : null;
+    const route = scrollIntent || onScroll
+        ? {candidate: messagesList, method: scrollIntent && onScroll ? 'onUserScrollIntent+onScroll' :
+            (scrollIntent ? 'onUserScrollIntent' : 'onScroll'), receiver: scrollIntent ?? onScroll}
+        : attemptLoad
+            ? {candidate: infiniteLoading, method: 'attemptLoad', receiver: attemptLoad}
+            : null;
+    if (!route) {
+        result.reason = messagesList
+            ? 'MESSAGES_LIST_SCROLL_METHOD_NOT_EXPOSED'
+            : 'MESSAGES_LIST_AND_ATTEMPT_LOAD_NOT_FOUND';
+        return result;
+    }
+
+    result.framework = route.candidate.framework;
+    result.componentHostDepth = route.candidate.hostDepth;
+    result.componentParentDepth = route.candidate.parentDepth;
+    result.componentName = route.candidate.name;
+    result.receiverScope = route.receiver.scope;
+    result.method = route.method;
+    result.isLoadingBefore = isLoading();
+    result.isComplete = false;
+
+    let networkRequestTriggered = false;
+    const isMessagesRequest = (url) => /\/chats\/[^/?#]+\/messages\b|\/api2\/v2\/chats\b/i.test(url);
+    const originalOpen = XMLHttpRequest.prototype.open;
+    const originalFetch = typeof window.fetch === 'function' ? window.fetch : null;
+    let xhrWrapped = false;
+    let fetchWrapped = false;
+    try {
+        try {
+            XMLHttpRequest.prototype.open = function (method, url, ...rest) {
+                try {
+                    if (isMessagesRequest(String(url ?? ''))) networkRequestTriggered = true;
+                } catch {
+                    // Observation must never interfere with an XHR.
+                }
+                return Reflect.apply(originalOpen, this, [method, url, ...rest]);
+            };
+            xhrWrapped = true;
+        } catch {
+            // A non-writable page API must not prevent the page handler from being called.
+        }
+        if (originalFetch) {
+            try {
+                window.fetch = function (input, ...rest) {
+                    try {
+                        const url = typeof input === 'string' ? input : input?.url ?? '';
+                        if (isMessagesRequest(url)) networkRequestTriggered = true;
+                    } catch {
+                        // Observation must never interfere with a fetch.
+                    }
+                    return Reflect.apply(originalFetch, this, [input, ...rest]);
+                };
+                fetchWrapped = true;
+            } catch {
+                // A non-writable page API must not prevent the page handler from being called.
+            }
+        }
+
+        // The component method is called directly.  The argument describes the direction but
+        // deliberately does not claim to be a browser-trusted event.  attemptLoad is used only
+        // when that observed MessagesList route is not exposed in this OF build.
+        if (route.method === 'attemptLoad') {
+            const pending = attemptLoad.method.call(attemptLoad.thisArg, true);
+            pending?.catch?.(() => undefined);
+        } else if (scrollIntent) {
+            const pending = scrollIntent.method.call(scrollIntent.thisArg, {
+                type: 'wheel',
+                isTrusted: false,
+                deltaY: -120,
+                deltaX: 0,
+                wheelDelta: 120,
+                wheelDeltaY: 120,
+                target: container,
+                currentTarget: container
+            });
+            pending?.catch?.(() => undefined);
+        }
+        if (route.method !== 'attemptLoad' && onScroll) {
+            const pending = onScroll.method.call(onScroll.thisArg, {
+                type: 'scroll',
+                isTrusted: false,
+                target: container,
+                currentTarget: container
+            });
+            pending?.catch?.(() => undefined);
+        }
+        result.invoked = true;
+
+        // Give the page route a brief, bounded window to create its request; the result remains
+        // an observation, not a prediction based on a successful function call.
+        await new Promise((resolve) => setTimeout(resolve, 1200));
+        result.networkRequestTriggered = networkRequestTriggered;
+        result.isLoadingAfter = isLoading();
+        result.reason = networkRequestTriggered
+            ? 'NETWORK_REQUEST_STARTED'
+            : 'HANDLER_CALLED_NO_NETWORK';
+        return result;
+    } catch (error) {
+        result.networkRequestTriggered = networkRequestTriggered;
+        result.isLoadingAfter = isLoading();
+        result.reason = `HANDLER_ERROR:${error instanceof Error ? error.message : String(error)}`;
+        return result;
+    } finally {
+        if (xhrWrapped) XMLHttpRequest.prototype.open = originalOpen;
+        if (fetchWrapped) window.fetch = originalFetch;
+    }
+}
+
+// Kept deliberately narrow: this is the virtual Swiper used by OF chat-media previews.
+// The page-owned Swiper instance lives in MAIN world; a DOM click remains the compatibility
+// fallback when that instance is not exposed by this OF build.
+async function advanceOnlyFansVirtualSwiperInMainWorld(swiperIndex, direction) {
+    const result = {
+        found: false,
+        invoked: false,
+        changed: false,
+        method: null,
+        indexBefore: null,
+        indexAfter: null,
+        reason: null
+    };
+    if (!Number.isInteger(swiperIndex) || swiperIndex < 0 ||
+        !['forward', 'backward'].includes(direction)) {
+        result.reason = 'INVALID_SWIPER_REQUEST';
+        return result;
+    }
+
+    const hosts = Array.from(document.querySelectorAll(
+        '.b-chats__scrollbar.b-chat__messages .swiper.b-slideshow.swiper-virtual'
+    ));
+    const host = hosts[swiperIndex] ?? null;
+    if (!host) {
+        result.reason = 'SWIPER_NOT_FOUND';
+        return result;
+    }
+    result.found = true;
+
+    const getActiveIndex = () => host.querySelector(
+        '.swiper-slide-active[data-swiper-slide-index]'
+    )?.getAttribute('data-swiper-slide-index') ?? null;
+    const controlSelector = direction === 'forward'
+        ? '.swiper-navigation .swiper-button-next'
+        : '.swiper-navigation .swiper-button-prev';
+    const control = host.querySelector(controlSelector);
+    const isDisabled = (element) => !element || element.classList.contains('swiper-button-disabled') ||
+        element.getAttribute('aria-disabled') === 'true' || element.hasAttribute('disabled');
+    result.indexBefore = getActiveIndex();
+    if (isDisabled(control)) {
+        result.reason = 'SWIPER_EDGE_REACHED';
+        return result;
+    }
+
+    const findSwiperInstance = () => {
+        const vue = host.__vue__;
+        const values = [
+            host.swiper,
+            host.__swiper__,
+            vue?.swiper,
+            vue?.$refs?.swiper?.swiper,
+            vue?.$refs?.swiper?.$swiper,
+            vue?.$children?.find?.((child) => typeof child?.swiper?.slideNext === 'function')?.swiper
+        ];
+        return values.find((candidate) => candidate &&
+            typeof candidate.slideNext === 'function' && typeof candidate.slidePrev === 'function') ?? null;
+    };
+
+    try {
+        const swiper = findSwiperInstance();
+        if (swiper) {
+            if (direction === 'forward') {
+                swiper.slideNext();
+                result.method = 'swiper.slideNext';
+            } else {
+                swiper.slidePrev();
+                result.method = 'swiper.slidePrev';
+            }
+        } else {
+            control.click();
+            result.method = direction === 'forward' ? 'swiper-button-next.click' :
+                'swiper-button-prev.click';
+        }
+        result.invoked = true;
+
+        const deadline = Date.now() + 1200;
+        while (Date.now() < deadline) {
+            const currentIndex = getActiveIndex();
+            if (currentIndex !== null && currentIndex !== result.indexBefore) {
+                result.changed = true;
+                result.indexAfter = currentIndex;
+                result.reason = 'SWIPER_ADVANCED';
+                return result;
+            }
+            await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        result.indexAfter = getActiveIndex();
+        result.reason = 'SWIPER_STATE_UNCHANGED';
+        return result;
+    } catch (error) {
+        result.indexAfter = getActiveIndex();
+        result.reason = `SWIPER_ERROR:${error instanceof Error ? error.message : String(error)}`;
+        return result;
+    }
+}
+
+async function requestOnlyFansMainWorldPageAction(message, sender) {
+    const tabId = sender?.tab?.id;
+    const frameId = sender?.frameId;
+    let hostname = null;
+    try {
+        hostname = new URL(sender?.url ?? '').hostname;
+    } catch {
+        // The request is rejected below.
+    }
+    const isHistoryRequest = message?.action === 'trigger-history-loader';
+    const isSwiperRequest = message?.action === 'advance-virtual-swiper';
+    const validSwiperRequest = isSwiperRequest && Number.isInteger(message?.swiperIndex) &&
+        message.swiperIndex >= 0 && ['forward', 'backward'].includes(message?.direction);
+    if (message?.source !== 'hidden-deepscan-frame' ||
+        (!isHistoryRequest && !validSwiperRequest) ||
+        !Number.isInteger(tabId) || !Number.isInteger(frameId) ||
+        !hostname?.endsWith('onlyfans.com') ||
+        activeHiddenDeepScan?.tabId !== tabId) {
+        throw new Error('ONLYFANS_MAIN_WORLD_REQUEST_REJECTED');
+    }
+
+    const results = await chrome.scripting.executeScript({
+        target: {tabId, frameIds: [frameId]},
+        world: 'MAIN',
+        func: isHistoryRequest
+            ? triggerOnlyFansHistoryLoaderInMainWorld
+            : advanceOnlyFansVirtualSwiperInMainWorld,
+        ...(isSwiperRequest ? {args: [message.swiperIndex, message.direction]} : {})
+    });
+    return results[0]?.result ?? {reason: 'MAIN_WORLD_NO_RESULT'};
 }
 
 // ✴️ NEW 2026-10-15: Broadcasts background download job changes to any open popup.
@@ -847,7 +1252,8 @@ function createHiddenDeepScanHostMessage(job, action) {
         ...(action === 'start' ? {
             url: job.url,
             minimumImageWidth: job.minimumImageWidth,
-            minimumImageHeight: job.minimumImageHeight
+            minimumImageHeight: job.minimumImageHeight,
+            collectContainerDiagnostics: job.collectContainerDiagnostics === true
         } : {})
     };
 }
@@ -976,6 +1382,7 @@ async function startHiddenDeepScan(request) {
         minimumImageHeight: Number.isFinite(request.minimumImageHeight)
             ? Math.max(0, Math.round(request.minimumImageHeight))
             : 200,
+        collectContainerDiagnostics: request.collectContainerDiagnostics === true,
         allowProtectedDeepScan: request.allowProtectedDeepScan === true,
         protectedFrameRuleAttempted: false,
         cancelled: false
@@ -1251,7 +1658,9 @@ async function startIsolatedDeepScan(request) {
             url: job.url,
             minimumImageWidth: job.minimumImageWidth,
             minimumImageHeight: job.minimumImageHeight,
-            allowProtectedDeepScan: job.allowProtectedDeepScan
+            allowProtectedDeepScan: job.allowProtectedDeepScan,
+            collectContainerDiagnostics: job.enabledDebugLogSources.popup === true ||
+                job.enabledDebugLogSources.tab === true
         });
     } catch (error) {
         await finishIsolatedDeepScan(job, 'unavailable', getErrorMessage(error));
@@ -1409,7 +1818,7 @@ chrome.runtime.onConnect.addListener((port) => {
     });
 });
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message?.target === DEBUG_LOG_TARGET) {
         if (message.action === 'records') collectDebugRecords(message.records);
         else if (message.action === 'context-complete') handleDebugContextComplete(message);
@@ -1464,6 +1873,14 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
             sendResponse({success: true});
         }
         return undefined;
+    }
+
+    if (message?.target === ONLYFANS_MAIN_WORLD_TARGET) {
+        Promise.resolve(requestOnlyFansMainWorldPageAction(message, sender)).then(
+            (result) => sendResponse({success: true, result}),
+            (error) => sendResponse({success: false, error: getErrorMessage(error)})
+        );
+        return true;
     }
 
     if (message?.target === ISOLATED_DEEP_SCAN_TARGET) {
