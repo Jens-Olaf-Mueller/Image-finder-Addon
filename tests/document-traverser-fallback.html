@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>DocumentTraverser target fallback fixture</title>
+    <style>
+        body {
+            margin: 0;
+            min-height: 8000px;
+        }
+
+        #stalledTarget {
+            position: absolute;
+            top: 1200px;
+            left: 0;
+            width: 20px;
+            height: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div id="stalledTarget"></div>
+    <script type="module">
+        import DocumentTraverser from '../src/classes/DocumentTraverser.js';
+
+        const assert = (condition, message) => {
+            if (!condition) throw new Error(message);
+        };
+
+        try {
+            const scrollElement = document.scrollingElement;
+            const stalledTarget = document.getElementById('stalledTarget');
+            const counters = {};
+            scrollElement.scrollTop = 0;
+
+            // Simulates a page-owned target whose scrollIntoView action cannot advance the page.
+            stalledTarget.scrollIntoView = () => undefined;
+
+            const traverser = new DocumentTraverser({
+                scrollStepFactor: 0.5,
+                minimumSettleMs: 0,
+                stableCycleLimit: 1,
+                getKnownTargetCount: () => 1,
+                getKnownTargets: () => [stalledTarget],
+                isInsideLowPriorityStructureContainer: () => false,
+                isActive: () => true,
+                registerTargets: () => 0,
+                collectSources: async () => undefined,
+                waitForSettle: async () => true,
+                waitForEdgeRangeGrowth: async () => ({grew: false, endReason: 'quiet'}),
+                recordEdgeRangeWait: () => undefined,
+                addMetric: (_metrics, name, value) => {
+                    counters[name] = (counters[name] ?? 0) + value;
+                },
+                getScrollRange: (metrics) => Math.max(0, metrics.scrollHeight - metrics.clientHeight)
+            });
+
+            const result = await traverser.traverse('down');
+            const maximumPosition = Math.max(0, scrollElement.scrollHeight - window.innerHeight);
+
+            assert(result === 'stable', 'Traversal must finish at the document edge.');
+            assert(counters.documentTargetSteps === 1,
+                'The stalled target must be attempted exactly once.');
+            assert(counters.documentAnchorSteps > 0,
+                'A stalled target must immediately trigger the document fallback.');
+            assert(counters.documentAnchorMoves > 0,
+                'The fallback must advance the real document scroll position.');
+            assert(scrollElement.scrollTop >= maximumPosition - 4,
+                'Traversal must reach the actual document bottom after the fallback.');
+
+            document.documentElement.dataset.documentTraverserFallbackResult = 'passed';
+        } catch (error) {
+            document.documentElement.dataset.documentTraverserFallbackResult = 'failed';
+            document.documentElement.dataset.documentTraverserFallbackError = error.message;
+        }
+    </script>
+</body>
+</html>

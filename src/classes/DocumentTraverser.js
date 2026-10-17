@@ -139,9 +139,27 @@ export default class DocumentTraverser {
                     scrollResult = this.#scrollFurtherWithAnchor(before, direction);
                 }
             }
+            this.#addMetric(
+                metrics,
+                `document${scrollMode[0].toUpperCase()}${scrollMode.slice(1)}Steps`,
+                1
+            );
+
+            // A known media target can belong to a fixed overlay or an inner scroller. In either
+            // case scrollIntoView() may report a successful element action while the document has
+            // not advanced at all. Do not spend a settle cycle on that dead end: immediately use
+            // the document anchor fallback and attribute the eventual movement to that fallback.
+            if (scrollMode === 'target' && !this.#didDocumentScrollMove(
+                before,
+                this.getMetrics(),
+                direction
+            )) {
+                scrollMode = 'anchor';
+                target = null;
+                scrollResult = this.#scrollFurtherWithAnchor(before, direction);
+                this.#addMetric(metrics, 'documentAnchorSteps', 1);
+            }
             this.#addMetric(metrics, 'scrollActionMs', performance.now() - scrollActionStartedAt);
-            // ✴️ NEW 2026-10-12: Distinguishes target, anchor, and edge dwell movement plans.
-            this.#addMetric(metrics, `document${scrollMode[0].toUpperCase()}${scrollMode.slice(1)}Steps`, 1);
 
             const relevantMutationCountBefore = this.#getRelevantMutationCount();
             const useFastSettle = this.#canUseFastDocumentSettle({
@@ -174,9 +192,7 @@ export default class DocumentTraverser {
             let newImages = Math.max(0, after.images - before.images);
             let newTargets = beforeNewTargets + afterNewTargets;
             let scrollRangeGrew = this.#getScrollRange(after) > this.#getScrollRange(before);
-            let documentScrollMoved = direction === 'up'
-                ? after.effectiveScrollTop < before.effectiveScrollTop
-                : after.effectiveScrollTop > before.effectiveScrollTop;
+            let documentScrollMoved = this.#didDocumentScrollMove(before, after, direction);
             let scrollMoved = documentScrollMoved;
             const documentScrollDistance = Math.abs(
                 after.effectiveScrollTop - before.effectiveScrollTop
@@ -215,9 +231,7 @@ export default class DocumentTraverser {
                     newImages = Math.max(0, after.images - before.images);
                     newTargets = beforeNewTargets + afterNewTargets;
                     scrollRangeGrew = this.#getScrollRange(after) > this.#getScrollRange(before);
-                    documentScrollMoved = direction === 'up'
-                        ? after.effectiveScrollTop < before.effectiveScrollTop
-                        : after.effectiveScrollTop > before.effectiveScrollTop;
+                    documentScrollMoved = this.#didDocumentScrollMove(before, after, direction);
                     scrollMoved = documentScrollMoved;
                     reachedEdge = direction === 'up'
                         ? this.#isAtCurrentDocumentTop(after)
@@ -245,7 +259,10 @@ export default class DocumentTraverser {
 
             if (!atEdge && !reachedEdge) edgeLoadWaited = false;
 
-            if (atEdge || reachedEdge || !scrollMoved) {
+            // A target that cannot move the document has already received a real document
+            // fallback above. Only an actual document edge may now conclude this direction;
+            // otherwise a transient or page-owned target failure would cut the scan short.
+            if (atEdge || reachedEdge) {
                 edgeStableCycles = traversalProgress ? 0 : edgeStableCycles + 1;
                 if (edgeStableCycles >= this.#stableCycleLimit) {
                     return finishDocumentScan('stable');
@@ -258,6 +275,12 @@ export default class DocumentTraverser {
 
     #getScrollElement() {
         return document.scrollingElement ?? document.documentElement;
+    }
+
+    #didDocumentScrollMove(before, after, direction) {
+        return direction === 'up'
+            ? after.effectiveScrollTop < before.effectiveScrollTop
+            : after.effectiveScrollTop > before.effectiveScrollTop;
     }
 
     // ✏️ EDIT 2026-10-13: Allows proven static image targets in both scan directions.
@@ -423,16 +446,35 @@ export default class DocumentTraverser {
     }
 
     #scrollFurtherWithAnchor(before, direction) {
-        const parent = document.body ?? document.documentElement;
         const viewportHeight = Math.max(window.innerHeight, 1);
         const maximumPosition = Math.max(0, before.scrollHeight - viewportHeight);
         const offset = Math.ceil(viewportHeight * this.#scrollStepFactor);
         const nextPosition = direction === 'up'
             ? Math.max(0, before.scrollY - offset)
             : Math.min(maximumPosition, before.scrollY + offset);
-        if (!parent || nextPosition === before.scrollY) {
+        if (nextPosition === before.scrollY) {
             return {scrolled: false, targetMovement: 0};
         }
+
+        // Set the actual document scroll position first. This is synchronous and therefore a
+        // reliable fallback after a target only scrolled an inner element. Keep the old anchor
+        // route below for documents whose scrolling element rejects a direct assignment.
+        const scrollElement = this.#getScrollElement();
+        try {
+            scrollElement.scrollTop = nextPosition;
+            const afterDirectScroll = this.getMetrics();
+            if (this.#didDocumentScrollMove(before, afterDirectScroll, direction)) {
+                return {
+                    scrolled: true,
+                    targetMovement: afterDirectScroll.effectiveScrollTop - before.effectiveScrollTop
+                };
+            }
+        } catch {
+            // Fall through to the anchor compatibility route.
+        }
+
+        const parent = document.body ?? document.documentElement;
+        if (!parent) return {scrolled: false, targetMovement: 0};
 
         const anchor = document.createElement('div');
         anchor.setAttribute('aria-hidden', 'true');
