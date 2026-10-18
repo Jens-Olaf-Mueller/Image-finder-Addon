@@ -745,7 +745,9 @@ export async function scanPhotoSwipeImages({
     onPerformance = null,
     performanceState = null,
     traverseCarousel = false,
+    skipGenericCarousel = false,
     skipDirectZoom = false,
+    requestMainWorldPhotoSwipeClose = null,
     scanRoots = [document],
     dirtyGenericRoots = new Set(),
     registerGenericRoot = null,
@@ -896,6 +898,8 @@ export async function scanPhotoSwipeImages({
     // OnlyFans performance summary.
     let photoSwipeCloseFailureDiagnostic =
         performanceState?.photoSwipeCloseFailureDiagnostic ?? null;
+    let photoSwipeMainWorldCloseDiagnostic =
+        performanceState?.photoSwipeMainWorldCloseDiagnostic ?? null;
     let genericCarouselMs = 0;
     let genericCarouselCalls = 0;
     let directPhotoSwipeMs = 0;
@@ -987,16 +991,23 @@ export async function scanPhotoSwipeImages({
         recordPhase('ancestorDescendantChecksMs', phaseStartedAt);
         return images;
     };
-    const getReadyActiveSlideImage = (photoSwipe) => {
+    const getActiveSlideImage = (photoSwipe) => {
         if (!photoSwipe?.matches('.pswp.pswp--open')) return null;
 
         const slide = getActiveSlide(photoSwipe);
         if (!slide) return null;
 
         const image = getSlideImages(photoSwipe).find((candidate) =>
-            candidate.complete === true && candidate.naturalWidth > 0 && candidate.naturalHeight > 0
+            Boolean(candidate.currentSrc || candidate.getAttribute('src'))
         );
         return image ? {photoSwipe, slide, image} : null;
+    };
+    const getReadyActiveSlideImage = (photoSwipe) => {
+        const activeSlide = getActiveSlideImage(photoSwipe);
+        return activeSlide?.image.complete === true && activeSlide.image.naturalWidth > 0 &&
+            activeSlide.image.naturalHeight > 0
+            ? activeSlide
+            : null;
     };
     const waitFor = (
         predicate,
@@ -1138,6 +1149,7 @@ export async function scanPhotoSwipeImages({
             `chosenClose=${describePhotoSwipeElement(closeButton)}`,
             `activeSlide=${describePhotoSwipeElement(activeSlide)}`,
             `activeImage=${imageState}`,
+            `mainWorldClose=${photoSwipeMainWorldCloseDiagnostic ?? 'not-used'}`,
             `controls=${controls}`
         ].join('; ');
         if (performanceState) {
@@ -1171,19 +1183,49 @@ export async function scanPhotoSwipeImages({
             500,
             purpose + '-close-button'
         );
-        if (!closeButton) requestEscapeClose();
-        try {
-            closeButton?.click?.();
-        } catch {
-            // Ignore click errors.
+        let mainWorldCloseAttempted = false;
+        const requestMainWorldClose = async () => {
+            mainWorldCloseAttempted = true;
+            let mainWorldResult = null;
+            try {
+                mainWorldResult = await requestMainWorldPhotoSwipeClose();
+            } catch {
+                mainWorldResult = {reason: 'MAIN_WORLD_CLOSE_REQUEST_FAILED'};
+            }
+            photoSwipeMainWorldCloseDiagnostic = [
+                `invoked=${mainWorldResult?.invoked === true}`,
+                `closed=${mainWorldResult?.closed === true}`,
+                `method=${mainWorldResult?.method ?? 'none'}`,
+                `component=${mainWorldResult?.componentName ?? 'none'}`,
+                `reason=${mainWorldResult?.reason ?? 'no-result'}`
+            ].join(',');
+            if (performanceState) {
+                performanceState.photoSwipeMainWorldCloseDiagnostic =
+                    photoSwipeMainWorldCloseDiagnostic;
+            }
+            return waitFor(() => !photoSwipe.isConnected ||
+                !photoSwipe.classList.contains('pswp--open'), 300, purpose + '-main-world-close');
+        };
+
+        // OF hides this widget after an untrusted DOM click. Ask its page-owned Vue handler
+        // first, while the actual close control and its component are still present.
+        let closed = closeButton && typeof requestMainWorldPhotoSwipeClose === 'function'
+            ? await requestMainWorldClose()
+            : false;
+        if (!closed) {
+            if (!closeButton) requestEscapeClose();
+            try {
+                closeButton?.click?.();
+            } catch {
+                // Ignore click errors.
+            }
+            if (isAborted()) return true;
+
+            closed = await waitFor(() => {
+                if (!photoSwipe.isConnected) return true;
+                return !photoSwipe.classList.contains('pswp--open');
+            }, 1500, purpose + '-close');
         }
-        if (isAborted()) return true;
-
-        let closed = await waitFor(() => {
-            if (!photoSwipe.isConnected) return true;
-            return !photoSwipe.classList.contains('pswp--open');
-        }, 1500, purpose + '-close');
-
         if (!closed && photoSwipe.isConnected && photoSwipe.classList.contains('pswp--open')) {
             try {
                 photoSwipe.querySelector('.pswp__bg, .pswp__scroll-wrap')?.click?.();
@@ -1201,6 +1243,11 @@ export async function scanPhotoSwipeImages({
                     return !photoSwipe.classList.contains('pswp--open');
                 }, 500, purpose + '-close');
             }
+        }
+        if (!closed && !mainWorldCloseAttempted &&
+            typeof requestMainWorldPhotoSwipeClose === 'function' &&
+            photoSwipe.isConnected && photoSwipe.classList.contains('pswp--open')) {
+            closed = await requestMainWorldClose();
         }
         if (!closed) recordPhotoSwipeCloseFailure(photoSwipe, purpose, closeButton);
         return Boolean(closed);
@@ -1366,7 +1413,7 @@ export async function scanPhotoSwipeImages({
         return carousel.stateLabels.get(key);
     };
     const activeCarouselScanner = carouselScanner ?? new CarouselScanner({processedCarouselRoots});
-    if (traverseCarousel) {
+    if (traverseCarousel && !skipGenericCarousel) {
         const carouselScanResult = await activeCarouselScanner.scan({
             document,
             queryDeep,
@@ -1409,6 +1456,7 @@ export async function scanPhotoSwipeImages({
         document,
         queryDeep,
         findOpenPhotoSwipe,
+        getActiveSlideImage,
         getReadyActiveSlideImage,
         collectPhotoSwipeCandidates,
         getImageSnapshot,
@@ -2021,7 +2069,8 @@ export async function runHiddenFrameDeepScan({
         genericCandidates: new WeakSet(),
         genericRoots: new Map(),
         directTargets: new WeakSet(),
-        photoSwipeCloseFailureDiagnostic: null
+        photoSwipeCloseFailureDiagnostic: null,
+        photoSwipeMainWorldCloseDiagnostic: null
     };
     const knownScrollContainerIndices = new Map();
     const completedScrollContainerStates = new Map();
@@ -2130,6 +2179,8 @@ export async function runHiddenFrameDeepScan({
     const ONLYFANS_CHAT_MESSAGE_SELECTOR = '[at-attr="chat_message"], .b-chat__message:not(.b-chat__message__system)';
     const ONLYFANS_VIRTUAL_SWIPER_SELECTOR = '.swiper.b-slideshow.swiper-virtual';
     const ONLYFANS_MAIN_WORLD_TARGET = 'image-finder-onlyfans-main-world';
+    const hasOnlyFansChat = () => window.location.hostname.endsWith('onlyfans.com') &&
+        document.querySelector(ONLYFANS_CHAT_CONTAINER_SELECTOR) !== null;
     const onlyFansCarouselPhotoSwipe = {
         targetCount: 0,
         processedTargetsSkipped: 0,
@@ -2187,7 +2238,8 @@ export async function runHiddenFrameDeepScan({
             photoSwipeReady: null,
             photoSwipeInitial: null,
             photoSwipeZoom: null,
-            photoSwipeCloseFailure: null
+            photoSwipeCloseFailure: null,
+            photoSwipeMainWorldClose: null
         },
         scrollEvents: 0,
         upScrollEvents: 0,
@@ -2560,6 +2612,8 @@ export async function runHiddenFrameDeepScan({
         ].join(', ');
         carouselTraversal.photoSwipeCloseFailure =
             photoSwipePerformanceState.photoSwipeCloseFailureDiagnostic;
+        carouselTraversal.photoSwipeMainWorldClose =
+            photoSwipePerformanceState.photoSwipeMainWorldCloseDiagnostic;
         stopOnlyFansChatContainerDiagnostics();
         const createEdgeRangeGrowthSummary = () => ({
             totalMs: 0,
@@ -3194,7 +3248,14 @@ export async function runHiddenFrameDeepScan({
                 recordCollectionMetric(metrics, 'photoSwipeOtherMs', performanceMetrics.otherMs);
             },
             traverseCarousel,
+            // ✏️ EDIT 2026-10-18: OF's virtual swiper has a dedicated traversal path.
+            // The generic scanner can open a page-owned PhotoSwipe it cannot reliably close,
+            // which then blocks all following direct OF targets.
+            skipGenericCarousel: hasOnlyFansChat(),
             skipDirectZoom,
+            requestMainWorldPhotoSwipeClose: hasOnlyFansChat()
+                ? requestOnlyFansPhotoSwipeClose
+                : null,
             scanRoots: photoSwipeRoots,
             dirtyGenericRoots: collectionScope.dirtyGenericRoots,
             registerGenericRoot: (root) => domState.registerGenericRoot(root),
@@ -3843,6 +3904,24 @@ export async function runHiddenFrameDeepScan({
                     error instanceof Error ? error.message : String(error);
             }
             return null;
+        }
+    };
+    const requestOnlyFansPhotoSwipeClose = async () => {
+        if (!hasOnlyFansChat()) return null;
+
+        try {
+            const response = await chrome.runtime.sendMessage({
+                target: ONLYFANS_MAIN_WORLD_TARGET,
+                source: 'hidden-deepscan-frame',
+                action: 'close-photo-swipe'
+            });
+            return response?.success === true ? response.result ?? null : {
+                reason: response?.error ?? 'MAIN_WORLD_CLOSE_REQUEST_FAILED'
+            };
+        } catch (error) {
+            return {
+                reason: error instanceof Error ? error.message : String(error)
+            };
         }
     };
     const getOnlyFansVirtualSwiperState = (swiper) => {

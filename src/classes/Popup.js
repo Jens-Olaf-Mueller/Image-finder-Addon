@@ -147,6 +147,7 @@ export default class Popup {
     setSettingsPanel(settingsPanel) {
         this.#settingsPanel = settingsPanel ?? null;
         this.#settingsPanel?.setMediaType(this.mode);
+        this.#settingsPanel?.setThemeMode(document.documentElement.dataset.mode);
     }
 
     /**
@@ -158,6 +159,7 @@ export default class Popup {
 
         document.documentElement.dataset.mode = themeMode;
         if (this.DOM.chkTheme) this.DOM.chkTheme.checked = themeMode === 'dark';
+        this.#settingsPanel?.setThemeMode(themeMode);
     }
 
     // ✴️ NEW 2026-10-14: Synchronizes the popup media controls with a selected media mode.
@@ -754,7 +756,10 @@ export default class Popup {
 
     // Clears a preview selection when the user leaves the result list.
     #onDocumentClick(event) {
-        if (this.DOM.lstImages.contains(event.target)) return;
+        if (this.DOM.lstImages.contains(event.target) ||
+            this.DOM.divTopToolbar?.contains(event.target) || this.DOM.divToolbar?.contains(event.target)) {
+            return;
+        }
 
         this.#clearSelectedMedia();
     }

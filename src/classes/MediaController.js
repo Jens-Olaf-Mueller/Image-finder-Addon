@@ -187,6 +187,8 @@ export class MediaController {
 
     // ✴️ NEW 2026-10-14: Persists the last selected popup mode independently from website profiles.
     async #setMediaMode(mode) {
+        // Results belong to the previous type and must not survive into image/video/audio mode.
+        this.clearMedia();
         try {
             await this.settings.setMediaMode(mode);
         } catch (error) {

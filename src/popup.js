@@ -60,7 +60,8 @@ async function runPopup() {
         if (!form) return;
 
         const panel = new SettingsPanel(mediaController.settings, form, {
-            onSettingsChanged: () => mediaController.updateDownloadTitles()
+            onSettingsChanged: () => mediaController.updateDownloadTitles(),
+            onThemeChange: (mode) => mediaController.popup.applyThemeMode(mode)
         });
         mediaController.popup.setSettingsPanel(panel);
         await panel.run({loadSettings: false});

@@ -61,11 +61,13 @@ export class SettingsPanel {
      * @param {HTMLFormElement} form - The settings form to manage.
      * @param {Object} [options={}] - Optional panel configuration.
      * @param {Function|null} [options.onSettingsChanged=null] - Callback after a saved change.
+     * @param {Function|null} [options.onThemeChange=null] - Callback after a theme change.
      */
-    constructor(settings, form, {onSettingsChanged = null} = {}) {
+    constructor(settings, form, {onSettingsChanged = null, onThemeChange = null} = {}) {
         this.settings = settings;
         this.form = form;
         this.onSettingsChanged = onSettingsChanged;
+        this.onThemeChange = onThemeChange;
         this.DOM = {};
         this.hasEventListeners = false;
 
@@ -120,6 +122,7 @@ export class SettingsPanel {
      */
     async refresh() {
         this.setFormData(this.settings.data);
+        this.setThemeMode(this.settings.getThemeMode());
         const protectedDeepScanWasCleared = this.#updateDeepScanControls();
 
         if (protectedDeepScanWasCleared) {
@@ -157,6 +160,14 @@ export class SettingsPanel {
         this.form.querySelectorAll('[data-media]').forEach(control => {
             control.classList.toggle('hidden', control.dataset.media !== mediaType);
         });
+    }
+
+    /**
+     * Mirrors the persisted global theme in the settings checkbox.
+     * @param {'light'|'dark'} mode Active theme mode.
+     */
+    setThemeMode(mode) {
+        if (this.DOM.chkDarkmode) this.DOM.chkDarkmode.checked = mode === 'dark';
     }
 
     // ✏️ EDIT 2026-10-15: Probes the browser folder only when its persisted cache is unknown.
@@ -347,7 +358,20 @@ export class SettingsPanel {
     #setEventListeners() {
         if (this.hasEventListeners) return;
 
-        this.form.addEventListener('change', () => {
+        this.form.addEventListener('change', (event) => {
+            if (event.target === this.DOM.chkDarkmode) {
+                const themeMode = this.DOM.chkDarkmode.checked ? 'dark' : 'light';
+                document.documentElement.dataset.mode = themeMode;
+                void this.onThemeChange?.(themeMode);
+                this.enqueue(async () => {
+                    await this.settings.setThemeMode(themeMode);
+                    await this.refresh();
+                    await this.notifySettingsChanged();
+                }).catch(error => {
+                    this.#log('Cannot save theme mode:', 'warn', error);
+                });
+                return;
+            }
             this.#updateDeepScanControls();
             this.#updateDebugControls();
             this.#updateBlurFilterControls();

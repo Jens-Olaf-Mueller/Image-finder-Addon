@@ -471,6 +471,202 @@ async function advanceOnlyFansVirtualSwiperInMainWorld(swiperIndex, direction) {
     }
 }
 
+// PhotoSwipe is created by OF's page-owned Vue tree. A synthetic click from the isolated
+// extension world can open it, but some builds ignore that same click for closing. This bridge
+// is intentionally restricted to the one currently open PhotoSwipe and its own Vue components.
+async function closeOnlyFansPhotoSwipeInMainWorld() {
+    const result = {
+        found: false,
+        invoked: false,
+        closed: false,
+        method: null,
+        componentName: null,
+        reason: null
+    };
+    const photoSwipe = Array.from(document.querySelectorAll('.pswp.pswp--open')).find(
+        (element) => element.isConnected
+    ) ?? null;
+    if (!photoSwipe) {
+        result.reason = 'PHOTO_SWIPE_NOT_OPEN';
+        return result;
+    }
+    result.found = true;
+    const directCloseButton = photoSwipe.querySelector(
+        '.pswp__button--close, [data-pswp-close], [data-pswp-action="close"], ' +
+        'button[aria-label*="close" i], button[title*="close" i]'
+    );
+    const closeButton = directCloseButton ?? photoSwipe.querySelector(
+        '[data-icon-name="icon-close"], [data-icon-name*="close" i], use[href*="#icon-close"]'
+    )?.closest('button, [role="button"]');
+
+    const isClosed = () => !photoSwipe.isConnected || !photoSwipe.classList.contains('pswp--open');
+    const waitForClose = async (timeoutMs = 750) => {
+        const deadline = Date.now() + timeoutMs;
+        while (Date.now() < deadline) {
+            if (isClosed()) return true;
+            await new Promise((resolve) => setTimeout(resolve, 25));
+        }
+        return isClosed();
+    };
+    const isObject = (value) => value !== null &&
+        (typeof value === 'object' || typeof value === 'function');
+    const componentName = (candidate) => {
+        try {
+            return candidate.framework === 'vue2'
+                ? candidate.component.$options?.name ?? candidate.component.$options?._componentTag ?? null
+                : candidate.component.type?.name ?? candidate.component.type?.__name ?? null;
+        } catch {
+            return null;
+        }
+    };
+    const getModalComponentRoot = (candidate) => {
+        try {
+            return candidate.framework === 'vue2'
+                ? candidate.component.$el
+                : candidate.component.vnode?.el;
+        } catch {
+            return null;
+        }
+    };
+    const candidates = [];
+    const seen = new WeakSet();
+    const addCandidate = (component, framework, fromCloseControl = false) => {
+        if (!isObject(component) || seen.has(component)) return;
+        seen.add(component);
+        const candidate = {component, framework};
+        candidate.name = componentName(candidate);
+        candidate.root = getModalComponentRoot(candidate);
+        if (!(candidate.root instanceof Element) ||
+            !(candidate.root === photoSwipe || candidate.root.contains(photoSwipe) ||
+                photoSwipe.contains(candidate.root))) {
+            return;
+        }
+        candidate.fromCloseControl = fromCloseControl;
+        candidates.push(candidate);
+    };
+    for (const [start, fromCloseControl] of [[closeButton, true], [photoSwipe, false]]) {
+        for (let element = start, depth = 0; element && depth < 12;
+            element = element.parentElement, depth += 1) {
+            let vue2 = null;
+            let vue3 = null;
+            try {
+                vue2 = element.__vue__;
+                vue3 = element.__vueParentComponent;
+            } catch {
+                continue;
+            }
+            for (let parentDepth = 0; isObject(vue2) && parentDepth < 8; parentDepth += 1) {
+                addCandidate(vue2, 'vue2', fromCloseControl);
+                try {
+                    vue2 = vue2.$parent;
+                } catch {
+                    break;
+                }
+            }
+            for (let parentDepth = 0; isObject(vue3) && parentDepth < 8; parentDepth += 1) {
+                addCandidate(vue3, 'vue3', fromCloseControl);
+                try {
+                    vue3 = vue3.parent;
+                } catch {
+                    break;
+                }
+            }
+        }
+    }
+
+    const receivers = (candidate) => {
+        try {
+            if (candidate.framework === 'vue2') {
+                return [
+                    {value: candidate.component, thisArg: candidate.component},
+                    {value: candidate.component.$options?.methods, thisArg: candidate.component}
+                ];
+            }
+            const proxy = candidate.component.proxy;
+            return [
+                {value: proxy, thisArg: proxy ?? candidate.component},
+                {value: candidate.component.ctx, thisArg: proxy ?? candidate.component},
+                {value: candidate.component.type?.methods, thisArg: proxy ?? candidate.component}
+            ];
+        } catch {
+            return [];
+        }
+    };
+    const invoke = async (method, name, thisArg) => {
+        try {
+            result.invoked = true;
+            result.method = name;
+            const pending = method.call(thisArg, {
+                type: 'click',
+                target: photoSwipe,
+                currentTarget: photoSwipe,
+                preventDefault() {},
+                stopPropagation() {}
+            });
+            pending?.catch?.(() => undefined);
+            if (await waitForClose()) {
+                result.closed = true;
+                result.reason = 'PHOTO_SWIPE_CLOSED';
+                return true;
+            }
+        } catch {
+            // Try the next page-owned close route.
+        }
+        return false;
+    };
+    const invokeCloseControlEmit = async (candidate) => {
+        if (!candidate.fromCloseControl) return false;
+        try {
+            const emit = candidate.framework === 'vue2'
+                ? candidate.component.$emit
+                : candidate.component.emit;
+            if (typeof emit !== 'function') return false;
+            for (const eventName of ['close', 'click']) {
+                result.invoked = true;
+                result.componentName ??= candidate.name;
+                result.method = `vue:${candidate.name ?? 'anonymous'}.$emit(${eventName})`;
+                emit.call(candidate.component, eventName);
+                if (await waitForClose()) {
+                    result.closed = true;
+                    result.reason = 'PHOTO_SWIPE_CLOSED';
+                    return true;
+                }
+            }
+        } catch {
+            // Try the component's public close methods below.
+        }
+        return false;
+    };
+    const methodNames = ['closePhotoSwipe', 'closePswp', 'close', 'handleClose', 'onClose'];
+    for (const candidate of candidates) {
+        if (await invokeCloseControlEmit(candidate)) return result;
+        const isDirectModalRoot = candidate.root === photoSwipe;
+        const hasModalName = /photo|pswp|gallery|media|viewer|modal/i.test(candidate.name ?? '');
+        if (!isDirectModalRoot && !hasModalName) continue;
+        result.componentName ??= candidate.name;
+        for (const receiver of receivers(candidate)) {
+            if (!isObject(receiver.value)) continue;
+            for (const name of methodNames) {
+                let method = null;
+                try {
+                    method = receiver.value[name];
+                } catch {
+                    continue;
+                }
+                if (typeof method !== 'function') continue;
+                if (await invoke(method, `vue:${candidate.name ?? 'anonymous'}.${name}`,
+                    receiver.thisArg)) {
+                    return result;
+                }
+            }
+        }
+    }
+
+    result.reason = candidates.length > 0 ? 'VUE_CLOSE_METHOD_DID_NOT_CLOSE' :
+        'PHOTO_SWIPE_VUE_COMPONENT_NOT_FOUND';
+    return result;
+}
+
 async function requestOnlyFansMainWorldPageAction(message, sender) {
     const tabId = sender?.tab?.id;
     const frameId = sender?.frameId;
@@ -482,10 +678,11 @@ async function requestOnlyFansMainWorldPageAction(message, sender) {
     }
     const isHistoryRequest = message?.action === 'trigger-history-loader';
     const isSwiperRequest = message?.action === 'advance-virtual-swiper';
+    const isPhotoSwipeCloseRequest = message?.action === 'close-photo-swipe';
     const validSwiperRequest = isSwiperRequest && Number.isInteger(message?.swiperIndex) &&
         message.swiperIndex >= 0 && ['forward', 'backward'].includes(message?.direction);
     if (message?.source !== 'hidden-deepscan-frame' ||
-        (!isHistoryRequest && !validSwiperRequest) ||
+        (!isHistoryRequest && !validSwiperRequest && !isPhotoSwipeCloseRequest) ||
         !Number.isInteger(tabId) || !Number.isInteger(frameId) ||
         !hostname?.endsWith('onlyfans.com') ||
         activeHiddenDeepScan?.tabId !== tabId) {
@@ -500,8 +697,10 @@ async function requestOnlyFansMainWorldPageAction(message, sender) {
         world: 'MAIN',
         func: isHistoryRequest
             ? triggerOnlyFansHistoryLoaderInMainWorld
-            : advanceOnlyFansVirtualSwiperInMainWorld,
-        args: mainWorldArguments
+            : isSwiperRequest
+                ? advanceOnlyFansVirtualSwiperInMainWorld
+                : closeOnlyFansPhotoSwipeInMainWorld,
+        args: isPhotoSwipeCloseRequest ? [] : mainWorldArguments
     });
     return results[0]?.result ?? {reason: 'MAIN_WORLD_NO_RESULT'};
 }

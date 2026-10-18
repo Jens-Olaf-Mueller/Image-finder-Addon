@@ -28,6 +28,7 @@ export default class PhotoSwipeScanner {
         document: scanDocument,
         queryDeep,
         findOpenPhotoSwipe,
+        getActiveSlideImage,
         getReadyActiveSlideImage,
         collectPhotoSwipeCandidates,
         getImageSnapshot,
@@ -530,13 +531,35 @@ export default class PhotoSwipeScanner {
                     continue;
                 }
 
+                // OF may assign the PhotoSwipe source before its image is fully decoded. Keep
+                // that source first, then let the ready wait upgrade it with real dimensions.
+                const initialSourceSlide = getActiveSlideImage(findOpenPhotoSwipe());
+                if (initialSourceSlide) {
+                    const sourceCandidates = collectPhotoSwipeCandidates(
+                        initialSourceSlide.photoSwipe
+                    );
+                    recordDirectCandidates('initial', sourceCandidates);
+                    addCandidates(...sourceCandidates);
+                }
+
                 const readySlide = await waitFor(
                     () => getReadyActiveSlideImage(findOpenPhotoSwipe()),
-                    3000,
+                    6000,
                     'direct-photo-swipe-ready'
                 );
                 if (isAborted()) break;
                 if (!readySlide) {
+                    // The ready check can lose a race against OF's delayed decode. The active
+                    // image still carries the page-selected URL, so keep it instead of marking
+                    // this target as permanently empty.
+                    const lateSourceSlide = getActiveSlideImage(findOpenPhotoSwipe());
+                    if (lateSourceSlide) {
+                        const sourceCandidates = collectPhotoSwipeCandidates(
+                            lateSourceSlide.photoSwipe
+                        );
+                        recordDirectCandidates('initial', sourceCandidates);
+                        addCandidates(...sourceCandidates);
+                    }
                     if (collectPerformance) performanceDetail.direct.readySlideTimeouts += 1;
                     continue;
                 }
