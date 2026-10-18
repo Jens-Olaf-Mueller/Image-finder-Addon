@@ -745,6 +745,7 @@ export async function scanPhotoSwipeImages({
     onPerformance = null,
     performanceState = null,
     traverseCarousel = false,
+    skipDirectZoom = false,
     scanRoots = [document],
     dirtyGenericRoots = new Set(),
     registerGenericRoot = null,
@@ -811,6 +812,21 @@ export async function scanPhotoSwipeImages({
             invisibleTargetsSkipped: 0,
             openModalChecks: 0,
             openModalSkips: 0,
+            openSuccesses: 0,
+            openTimeouts: 0,
+            readySlides: 0,
+            readySlideTimeouts: 0,
+            initialCandidateCount: 0,
+            initialMaxWidth: 0,
+            initialMaxHeight: 0,
+            zoomAttempts: 0,
+            zoomClickFailures: 0,
+            zoomStateChanges: 0,
+            zoomTimeouts: 0,
+            resolutionUpgrades: 0,
+            zoomCandidateCount: 0,
+            zoomMaxWidth: 0,
+            zoomMaxHeight: 0,
             resultCount: 0
         },
         waits: {
@@ -875,6 +891,11 @@ export async function scanPhotoSwipeImages({
         .map(([purpose, metrics]) => `${purpose}: ${Math.round(metrics.totalMs)}ms, ` +
             `${metrics.calls} calls, ${metrics.timeouts} timeouts, ${metrics.aborts} aborts`)
         .join(' | ');
+    // ✴️ NEW 2026-10-18: Keeps the first failed PhotoSwipe close inspectable without
+    // producing a stream of runtime diagnostics. The value is surfaced once in the final
+    // OnlyFans performance summary.
+    let photoSwipeCloseFailureDiagnostic =
+        performanceState?.photoSwipeCloseFailureDiagnostic ?? null;
     let genericCarouselMs = 0;
     let genericCarouselCalls = 0;
     let directPhotoSwipeMs = 0;
@@ -1049,8 +1070,11 @@ export async function scanPhotoSwipeImages({
     // ✏️ EDIT 2026-10-16: Support OnlyFans icon-close buttons, Escape keydown, and fallback cleanup.
     const findPhotoSwipeCloseControl = (photoSwipe) => {
         if (!photoSwipe) return null;
+        const isPhotoSwipeControl = (control) => Boolean(control) &&
+            !control.matches?.('.vjs-close-button, [class*="vjs-"]') &&
+            !control.closest?.('.video-js');
 
-        const directButton = photoSwipe.querySelector([
+        const directButton = Array.from(photoSwipe.querySelectorAll([
             '.pswp__button--close',
             '[data-pswp-close]',
             '[data-pswp-action="close"]',
@@ -1059,7 +1083,7 @@ export async function scanPhotoSwipeImages({
             'button[aria-label*="schließen" i]',
             'button[title*="close" i]',
             'button[title*="schließen" i]'
-        ].join(', '));
+        ].join(', '))).find(isPhotoSwipeControl) ?? null;
         if (directButton) return directButton;
 
         const closeIcon = photoSwipe.querySelector(
@@ -1067,19 +1091,87 @@ export async function scanPhotoSwipeImages({
         );
         if (closeIcon) {
             const iconButton = closeIcon.closest('button, [role="button"], a, .pswp__button');
-            if (iconButton) return iconButton;
+            if (isPhotoSwipeControl(iconButton)) return iconButton;
         }
-        return photoSwipe.querySelector('.pswp__top-bar button, .pswp__top-bar [role="button"]');
+        return Array.from(photoSwipe.querySelectorAll(
+            '.pswp__top-bar button, .pswp__top-bar [role="button"]'
+        )).find(isPhotoSwipeControl) ?? null;
+    };
+    const describePhotoSwipeElement = (element) => {
+        if (!element) return 'none';
+
+        const className = (element.getAttribute?.('class') ?? '')
+            .trim()
+            .replace(/\s+/g, '.')
+            .slice(0, 180);
+        const attributes = [
+            ['id', element.id],
+            ['role', element.getAttribute?.('role')],
+            ['aria-label', element.getAttribute?.('aria-label')],
+            ['title', element.getAttribute?.('title')],
+            ['at-attr', element.getAttribute?.('at-attr')],
+            ['icon', element.querySelector?.('[data-icon-name]')?.getAttribute('data-icon-name')]
+        ].filter(([, value]) => value).map(([name, value]) =>
+            `${name}=${String(value).slice(0, 120)}`
+        );
+        return [
+            String(element.tagName ?? 'unknown').toLowerCase(),
+            className ? `.${className}` : null,
+            ...attributes
+        ].filter(Boolean).join(' ');
+    };
+    const recordPhotoSwipeCloseFailure = (photoSwipe, purpose, closeButton) => {
+        if (photoSwipeCloseFailureDiagnostic) return;
+
+        const activeSlide = getActiveSlide(photoSwipe);
+        const activeImage = getSlideImages(photoSwipe)[0] ?? null;
+        const controls = Array.from(new Set(Array.from(photoSwipe.querySelectorAll(
+            'button, [role="button"], a, .pswp__button'
+        )))).slice(0, 12).map(describePhotoSwipeElement).join(' | ') || 'none';
+        const imageState = activeImage
+            ? `${activeImage.naturalWidth}x${activeImage.naturalHeight}, ` +
+                `complete=${activeImage.complete}`
+            : 'none';
+        photoSwipeCloseFailureDiagnostic = [
+            `purpose=${purpose}`,
+            `modal=${describePhotoSwipeElement(photoSwipe)}`,
+            `chosenClose=${describePhotoSwipeElement(closeButton)}`,
+            `activeSlide=${describePhotoSwipeElement(activeSlide)}`,
+            `activeImage=${imageState}`,
+            `controls=${controls}`
+        ].join('; ');
+        if (performanceState) {
+            performanceState.photoSwipeCloseFailureDiagnostic = photoSwipeCloseFailureDiagnostic;
+        }
     };
     const closePhotoSwipe = async (purpose = 'photo-swipe') => {
         const photoSwipe = findOpenPhotoSwipe();
         if (!photoSwipe) return true;
+
+        const requestEscapeClose = () => {
+            try {
+                const event = new KeyboardEvent('keydown', {
+                    key: 'Escape',
+                    code: 'Escape',
+                    bubbles: true,
+                    cancelable: true
+                });
+                Object.defineProperties(event, {
+                    keyCode: {value: 27},
+                    which: {value: 27}
+                });
+                document.dispatchEvent(event);
+            } catch {
+                // Some pages do not accept synthetic keyboard events.
+            }
+        };
 
         const closeButton = findPhotoSwipeCloseControl(photoSwipe) ?? await waitFor(
             () => findPhotoSwipeCloseControl(photoSwipe),
             500,
             purpose + '-close-button'
         );
+        if (!closeButton) requestEscapeClose();
         try {
             closeButton?.click?.();
         } catch {
@@ -1102,7 +1194,15 @@ export async function scanPhotoSwipeImages({
                 if (!photoSwipe.isConnected) return true;
                 return !photoSwipe.classList.contains('pswp--open');
             }, 500, purpose + '-close');
+            if (!closed && photoSwipe.isConnected && photoSwipe.classList.contains('pswp--open')) {
+                requestEscapeClose();
+                closed = await waitFor(() => {
+                    if (!photoSwipe.isConnected) return true;
+                    return !photoSwipe.classList.contains('pswp--open');
+                }, 500, purpose + '-close');
+            }
         }
+        if (!closed) recordPhotoSwipeCloseFailure(photoSwipe, purpose, closeButton);
         return Boolean(closed);
     };
 
@@ -1332,6 +1432,7 @@ export async function scanPhotoSwipeImages({
         addCandidates: (...newCandidates) => candidates.push(...newCandidates),
         getCandidateCount: () => candidates.length,
         traverseCarousel,
+        skipDirectZoom,
         scanRoots,
         registerDirectTarget
     });
@@ -1919,7 +2020,8 @@ export async function runHiddenFrameDeepScan({
         mutationVersion: 0,
         genericCandidates: new WeakSet(),
         genericRoots: new Map(),
-        directTargets: new WeakSet()
+        directTargets: new WeakSet(),
+        photoSwipeCloseFailureDiagnostic: null
     };
     const knownScrollContainerIndices = new Map();
     const completedScrollContainerStates = new Map();
@@ -2028,6 +2130,29 @@ export async function runHiddenFrameDeepScan({
     const ONLYFANS_CHAT_MESSAGE_SELECTOR = '[at-attr="chat_message"], .b-chat__message:not(.b-chat__message__system)';
     const ONLYFANS_VIRTUAL_SWIPER_SELECTOR = '.swiper.b-slideshow.swiper-virtual';
     const ONLYFANS_MAIN_WORLD_TARGET = 'image-finder-onlyfans-main-world';
+    const onlyFansCarouselPhotoSwipe = {
+        targetCount: 0,
+        processedTargetsSkipped: 0,
+        sourceDuplicatesSkipped: 0,
+        invisibleTargetsSkipped: 0,
+        openModalChecks: 0,
+        openModalSkips: 0,
+        openSuccesses: 0,
+        openTimeouts: 0,
+        readySlides: 0,
+        readySlideTimeouts: 0,
+        initialCandidateCount: 0,
+        initialMaxWidth: 0,
+        initialMaxHeight: 0,
+        zoomAttempts: 0,
+        zoomClickFailures: 0,
+        zoomStateChanges: 0,
+        zoomTimeouts: 0,
+        resolutionUpgrades: 0,
+        zoomCandidateCount: 0,
+        zoomMaxWidth: 0,
+        zoomMaxHeight: 0
+    };
     const onlyFansChatContainer = {
         selector: ONLYFANS_CHAT_CONTAINER_SELECTOR,
         detected: false,
@@ -2055,7 +2180,14 @@ export async function runHiddenFrameDeepScan({
             stateChanges: 0,
             lastMethod: null,
             lastResult: null,
-            lastError: null
+            lastError: null,
+            photoSwipeTargets: 0,
+            photoSwipeSkipped: null,
+            photoSwipeModal: null,
+            photoSwipeReady: null,
+            photoSwipeInitial: null,
+            photoSwipeZoom: null,
+            photoSwipeCloseFailure: null
         },
         scrollEvents: 0,
         upScrollEvents: 0,
@@ -2291,7 +2423,7 @@ export async function runHiddenFrameDeepScan({
         },
         resultsFound: detail.generic.resultCount + detail.direct.resultCount
     });
-    const recordPhotoSwipePerformance = (performanceMetrics) => {
+    const recordPhotoSwipePerformance = (performanceMetrics, phase = null) => {
         const detail = performanceMetrics?.detail;
         if (!detail) return;
 
@@ -2308,6 +2440,11 @@ export async function runHiddenFrameDeepScan({
             performanceMetrics.directPhotoSwipeMs
         );
         photoSwipeDetail.direct.discoveryMs += detail.direct.discoveryMs;
+        if (phase === 'of-virtual-swiper-slide') {
+            Object.keys(onlyFansCarouselPhotoSwipe).forEach((name) => {
+                onlyFansCarouselPhotoSwipe[name] += detail.direct[name] ?? 0;
+            });
+        }
         photoSwipeDetail.generic.calls += performanceMetrics.genericCarouselCalls;
         photoSwipeDetail.generic.totalMs += performanceMetrics.genericCarouselMs;
         photoSwipeDetail.generic.maxCallMs = Math.max(
@@ -2389,6 +2526,40 @@ export async function runHiddenFrameDeepScan({
         });
     };
     const createPerformanceSummary = (status) => {
+        const carouselTraversal = onlyFansChatContainer.carouselTraversal;
+        carouselTraversal.photoSwipeTargets = onlyFansCarouselPhotoSwipe.targetCount;
+        carouselTraversal.photoSwipeSkipped = [
+            `processed=${onlyFansCarouselPhotoSwipe.processedTargetsSkipped}`,
+            `source=${onlyFansCarouselPhotoSwipe.sourceDuplicatesSkipped}`,
+            `invisible=${onlyFansCarouselPhotoSwipe.invisibleTargetsSkipped}`,
+            `open=${onlyFansCarouselPhotoSwipe.openModalSkips}`
+        ].join(', ');
+        carouselTraversal.photoSwipeModal = [
+            `checks=${onlyFansCarouselPhotoSwipe.openModalChecks}`,
+            `opened=${onlyFansCarouselPhotoSwipe.openSuccesses}`,
+            `timeout=${onlyFansCarouselPhotoSwipe.openTimeouts}`
+        ].join(', ');
+        carouselTraversal.photoSwipeReady = [
+            `ready=${onlyFansCarouselPhotoSwipe.readySlides}`,
+            `timeout=${onlyFansCarouselPhotoSwipe.readySlideTimeouts}`
+        ].join(', ');
+        carouselTraversal.photoSwipeInitial = [
+            `candidates=${onlyFansCarouselPhotoSwipe.initialCandidateCount}`,
+            `max=${onlyFansCarouselPhotoSwipe.initialMaxWidth}x` +
+                onlyFansCarouselPhotoSwipe.initialMaxHeight
+        ].join(', ');
+        carouselTraversal.photoSwipeZoom = [
+            `attempts=${onlyFansCarouselPhotoSwipe.zoomAttempts}`,
+            `clickFailures=${onlyFansCarouselPhotoSwipe.zoomClickFailures}`,
+            `changed=${onlyFansCarouselPhotoSwipe.zoomStateChanges}`,
+            `timeout=${onlyFansCarouselPhotoSwipe.zoomTimeouts}`,
+            `upgrades=${onlyFansCarouselPhotoSwipe.resolutionUpgrades}`,
+            `candidates=${onlyFansCarouselPhotoSwipe.zoomCandidateCount}`,
+            `max=${onlyFansCarouselPhotoSwipe.zoomMaxWidth}x` +
+                onlyFansCarouselPhotoSwipe.zoomMaxHeight
+        ].join(', ');
+        carouselTraversal.photoSwipeCloseFailure =
+            photoSwipePerformanceState.photoSwipeCloseFailureDiagnostic;
         stopOnlyFansChatContainerDiagnostics();
         const createEdgeRangeGrowthSummary = () => ({
             totalMs: 0,
@@ -2960,7 +3131,8 @@ export async function runHiddenFrameDeepScan({
         metrics = null,
         phase = 'delta',
         roots = null,
-        traverseCarousel = true
+        traverseCarousel = true,
+        skipDirectZoom = false
     } = {}) => {
         if (!isActive()) return 0;
 
@@ -3013,7 +3185,7 @@ export async function runHiddenFrameDeepScan({
                 photoSwipeActivityCount += 1;
             },
             onPerformance: (performanceMetrics) => {
-                recordPhotoSwipePerformance(performanceMetrics);
+                recordPhotoSwipePerformance(performanceMetrics, collectionScope.phase);
                 recordCollectionMetric(metrics, 'scanPhotoSwipeMs', performanceMetrics.scanPhotoSwipeMs);
                 recordCollectionMetric(metrics, 'genericCarouselMs', performanceMetrics.genericCarouselMs);
                 recordCollectionMetric(metrics, 'genericCarouselCalls', performanceMetrics.genericCarouselCalls);
@@ -3022,6 +3194,7 @@ export async function runHiddenFrameDeepScan({
                 recordCollectionMetric(metrics, 'photoSwipeOtherMs', performanceMetrics.otherMs);
             },
             traverseCarousel,
+            skipDirectZoom,
             scanRoots: photoSwipeRoots,
             dirtyGenericRoots: collectionScope.dirtyGenericRoots,
             registerGenericRoot: (root) => domState.registerGenericRoot(root),
@@ -3547,9 +3720,9 @@ export async function runHiddenFrameDeepScan({
     const isAtContainerBottom = (metrics) => metrics.scrollTop + metrics.clientHeight >=
         metrics.scrollHeight - 4;
     const getScrollRange = (metrics) => Math.max(0, metrics.scrollHeight - metrics.clientHeight);
-    // The OF history loader is page-owned Vue code. At the top edge, call its own public
-    // InfiniteLoading method in MAIN world instead of synthesizing browser input events.
-    const requestOnlyFansHistoryPage = async (container) => {
+    // The OF history loader is page-owned Vue code. At the top edge, call its observed handler
+    // in MAIN world; its public InfiniteLoading method is the bounded fallback.
+    const requestOnlyFansHistoryPage = async (container, {preferAttemptLoad = false} = {}) => {
         if (!matchesOnlyFansChatContainer(container)) {
             return null;
         }
@@ -3562,7 +3735,8 @@ export async function runHiddenFrameDeepScan({
             const response = await chrome.runtime.sendMessage({
                 target: ONLYFANS_MAIN_WORLD_TARGET,
                 source: 'hidden-deepscan-frame',
-                action: 'trigger-history-loader'
+                action: 'trigger-history-loader',
+                preferAttemptLoad
             });
             if (response?.success !== true) {
                 if (collectContainerDiagnostics) {
@@ -3734,7 +3908,8 @@ export async function runHiddenFrameDeepScan({
                     metrics,
                     phase: 'of-virtual-swiper-slide',
                     roots: [swiper],
-                    traverseCarousel: false
+                    traverseCarousel: false,
+                    skipDirectZoom: true
                 });
                 registerTargets();
                 return state;
@@ -3870,10 +4045,7 @@ export async function runHiddenFrameDeepScan({
 
             // Step 2: Request and retain every older batch.  On OF the message DOM is virtualized,
             // so sources must be collected before the following batch can replace these nodes.
-            let consecutiveEmptyBatches = 0;
-            const maximumConsecutiveEmptyBatches = 2;
-            while (isActive() && container.isConnected &&
-                consecutiveEmptyBatches < maximumConsecutiveEmptyBatches) {
+            while (isActive() && container.isConnected) {
                 try {
                     container.scrollTop = 0;
                     if (typeof container.scrollTo === 'function') {
@@ -3884,29 +4056,41 @@ export async function runHiddenFrameDeepScan({
                     const messagesBefore = container.querySelectorAll(ONLYFANS_CHAT_MESSAGE_SELECTOR).length;
                     const scrollHeightBefore = container.scrollHeight;
 
-                    const triggerResult = await requestOnlyFansHistoryPage(container);
+                    let triggerResult = await requestOnlyFansHistoryPage(container);
                     if (triggerResult?.reason === 'TOP_LOADER_NOT_FOUND_COMPLETE' ||
                         !container.querySelector(ONLYFANS_TOP_LOADER_SELECTOR)) {
                         // Chat history has reached the very beginning!
                         break;
                     }
 
-                    if (triggerResult?.invoked !== true) {
-                        consecutiveEmptyBatches += 1;
-                        await wait(200);
-                        continue;
+                    let batchArrived = triggerResult?.invoked === true
+                        ? await waitForOnlyFansHistoryBatch({
+                            container,
+                            messagesBefore,
+                            scrollHeightBefore
+                        })
+                        : null;
+
+                    // ✏️ EDIT 2026-10-18: A handler call without DOM progress gets one bounded
+                    // InfiniteLoading fallback before history pagination ends.
+                    if (!batchArrived && container.querySelector(ONLYFANS_TOP_LOADER_SELECTOR)) {
+                        triggerResult = await requestOnlyFansHistoryPage(container, {
+                            preferAttemptLoad: true
+                        });
+                        if (triggerResult?.reason === 'TOP_LOADER_NOT_FOUND_COMPLETE' ||
+                            !container.querySelector(ONLYFANS_TOP_LOADER_SELECTOR)) {
+                            break;
+                        }
+                        batchArrived = triggerResult?.invoked === true
+                            ? await waitForOnlyFansHistoryBatch({
+                                container,
+                                messagesBefore,
+                                scrollHeightBefore
+                            })
+                            : null;
                     }
 
-                    // This waits for observable page state rather than treating a successful
-                    // function call as evidence that an older page really arrived.
-                    const batchArrived = await waitForOnlyFansHistoryBatch({
-                        container,
-                        messagesBefore,
-                        scrollHeightBefore
-                    });
-
                     if (batchArrived) {
-                        consecutiveEmptyBatches = 0;
                         addMetric(directionMetrics, 'steps', 1);
                         addMetric(directionMetrics, 'containerScrollSteps', 1);
 
@@ -3930,18 +4114,16 @@ export async function runHiddenFrameDeepScan({
                         }
                         await wait(200);
                     } else {
-                        consecutiveEmptyBatches += 1;
-                        if (!container.querySelector(ONLYFANS_TOP_LOADER_SELECTOR) ||
-                            consecutiveEmptyBatches >= maximumConsecutiveEmptyBatches) {
+                        if (!container.querySelector(ONLYFANS_TOP_LOADER_SELECTOR)) {
                             break;
                         }
-                        await wait(200);
+                        // ✏️ EDIT 2026-10-18: OF retains this loader even at the oldest known
+                        // page. Both page-owned load paths have been exhausted; scan the loaded DOM.
+                        break;
                     }
                 } catch (batchError) {
                     console.warn('[OnlyFans Chat History] Batch step failed:', batchError);
-                    consecutiveEmptyBatches += 1;
-                    if (consecutiveEmptyBatches >= maximumConsecutiveEmptyBatches) break;
-                    await wait(200);
+                    break;
                 }
             }
 

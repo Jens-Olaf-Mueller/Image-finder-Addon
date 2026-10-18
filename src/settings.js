@@ -10,5 +10,6 @@ async function runSettings() {
     document.documentElement.dataset.mode = settings.getThemeMode();
 
     const settingsPanel = new SettingsPanel(settings, form);
+    settingsPanel.setMediaType(['image', 'video', 'audio'][settings.getMediaMode() - 1]);
     await settingsPanel.run({loadSettings: false});
 }

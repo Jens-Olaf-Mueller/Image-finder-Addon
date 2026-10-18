@@ -146,6 +146,7 @@ export default class Popup {
      */
     setSettingsPanel(settingsPanel) {
         this.#settingsPanel = settingsPanel ?? null;
+        this.#settingsPanel?.setMediaType(this.mode);
     }
 
     /**
@@ -184,6 +185,7 @@ export default class Popup {
         // ✴️ NEW 2026-10-14: Makes the selected media color available to every popup control.
         document.documentElement.style.setProperty('--adn-media-color', this.cssMediaColor);
         this.#progressbar.backgroundColor = this.cssMediaColor;
+        this.#settingsPanel?.setMediaType(this.mode);
         return true;
     }
 

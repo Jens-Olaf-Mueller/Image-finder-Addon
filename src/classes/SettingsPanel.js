@@ -25,6 +25,7 @@
  * - {@link run}                              - Initializes the panel.
  * - {@link refresh}                          - Synchronizes the form with settings.
  * - {@link updateUI}                         - Updates dependent control states.
+ * - {@link setMediaType}                     - Shows controls for the active media type.
  * - {@link setDefaultDownloadFolder}         - Stores the detected browser download folder.
  * - {@link enqueue}                          - Queues a settings save operation.
  * - {@link waitForPendingSave}               - Waits for the queued save operation.
@@ -142,6 +143,20 @@ export class SettingsPanel {
         this.#updateExcludeListControls();
         this.#updateWebsiteProfileControls();
         await this.#updateDeleteProfileButton();
+    }
+
+    /**
+     * Shows controls assigned to the active media type and hides the others.
+     * Controls without a data-media attribute remain unchanged.
+     *
+     * @param {'image'|'video'|'audio'} mediaType Active media type.
+     */
+    setMediaType(mediaType) {
+        if (!['image', 'video', 'audio'].includes(mediaType)) return;
+
+        this.form.querySelectorAll('[data-media]').forEach(control => {
+            control.classList.toggle('hidden', control.dataset.media !== mediaType);
+        });
     }
 
     // ✏️ EDIT 2026-10-15: Probes the browser folder only when its persisted cache is unknown.

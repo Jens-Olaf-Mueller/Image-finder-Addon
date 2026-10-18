@@ -26,7 +26,7 @@
                 max="365"
                 value="365"
                 disabled>
-            <span> days  </span>
+            <span>  days  </span>
             <button type="button" id="btnDeleteProfile" class="folder-button"
                 title="Delete settings for this profile" disabled>
                 <svg class="folder-button__icon" aria-hidden="true">
@@ -34,12 +34,16 @@
                 </svg>
             </button>
         </div>
+        <label class="control">
+            <input type="checkbox">
+            Darkmode
+        </label>
     </fieldset>
 
     <fieldset name="downloads"><legend>Downloads</legend>
         <label class="control">
             <input type="radio" id="radPromptDownloadFolder" name="downloadFolder" value="prompt" checked>
-             Always prompt for download folder
+              Always prompt for download folder
         </label>
         <div class="control ctrl__vertical">
             <label>
@@ -65,17 +69,17 @@
         </label>
     </fieldset>
 
-    <fieldset name="filesizes"><legend>Image Size</legend>
-        <label id="lblIgnoreImageSizes" class="control">
+    <fieldset name="filesizes"><legend>Media Size</legend>
+        <label id="lblIgnoreImageSizes" class="control" data-media="image">
             <input type="checkbox" id="chkIgnoreSizes" name="ignoresizes" checked/>
              Ignore images smaller than:
         </label>
-        <div class="control">
+        <div class="control" data-media="image">
             <label id="lblMinimumWidth" for="inpMinWidth">Minimum width:</label>
             <input type="number" id="inpMinWidth" name="minwidth" min="16" max="10000" step="10" value="100"/>
             <span> px</span>
         </div>
-        <div class="control">
+        <div class="control" data-media="image">
             <label id="lblMinimumHeight" for="inpMinHeight">Minimum height:</label>
             <input type="number" id="inpMinHeight" name="minheight" min="16" max="10000" step="10" value="100"/>
             <span> px</span>
@@ -85,6 +89,40 @@
             <input type="number" id="inpMinimumFileSize" name="minimumfilesize" min="16" max="1024" step="16" value="64"/>
             <span id="spnMinSize"> KB</span>
         </div>
+        <div class="control hidden" data-media="video">
+            <label id="lblResolution" for="selResolution">Resolution</label>
+            <select id="selResolution" name="resolution">
+                <option value="144">144p</option>
+                <option value="240">240p</option>
+                <option value="360">360p</option>
+                <option value="480">480p</option>
+                <option value="720">720p</option>
+                <option value="1280" selected>1280p HD</option>
+                <option value="1440">1440p HD</option>
+                <option value="2160">2160p 4K</option>
+            </select>
+        </div>
+        <div class="control hidden" data-media="audio">
+            <label id="lblBitRate" for="selBitRate">Audio bit rate</label>
+            <select id="selBitRate" name="bitrate">
+                <option value="32">32 kbit/s</option>
+                <option value="64">64 kbit/s</option>
+                <option value="128" selected>128 kbit/s</option>
+                <option value="192">192 kbit/s</option>
+                <option value="256">256 kbit/s</option>
+                <option value="320">320 kbit/s</option>
+            </select>
+        </div>
+        <div class="control" data-media="audio">
+            <label title="Constant bit rate">
+                <input type="radio" id="radCBR" name="bitratetype">
+                CBR
+            </label>
+            <label title="Variable bit rate">
+                <input type="radio" id="radVBR" name="bitratetype">
+                VBR
+            </label>
+        </div>
     </fieldset>
 
     <fieldset name="filters"><legend>Filtering</legend>
@@ -92,14 +130,18 @@
             <input type="checkbox" id="chkIgnoreDuplicates" name="ignoreDuplicates" checked/>
              Ignore duplicates
         </label>
+        <label id="lblIgnoreDRM" class="control" data-media="video">
+            <input type="checkbox" id="chkIgnoreDRM" name="ignoreDRM" checked/>
+             Ignore DRM protected videos
+        </label>
         <div class="control ctrl__vertical">
             <label>
                 <input type="checkbox" id="chkExcludeList" name="hasExcludeList">
-                 Ignore images containing in filename:
+                 Ignore media containing in filename:
             </label>
             <input type="text" id="inpExcludeList" name="excludeList" disabled>
         </div>
-        <label id="lblIgnoreBlurredImages" class="control">
+        <label id="lblIgnoreBlurredImages" class="control" data-media="image">
             <input type="checkbox" id="chkIgnoreBlurredImages" name="ignoreBlurredImages" checked/>
              Ignore blurred images
         </label>
@@ -144,7 +186,7 @@
 
         <!-- .mp4 | .webm | .mov | .mkv | .avi | .wmv | .ogg? -->
         <label id="lblMp4" class="control hidden" data-media="video">
-            <input type="checkbox" id="chkMp4" name="mp4"/>
+            <input type="checkbox" id="chkMp4" name="mp4" checked/>
             <img src="/assets/icons/mp4.png" alt="mp4" class="media-icon">
              .mp4
         </label>
@@ -154,12 +196,12 @@
              .mov
         </label>
         <label id="lblMkv" class="control hidden" data-media="video">
-            <input type="checkbox" id="chkMkv" name="mkv"/>
+            <input type="checkbox" id="chkMkv" name="mkv" checked/>
             <img src="/assets/icons/mkv.png" alt="mkv" class="media-icon">
              .mkv
         </label>
         <label id="lblWebm" class="control hidden" data-media="video">
-            <input type="checkbox" id="chkWebm" name="webm"/>
+            <input type="checkbox" id="chkWebm" name="webm" checked/>
             <img src="/assets/icons/webm.png" alt="webm" class="media-icon">
              .webm
         </label>
@@ -175,9 +217,39 @@
         </label>
 
         <!-- .mp3 | .wav | .acc | .ogg | .opus | .flac | . -->
+        <label id="lblMp3" class="control hidden" data-media="audio">
+            <input type="checkbox" id="chkMp3" name="mp3" checked/>
+            <img src="/assets/icons/mp4.png" alt="mp3" class="media-icon">
+             .mp3
+        </label>
+        <label id="lblAcc" class="control hidden" data-media="audio" title="Advanced audio coding">
+            <input type="checkbox" id="chkAcc" name="acc" checked/>
+            <img src="/assets/icons/acc.png" alt="acc" class="media-icon">
+             .acc
+        </label>
+        <label id="lblM4a" class="control hidden" data-media="audio">
+            <input type="checkbox" id="chkM4a" name="m4a" checked/>
+            <img src="/assets/icons/m4a.png" alt="m4a" class="media-icon">
+             .m4a
+        </label>
+        <label id="lblOgg" class="control hidden" data-media="audio">
+            <input type="checkbox" id="chkOgg" name="ogg" checked/>
+            <img src="/assets/icons/ogg.png" alt="ogg" class="media-icon">
+             .ogg
+        </label>
+        <label id="lblFlac" class="control hidden" data-media="audio" title="Free lossless audio codec">
+            <input type="checkbox" id="chkFlac" name="flac" checked/>
+            <img src="/assets/icons/flac.png" alt="flac" class="media-icon">
+             .flac
+        </label>
+        <label id="lblWav" class="control hidden" data-media="audio">
+            <input type="checkbox" id="chkWav" name="wav" checked/>
+            <img src="/assets/icons/wav.png" alt="wav" class="media-icon">
+             .wav
+        </label>
     </fieldset>
 
-    <fieldset id="fldBlurFilter" name="blurfilter" style="display: flex; align-items: center;">
+    <fieldset id="fldBlurFilter" name="blurfilter" style="display: flex; align-items: center;" data-media="image">
         <legend>Blur filter</legend>
         <img id="imgBlurSample" src="/assets/icons/icon512.png" alt="icon" width="256" height="236">
         <input id="sldBlurTolerance" name="blurTolerance" class="custom-slider"
@@ -189,26 +261,34 @@
             title="Maximum blur accepted by the scanner">
     </fieldset>
 
-    <fieldset name="sources"><legend>Image Sources</legend>
-        <label id="lblImageElements" class="control">
+    <fieldset name="sources"><legend>Media Sources</legend>
+        <label id="lblImageElements" class="control" data-media="image">
             <input type="checkbox" id="chkImageElements" name="imageelements" checked/>
-             Image elements
+             &lt;<strong>img</strong>&gt;  elements
         </label>
-        <label id="lblBackgroundImages" class="control">
+        <label id="lblVideoElements" class="control hidden" data-media="video">
+            <input type="checkbox" id="chkVideoElements" name="videoelements" checked/>
+             &lt;<strong>video</strong>&gt; elements
+        </label>
+        <label id="lblAudioElements" class="control hidden" data-media="audio">
+            <input type="checkbox" id="chkAudioElements" name="audioelements" checked/>
+             &lt;<strong>audio</strong>&gt; elements
+        </label>
+        <label id="lblBackgroundImages" class="control" data-media="image">
             <input type="checkbox" id="chkBackgroundImages" name="backgroundimages" checked/>
              CSS background images
         </label>
         <label id="lblLinkedImages" class="control">
             <input type="checkbox" id="chkLinkedImages" name="linkedimages" checked/>
-             Linked images
+             Linked medias
         </label>
         <label id="lblDataImages" class="control">
             <input type="checkbox" id="chkDataImages"  name="dataimages"/>
-             Data images
+             Data-attribute medias
         </label>
         <label id="lblBlobImages" class="control">
             <input type="checkbox" id="chkBlobImages" name="blobimages"/>
-             Blob images
+             Blob medias
         </label>
     </fieldset>
 

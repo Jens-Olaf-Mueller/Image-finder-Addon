@@ -51,6 +51,7 @@ export default class PhotoSwipeScanner {
         addCandidates,
         getCandidateCount,
         traverseCarousel,
+        skipDirectZoom = false,
         scanRoots = [scanDocument],
         registerDirectTarget = null
     } = {}) {
@@ -59,6 +60,22 @@ export default class PhotoSwipeScanner {
         const effectiveScanRoots = Array.isArray(scanRoots) && scanRoots.length > 0
             ? scanRoots
             : [scanDocument];
+        const recordDirectCandidates = (stage, candidates) => {
+            if (!collectPerformance) return;
+
+            const prefix = stage === 'zoom' ? 'zoom' : 'initial';
+            performanceDetail.direct[`${prefix}CandidateCount`] += candidates.length;
+            candidates.forEach((candidate) => {
+                performanceDetail.direct[`${prefix}MaxWidth`] = Math.max(
+                    performanceDetail.direct[`${prefix}MaxWidth`],
+                    candidate.width ?? 0
+                );
+                performanceDetail.direct[`${prefix}MaxHeight`] = Math.max(
+                    performanceDetail.direct[`${prefix}MaxHeight`],
+                    candidate.height ?? 0
+                );
+            });
+        };
         const isVisibleMediaTarget = (target) => {
             const phaseStartedAt = getPhaseStartedAt();
             const imageQueryStartedAt = getPhaseStartedAt();
@@ -501,7 +518,11 @@ export default class PhotoSwipeScanner {
                     'direct-photo-swipe-open'
                 );
                 if (isAborted()) break;
-                if (!photoSwipe) continue;
+                if (!photoSwipe) {
+                    if (collectPerformance) performanceDetail.direct.openTimeouts += 1;
+                    continue;
+                }
+                if (collectPerformance) performanceDetail.direct.openSuccesses += 1;
 
                 reportActivity();
                 if (traverseCarousel) {
@@ -515,14 +536,23 @@ export default class PhotoSwipeScanner {
                     'direct-photo-swipe-ready'
                 );
                 if (isAborted()) break;
-                if (!readySlide) continue;
+                if (!readySlide) {
+                    if (collectPerformance) performanceDetail.direct.readySlideTimeouts += 1;
+                    continue;
+                }
+                if (collectPerformance) performanceDetail.direct.readySlides += 1;
 
-                addCandidates(...collectPhotoSwipeCandidates(readySlide.photoSwipe));
+                const initialCandidates = collectPhotoSwipeCandidates(readySlide.photoSwipe);
+                recordDirectCandidates('initial', initialCandidates);
+                addCandidates(...initialCandidates);
+                if (skipDirectZoom) continue;
                 const beforeZoom = getImageSnapshot(readySlide.image);
+                if (collectPerformance) performanceDetail.direct.zoomAttempts += 1;
                 try {
                     readySlide.image.click();
                     reportActivity();
                 } catch {
+                    if (collectPerformance) performanceDetail.direct.zoomClickFailures += 1;
                     if (!isAborted()) reportZoom(imageDimensions(beforeZoom) + ' no-upgrade');
                     continue;
                 }
@@ -538,14 +568,21 @@ export default class PhotoSwipeScanner {
                 }, 3000, 'direct-photo-swipe-zoom');
                 if (isAborted()) break;
                 if (!zoomedSlide) {
+                    if (collectPerformance) performanceDetail.direct.zoomTimeouts += 1;
                     reportZoom(imageDimensions(beforeZoom) + ' no-upgrade');
                     continue;
                 }
 
-                addCandidates(...collectPhotoSwipeCandidates(zoomedSlide.activeSlide.photoSwipe));
+                if (collectPerformance) performanceDetail.direct.zoomStateChanges += 1;
+                const zoomCandidates = collectPhotoSwipeCandidates(zoomedSlide.activeSlide.photoSwipe);
+                recordDirectCandidates('zoom', zoomCandidates);
+                addCandidates(...zoomCandidates);
                 const afterZoom = zoomedSlide.afterZoom;
                 const resolutionImproved = afterZoom.naturalWidth > beforeZoom.naturalWidth ||
                     afterZoom.naturalHeight > beforeZoom.naturalHeight;
+                if (resolutionImproved && collectPerformance) {
+                    performanceDetail.direct.resolutionUpgrades += 1;
+                }
                 reportZoom(resolutionImproved
                     ? imageDimensions(beforeZoom) + ' -> ' + imageDimensions(afterZoom) + ' replaced'
                     : imageDimensions(beforeZoom) + ' no-upgrade');

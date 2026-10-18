@@ -82,6 +82,11 @@ export default class ImageScanner {
             });
         } catch {
             // The background may already have discarded the isolated host.
+        } finally {
+            // An explicit abort invalidates the ScanController generation before its normal
+            // completion callback can flush the popup context.  Close it here so the
+            // background can export the cancelled debug collector.
+            await this.completeDeepScanDebugContext();
         }
 
         return true;

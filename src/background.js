@@ -99,9 +99,9 @@ function getErrorMessage(error) {
 // This function is deliberately self-contained: chrome.scripting serializes it into the page's
 // MAIN execution world, where Vue's DOM expandos are visible.  The visible-tab trace showed that
 // MessagesList.onUserScrollIntent() followed by MessagesList.onScroll() is the page's own route
-// to the top-history loader.  Do exactly that route once; do not reset Vue state, fabricate an
-// InfiniteLoading $state object, or call a collection of unrelated methods.
-async function triggerOnlyFansHistoryLoaderInMainWorld() {
+// to the top-history loader. Do not reset Vue state or fabricate an InfiniteLoading $state object.
+// attemptLoad() is reserved for the bounded fallback after that route produced no history batch.
+async function triggerOnlyFansHistoryLoaderInMainWorld(preferAttemptLoad = false) {
     const chatSelector = '.b-chats__scrollbar.b-chat__messages';
     const loaderSelector = '.infinite-loading-container.b-chat__loading-top';
     const result = {
@@ -263,7 +263,10 @@ async function triggerOnlyFansHistoryLoaderInMainWorld() {
     const onScroll = messagesList ? findMethod(messagesList, 'onScroll') : null;
     const infiniteLoading = candidates.find((candidate) => candidate.name === 'InfiniteLoading');
     const attemptLoad = infiniteLoading ? findMethod(infiniteLoading, 'attemptLoad') : null;
-    const route = scrollIntent || onScroll
+    // ✏️ EDIT 2026-10-18: Use InfiniteLoading.attemptLoad() only after the observed route failed.
+    const route = preferAttemptLoad && attemptLoad
+        ? {candidate: infiniteLoading, method: 'attemptLoad', receiver: attemptLoad}
+        : scrollIntent || onScroll
         ? {candidate: messagesList, method: scrollIntent && onScroll ? 'onUserScrollIntent+onScroll' :
             (scrollIntent ? 'onUserScrollIntent' : 'onScroll'), receiver: scrollIntent ?? onScroll}
         : attemptLoad
@@ -489,13 +492,16 @@ async function requestOnlyFansMainWorldPageAction(message, sender) {
         throw new Error('ONLYFANS_MAIN_WORLD_REQUEST_REJECTED');
     }
 
+    const mainWorldArguments = isSwiperRequest
+        ? [message.swiperIndex, message.direction]
+        : [message.preferAttemptLoad === true];
     const results = await chrome.scripting.executeScript({
         target: {tabId, frameIds: [frameId]},
         world: 'MAIN',
         func: isHistoryRequest
             ? triggerOnlyFansHistoryLoaderInMainWorld
             : advanceOnlyFansVirtualSwiperInMainWorld,
-        ...(isSwiperRequest ? {args: [message.swiperIndex, message.direction]} : {})
+        args: mainWorldArguments
     });
     return results[0]?.result ?? {reason: 'MAIN_WORLD_NO_RESULT'};
 }

@@ -12,6 +12,10 @@ form#frmSettings {
     flex-direction: column;
 }
 
+#frmSettings .hidden {
+    display: none !important;
+}
+
 #frmSettings fieldset[name] {
     display: flex;
     flex-direction: column;
@@ -78,6 +82,68 @@ form#frmSettings {
     margin-top: 0;
     vertical-align: middle;
     accent-color: var(--adn-control-accent);
+}
+
+#frmSettings .control select {
+    min-width: 5rem;
+    border: 1px var(--adn-control-border) solid;
+    border-radius: 3px;
+    outline: none;
+}
+
+/* Wrapper nur dann als Custom-Select formatieren, wenn ein Select enthalten ist */
+.control:has(select) {
+    position: relative;
+    width: 100%;
+}
+
+/* Direktes Select innerhalb des Wrappers */
+.control:has(select) select {
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    flex: 1;
+    background-color: field;
+    /* width: 100%; */
+    padding: 2px 1rem 2px 0.5rem; /* Rechts Raum für den Pfeil freihalten */
+    cursor: pointer;
+}
+
+/* Fokus-Zustand des Selects */
+/* .control:has(select) select:focus {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+} */
+
+/* Dropdown-Pfeil über das Pseudo-Element des Wrappers */
+.control:has(select)::after {
+    --arrow-size: 1rem;
+    --arrow-border: calc(var(--arrow-size, 16px) / 2);
+    content: "";
+    position: absolute;
+    /* top: 50%; */
+    top: calc(var(--arrow-size, 16px) / 4 + 4);
+    right: var(--arrow-border, 8px);
+    width: 0;
+    height: 0;
+   /* transform: translateY(-2px);Optischer Höhenausgleich */
+
+    border-left: var(--arrow-border, 10px) solid transparent;
+    border-right: var(--arrow-border, 10px) solid transparent;
+    border-top: var(--arrow-border, 10px) solid var(--adn-control-accent); /* Pfeilfarbe & Höhe */
+    pointer-events: none;
+    transition: transform 0.2s ease, border-top-color 0.2s ease;
+}
+
+/* Pfeil-Farbe & Drehung bei Fokus */
+/* .control:has(select:focus)::after {
+    transform: translateY(12.5%) rotate(180deg);
+    border-top-color: tomato;
+} */
+
+.control:has(select:open)::after {
+    transform: translateY(12.5%) rotate(180deg);
+    border-top-color: tomato;
 }
 
 /* 1. Standard-Design zurücksetzen */
@@ -155,14 +221,21 @@ form#frmSettings {
     justify-content: center;
     height: 1.2rem;
     width: 1.5rem;
-    padding: 0;
+    padding: 1px;
+    background-color: transparent;
+    border: 1px transparent;
+    border-radius: 3px;
     cursor: pointer;
 }
 
+.folder-button:hover {
+    border: 1px var(--adn-button-hover-border);
+    background-color: var(--adn-button-hover-bg);
+}
+
 .folder-button__icon {
-    height: 91%;
-    width: 91%;
-    display: block;
+    height: calc(100% - 2px);
+    width: calc(100% - 2px);
     color: var(--adn-icon-color);
 }
 
