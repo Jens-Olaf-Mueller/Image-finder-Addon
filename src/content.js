@@ -1197,6 +1197,7 @@ export async function scanPhotoSwipeImages({
                 `closed=${mainWorldResult?.closed === true}`,
                 `method=${mainWorldResult?.method ?? 'none'}`,
                 `component=${mainWorldResult?.componentName ?? 'none'}`,
+                `owners=${mainWorldResult?.owners ?? 'none'}`,
                 `reason=${mainWorldResult?.reason ?? 'no-result'}`
             ].join(',');
             if (performanceState) {

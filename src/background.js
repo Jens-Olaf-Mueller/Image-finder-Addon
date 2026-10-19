@@ -481,6 +481,7 @@ async function closeOnlyFansPhotoSwipeInMainWorld() {
         closed: false,
         method: null,
         componentName: null,
+        owners: null,
         reason: null
     };
     const photoSwipe = Array.from(document.querySelectorAll('.pswp.pswp--open')).find(
@@ -573,6 +574,44 @@ async function closeOnlyFansPhotoSwipeInMainWorld() {
             }
         }
     }
+    const getNames = (value, predicate = () => true) => {
+        try {
+            return isObject(value)
+                ? Object.keys(value).filter(predicate).join(',') || '-'
+                : '-';
+        } catch {
+            return '-';
+        }
+    };
+    const describeCloseOwner = (candidate) => {
+        try {
+            const component = candidate.component;
+            const isVue2 = candidate.framework === 'vue2';
+            const methods = isVue2
+                ? component.$options?.methods
+                : component.type?.methods;
+            const closeMethods = getNames(methods, (name) =>
+                /close|dismiss|hide|cancel/i.test(name) &&
+                typeof methods[name] === 'function'
+            );
+            const listeners = isVue2
+                ? getNames(component.$listeners)
+                : getNames(component.vnode?.props, (name) => /^on[A-Z]/.test(name));
+            const vnodeEvents = isVue2
+                ? getNames(component.$vnode?.data?.on)
+                : getNames(component.vnode?.props, (name) => /^on[A-Z]/.test(name));
+            return [
+                candidate.name ?? 'anonymous',
+                candidate.fromCloseControl ? 'control' : 'modal',
+                `methods=${closeMethods}`,
+                `listeners=${listeners}`,
+                `vnode=${vnodeEvents}`
+            ].join(':');
+        } catch {
+            return 'uninspectable';
+        }
+    };
+    result.owners = candidates.map(describeCloseOwner).join('|') || 'none';
 
     const receivers = (candidate) => {
         try {
@@ -592,17 +631,18 @@ async function closeOnlyFansPhotoSwipeInMainWorld() {
             return [];
         }
     };
+    const createCloseClickEvent = () => ({
+        type: 'click',
+        target: closeButton ?? photoSwipe,
+        currentTarget: closeButton ?? photoSwipe,
+        preventDefault() {},
+        stopPropagation() {}
+    });
     const invoke = async (method, name, thisArg) => {
         try {
             result.invoked = true;
             result.method = name;
-            const pending = method.call(thisArg, {
-                type: 'click',
-                target: photoSwipe,
-                currentTarget: photoSwipe,
-                preventDefault() {},
-                stopPropagation() {}
-            });
+            const pending = method.call(thisArg, createCloseClickEvent());
             pending?.catch?.(() => undefined);
             if (await waitForClose()) {
                 result.closed = true;
@@ -626,6 +666,23 @@ async function closeOnlyFansPhotoSwipeInMainWorld() {
                 result.componentName ??= candidate.name;
                 result.method = `vue:${candidate.name ?? 'anonymous'}.$emit(${eventName})`;
                 emit.call(candidate.component, eventName);
+                if (await waitForClose()) {
+                    result.closed = true;
+                    result.reason = 'PHOTO_SWIPE_CLOSED';
+                    return true;
+                }
+            }
+            const clickListener = candidate.framework === 'vue2'
+                ? candidate.component.$listeners?.click
+                : candidate.component.vnode?.props?.onClick;
+            const listeners = Array.isArray(clickListener) ? clickListener : [clickListener];
+            for (const listener of listeners) {
+                if (typeof listener !== 'function') continue;
+                result.invoked = true;
+                result.componentName ??= candidate.name;
+                result.method = `vue:${candidate.name ?? 'anonymous'}.$listeners.click`;
+                const pending = listener.call(candidate.component, createCloseClickEvent());
+                pending?.catch?.(() => undefined);
                 if (await waitForClose()) {
                     result.closed = true;
                     result.reason = 'PHOTO_SWIPE_CLOSED';
