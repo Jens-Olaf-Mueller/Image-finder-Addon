@@ -1,5 +1,5 @@
-import { MediaType } from './MediaType.js';
-import { getAddonVersionName } from '../addon-info.js';
+import { MediaType } from '../../shared/classes/MediaType.js';
+import { getAddonVersionName } from '../../shared/addon-info.js';
 
 const PREVIEW_MODES = new Set(['idle', 'image', 'video', 'audio']);
 const IDLE_MEDIA_ICONS = Object.freeze({

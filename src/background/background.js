@@ -24,11 +24,11 @@ const DEBUG_LOG_SETTINGS_BY_SOURCE = Object.freeze({
 });
 
 if (typeof importScripts === 'function') {
-    importScripts('debug-logger.js');
-    importScripts('isolated-deepscan-host.js');
+    importScripts('../shared/debug-logger.js');
+    importScripts('../shared/isolated-deepscan-host.js');
     // ✴️ NEW 2026-10-15: Loads the persistent download service into the classic service worker.
     importScripts('classes/DownLoader.js');
-    if (typeof JSZip === 'undefined') importScripts('../vendor/jszip.min.js');
+    if (typeof JSZip === 'undefined') importScripts('../../vendor/jszip.min.js');
 }
 
 const backgroundObjectUrlsByDownloadId = new Map();
@@ -1543,7 +1543,7 @@ async function probeHiddenDeepScanHost(job) {
 async function injectHiddenDeepScanHost(job) {
     await chrome.scripting.executeScript({
         target: {tabId: job.tabId, frameIds: [job.hostFrameId]},
-        files: ['src/debug-logger.js', 'src/deepscan-frame.js'],
+        files: ['src/shared/debug-logger.js', 'src/scan/deepscan-frame.js'],
         injectImmediately: true
     });
 }

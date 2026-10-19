@@ -91,7 +91,7 @@ export class SettingsPanel {
             throw new Error('Settings form container not found');
         }
 
-        const response = await fetch(new URL('../../ui/settings-form.html', import.meta.url));
+        const response = await fetch(new URL('../../../ui/settings-form.html', import.meta.url));
         if (!response.ok) {
             throw new Error('Cannot load settings form');
         }

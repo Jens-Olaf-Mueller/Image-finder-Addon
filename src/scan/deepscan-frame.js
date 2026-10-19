@@ -273,7 +273,7 @@
         scan.started = true;
 
         try {
-            const {runHiddenFrameDeepScan} = await import(chrome.runtime.getURL('src/content.js'));
+            const {runHiddenFrameDeepScan} = await import(chrome.runtime.getURL('src/scan/content.js'));
             if (!(await waitForHiddenFrameHydration(scan))) {
                 completeHiddenDeepScanFrame(scan, 'cancelled');
                 return;
@@ -615,7 +615,7 @@
         sendReady(scan);
 
         try {
-            const {runIsolatedDeepScan} = await import(chrome.runtime.getURL('src/content.js'));
+            const {runIsolatedDeepScan} = await import(chrome.runtime.getURL('src/scan/content.js'));
             const result = await runIsolatedDeepScan({
                 signal: scan.controller.signal,
                 onBatch: async (candidates) => {

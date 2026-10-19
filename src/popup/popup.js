@@ -1,7 +1,7 @@
 
 import { MediaController } from './classes/MediaController.js';
-import { SettingsPanel } from './classes/SettingsPanel.js';
-import './debug-logger.js';
+import { SettingsPanel } from '../settings/classes/SettingsPanel.js';
+import '../shared/debug-logger.js';
 
 const popupDebugLogger = globalThis.ImageFinderDebugLogger?.createLogger({
     source: 'popup',

@@ -1,9 +1,9 @@
 {
     "manifest_version": 3,
     "name": "Image Finder",
-    "version": "0.1.45",
-    "version_name": "Beta 0.1.45",
-    "description": "Find images on the current website.",
+    "version": "0.2.0",
+    "version_name": "Beta 0.2.00",
+    "description": "Find media on the current website.",
     "icons": {
         "16": "assets/icons/icon16.png",
         "32": "assets/icons/icon32.png",
@@ -23,7 +23,7 @@
         "declarativeNetRequestWithHostAccess"
     ],
     "background": {
-        "service_worker": "src/background.js"
+        "service_worker": "src/background/background.js"
     },
     "content_scripts": [
         {
@@ -32,8 +32,8 @@
                 "https://*/*"
             ],
             "js": [
-                "src/debug-logger.js",
-                "src/deepscan-frame.js"
+                "src/shared/debug-logger.js",
+                "src/scan/deepscan-frame.js"
             ],
             "all_frames": true,
             "run_at": "document_start"
@@ -42,13 +42,13 @@
     "web_accessible_resources": [
         {
             "resources": [
-                "src/content.js",
-                "src/classes/CarouselScanner.js",
-                "src/classes/DeepScanController.js",
-                "src/classes/DeepScanDOMState.js",
-                "src/classes/DocumentTraverser.js",
-                "src/classes/PhotoSwipeScanner.js",
-                "src/classes/ContainerAnalyser.js"
+                "src/scan/content.js",
+                "src/scan/classes/CarouselScanner.js",
+                "src/scan/classes/DeepScanController.js",
+                "src/scan/classes/DeepScanDOMState.js",
+                "src/scan/classes/DocumentTraverser.js",
+                "src/scan/classes/PhotoSwipeScanner.js",
+                "src/scan/classes/ContainerAnalyser.js"
             ],
             "matches": [
                 "http://*/*",

@@ -1,4 +1,4 @@
-import { Settings } from './Settings.js';
+import { Settings } from '../../settings/classes/Settings.js';
 import ImageScanner from './ImageScanner.js';
 import MediaProvider, { MEDIA_CLUSTER_SIZE } from './MediaProvider.js';
 import AnalyzerClient from './AnalyzerClient.js';

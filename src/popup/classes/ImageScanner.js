@@ -1,4 +1,4 @@
-import { scanImages } from '../content.js';
+import { scanImages } from '../../scan/content.js';
 import MediaPipeline from './MediaPipeline.js';
 
 const ISOLATED_DEEP_SCAN_TARGET = 'image-finder-isolated-deepscan';

@@ -1231,7 +1231,7 @@
         const runDeepScanCarouselFixture = async () => {
             if (!new URLSearchParams(location.search).has('runDeepScanCarousel')) return;
 
-            const {scanImages, scanPhotoSwipeImages} = await import('../src/content.js');
+            const {scanImages, scanPhotoSwipeImages} = await import('../src/scan/content.js');
             const photoSwipePerformance = [];
             const photoSwipePerformanceState = {
                 callIndex: 0,

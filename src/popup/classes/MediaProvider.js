@@ -1,4 +1,4 @@
-import { MediaType } from './MediaType.js';
+import { MediaType } from '../../shared/classes/MediaType.js';
 
 const DEFAULT_BYTES_PER_PIXEL = 0.1;
 const UTF8_ENCODER = new TextEncoder();

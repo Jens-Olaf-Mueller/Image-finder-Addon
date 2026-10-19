@@ -1,4 +1,4 @@
-import BlurScanner from '../src/classes/BlurScanner.js';
+import BlurScanner from '../src/offscreen/classes/BlurScanner.js';
 
 const IMAGE_IDS = [
     'imgTest1Sharp',
