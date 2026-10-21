@@ -1,8 +1,8 @@
 {
     "manifest_version": 3,
     "name": "Image Finder",
-    "version": "0.2.0",
-    "version_name": "Beta 0.2.00",
+    "version": "0.2.1",
+    "version_name": "Beta 0.2.1",
     "description": "Find media on the current website.",
     "icons": {
         "16": "assets/icons/icon16.png",
@@ -48,7 +48,8 @@
                 "src/scan/classes/DeepScanDOMState.js",
                 "src/scan/classes/DocumentTraverser.js",
                 "src/scan/classes/PhotoSwipeScanner.js",
-                "src/scan/classes/ContainerAnalyser.js"
+                "src/scan/classes/ContainerAnalyser.js",
+                "src/scan/sites/classes/OnlyFansScanner.js"
             ],
             "matches": [
                 "http://*/*",

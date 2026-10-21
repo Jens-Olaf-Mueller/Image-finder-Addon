@@ -6,15 +6,18 @@
 export default class PhotoSwipeScanner {
     #processedTargets;
     #processedTargetSources;
+    #fallbackTraversedPhotoSwipes;
 
     constructor({processedTargets = new WeakSet(), processedTargetSources = new Set()} = {}) {
         this.#processedTargets = processedTargets;
         this.#processedTargetSources = processedTargetSources;
+        this.#fallbackTraversedPhotoSwipes = new WeakSet();
     }
 
     reset() {
         this.#processedTargets = new WeakSet();
         this.#processedTargetSources = new Set();
+        this.#fallbackTraversedPhotoSwipes = new WeakSet();
     }
 
     getCarouselContext() {
@@ -53,6 +56,7 @@ export default class PhotoSwipeScanner {
         getCandidateCount,
         traverseCarousel,
         skipDirectZoom = false,
+        fallbackToOpenCarouselOnCloseFailure = false,
         scanRoots = [scanDocument],
         registerDirectTarget = null
     } = {}) {
@@ -313,12 +317,13 @@ export default class PhotoSwipeScanner {
                     backward: new Set()
                 }
             };
+            const visitedStateCount = () => carousel.visitedStates.size;
             const initialState = await waitFor(
                 () => getCarouselState(photoSwipe, carousel),
                 3000,
                 'direct-carousel-initial-state'
             );
-            if (!initialState || isAborted()) return;
+            if (!initialState || isAborted()) return visitedStateCount();
 
             const initialStateLabel = getCarouselStateLabel(carousel, initialState.key);
             reportCarousel(
@@ -328,7 +333,7 @@ export default class PhotoSwipeScanner {
                 'state=' + initialStateLabel
             );
             await processCarouselState(photoSwipe, carousel, initialState, 'initial');
-            if (isAborted()) return;
+            if (isAborted()) return visitedStateCount();
 
             const traverseDirection = async (direction) => {
                 let successfulTransitions = 0;
@@ -425,10 +430,10 @@ export default class PhotoSwipeScanner {
             };
 
             const forward = await traverseDirection('forward');
-            if (forward.kind === 'aborted' || forward.kind === 'cycle') return;
+            if (forward.kind === 'aborted' || forward.kind === 'cycle') return visitedStateCount();
 
             const backward = await traverseDirection('backward');
-            if (backward.kind !== 'edge' || isAborted()) return;
+            if (backward.kind !== 'edge' || isAborted()) return visitedStateCount();
 
             carousel.type = 'finite';
             reportCarousel(
@@ -439,6 +444,7 @@ export default class PhotoSwipeScanner {
                 'backward=' + backward.reason,
                 'states=' + carousel.visitedStates.size
             );
+            return visitedStateCount();
         };
 
         const directDiscoveryStartedAt = getPhaseStartedAt();
@@ -494,6 +500,26 @@ export default class PhotoSwipeScanner {
                 continue;
             }
             if (collectPerformance) performanceDetail.direct.openModalChecks += 1;
+            if (findOpenPhotoSwipe()) {
+                if (fallbackToOpenCarouselOnCloseFailure) {
+                    const recovered = await closePhotoSwipe('direct-photo-swipe-recovery');
+                    if (recovered && !findOpenPhotoSwipe()) {
+                        // The previously stuck modal recovered. Process this target normally.
+                    } else {
+                        // A PhotoSwipe overlay is global to the page. Do not keep skipping every
+                        // following target in this collection; the OF swiper will advance and the
+                        // next state gets one bounded recovery attempt of its own.
+                        recordPhase('candidateClassificationMs', candidateStartedAt);
+                        finishTargetIteration();
+                        break;
+                    }
+                } else {
+                    if (collectPerformance) performanceDetail.direct.openModalSkips += 1;
+                    recordPhase('candidateClassificationMs', candidateStartedAt);
+                    finishTargetIteration();
+                    continue;
+                }
+            }
             if (findOpenPhotoSwipe()) {
                 if (collectPerformance) performanceDetail.direct.openModalSkips += 1;
                 recordPhase('candidateClassificationMs', candidateStartedAt);
@@ -613,9 +639,32 @@ export default class PhotoSwipeScanner {
                 // One page-owned PhotoSwipe target must not stop the remaining DeepScan.
             } finally {
                 try {
-                    const closed = await closePhotoSwipe('direct-photo-swipe');
+                    let closed = await closePhotoSwipe('direct-photo-swipe');
                     if (!closed && findOpenPhotoSwipe()) {
-                        await closePhotoSwipe('direct-photo-swipe');
+                        closed = await closePhotoSwipe('direct-photo-swipe');
+                    }
+                    const openPhotoSwipe = findOpenPhotoSwipe();
+                    if (!closed && fallbackToOpenCarouselOnCloseFailure && openPhotoSwipe &&
+                        !this.#fallbackTraversedPhotoSwipes.has(openPhotoSwipe)) {
+                        // OF's virtual swiper has already exposed the current slide. If its
+                        // PhotoSwipe refuses to close, use that still-open PhotoSwipe once to
+                        // collect the remaining slides instead of losing the whole carousel.
+                        this.#fallbackTraversedPhotoSwipes.add(openPhotoSwipe);
+                        if (collectPerformance) performanceDetail.direct.closeFallbacks += 1;
+                        const fallbackCarouselStates = await traversePhotoSwipeCarousel(openPhotoSwipe);
+                        if (collectPerformance) {
+                            performanceDetail.direct.fallbackCarouselStates +=
+                                fallbackCarouselStates;
+                        }
+                        if (!isAborted()) {
+                            closed = await closePhotoSwipe('direct-photo-swipe-fallback');
+                        }
+                        if (collectPerformance) {
+                            const stillOpen = findOpenPhotoSwipe() !== null;
+                            performanceDetail.direct[stillOpen
+                                ? 'fallbackStillOpen'
+                                : 'fallbackClosed'] += 1;
+                        }
                     }
                 } finally {
                     temporaryStyle?.remove();

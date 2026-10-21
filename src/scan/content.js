@@ -4,6 +4,7 @@ import DeepScanController from './classes/DeepScanController.js';
 import DeepScanDOMState from './classes/DeepScanDOMState.js';
 import DocumentTraverser from './classes/DocumentTraverser.js';
 import PhotoSwipeScanner from './classes/PhotoSwipeScanner.js';
+import OnlyFansScanner from './sites/classes/OnlyFansScanner.js';
 
 export async function scanImages(
     includeAllImageSources = false,
@@ -747,6 +748,7 @@ export async function scanPhotoSwipeImages({
     traverseCarousel = false,
     skipGenericCarousel = false,
     skipDirectZoom = false,
+    fallbackToOpenCarouselOnCloseFailure = false,
     requestMainWorldPhotoSwipeClose = null,
     scanRoots = [document],
     dirtyGenericRoots = new Set(),
@@ -829,6 +831,10 @@ export async function scanPhotoSwipeImages({
             zoomCandidateCount: 0,
             zoomMaxWidth: 0,
             zoomMaxHeight: 0,
+            closeFallbacks: 0,
+            fallbackCarouselStates: 0,
+            fallbackClosed: 0,
+            fallbackStillOpen: 0,
             resultCount: 0
         },
         waits: {
@@ -1482,6 +1488,7 @@ export async function scanPhotoSwipeImages({
         getCandidateCount: () => candidates.length,
         traverseCarousel,
         skipDirectZoom,
+        fallbackToOpenCarouselOnCloseFailure,
         scanRoots,
         registerDirectTarget
     });
@@ -2174,163 +2181,7 @@ export async function runHiddenFrameDeepScan({
     const edgeRangeWaits = [];
     const settleWaits = [];
     const passPerformanceRecords = [];
-    // ✴️ NEW 2026-10-15: Records the known OnlyFans chat root without changing its eligibility.
-    const ONLYFANS_CHAT_CONTAINER_SELECTOR = '.b-chats__scrollbar.b-chat__messages';
-    const ONLYFANS_TOP_LOADER_SELECTOR = '.infinite-loading-container.b-chat__loading-top';
-    const ONLYFANS_CHAT_MESSAGE_SELECTOR = '[at-attr="chat_message"], .b-chat__message:not(.b-chat__message__system)';
-    const ONLYFANS_VIRTUAL_SWIPER_SELECTOR = '.swiper.b-slideshow.swiper-virtual';
-    const ONLYFANS_MAIN_WORLD_TARGET = 'image-finder-onlyfans-main-world';
-    const hasOnlyFansChat = () => window.location.hostname.endsWith('onlyfans.com') &&
-        document.querySelector(ONLYFANS_CHAT_CONTAINER_SELECTOR) !== null;
-    const onlyFansCarouselPhotoSwipe = {
-        targetCount: 0,
-        processedTargetsSkipped: 0,
-        sourceDuplicatesSkipped: 0,
-        invisibleTargetsSkipped: 0,
-        openModalChecks: 0,
-        openModalSkips: 0,
-        openSuccesses: 0,
-        openTimeouts: 0,
-        readySlides: 0,
-        readySlideTimeouts: 0,
-        initialCandidateCount: 0,
-        initialMaxWidth: 0,
-        initialMaxHeight: 0,
-        zoomAttempts: 0,
-        zoomClickFailures: 0,
-        zoomStateChanges: 0,
-        zoomTimeouts: 0,
-        resolutionUpgrades: 0,
-        zoomCandidateCount: 0,
-        zoomMaxWidth: 0,
-        zoomMaxHeight: 0
-    };
-    const onlyFansChatContainer = {
-        selector: ONLYFANS_CHAT_CONTAINER_SELECTOR,
-        detected: false,
-        candidatePasses: 0,
-        plan: 'not-evaluated',
-        planHistory: '',
-        priority: null,
-        classification: null,
-        suggestedAction: null,
-        isScrollable: null,
-        isStructural: null,
-        overflowY: null,
-        scrollTop: null,
-        scrollHeight: null,
-        clientHeight: null,
-        messageCount: null,
-        mediaLocatorCount: null,
-        carouselTraversal: {
-            swipersFound: 0,
-            swipersTraversed: 0,
-            slideStatesVisited: 0,
-            edgesReached: 0,
-            mainWorldAttempts: 0,
-            mainWorldInvoked: 0,
-            stateChanges: 0,
-            lastMethod: null,
-            lastResult: null,
-            lastError: null,
-            photoSwipeTargets: 0,
-            photoSwipeSkipped: null,
-            photoSwipeModal: null,
-            photoSwipeReady: null,
-            photoSwipeInitial: null,
-            photoSwipeZoom: null,
-            photoSwipeCloseFailure: null,
-            photoSwipeMainWorldClose: null
-        },
-        scrollEvents: 0,
-        upScrollEvents: 0,
-        downScrollEvents: 0,
-        topScrollEvents: 0,
-        chatMessageMutationRecords: 0,
-        chatMessageNodesAdded: 0,
-        chatMessageNodesAddedAtTop: 0,
-        chatMessageNodesRemoved: 0,
-        // ✏️ EDIT 2026-10-16: Place mainWorld* fields first so 24-key log truncation never drops them.
-        loaderTrigger: {
-            mainWorldAttempts: 0,
-            mainWorldInvoked: false,
-            mainWorldMethod: null,
-            mainWorldResult: null,
-            mainWorldError: null,
-            mainWorldNetworkRequestTriggered: null,
-            mainWorldComponentName: null,
-            mainWorldReceiverScope: null,
-            mainWorldFramework: null,
-            mainWorldComponentHostDepth: null,
-            mainWorldComponentParentDepth: null,
-            mainWorldCandidateCount: 0,
-            mainWorldIsLoadingBefore: null,
-            mainWorldIsLoadingAfter: null,
-            mainWorldIsComplete: null,
-            trustedScrollEvents: 0,
-            untrustedScrollEvents: 0,
-            trustedTopScrollEvents: 0,
-            lastScrollEventTrusted: null
-        },
-        topLoader: {
-            selector: ONLYFANS_TOP_LOADER_SELECTOR,
-            detected: false,
-            present: false,
-            observerState: 'not-started',
-            height: null,
-            top: null,
-            bottom: null,
-            visible: null,
-            intersectionEvents: 0,
-            intersectingEvents: 0,
-            lastIsIntersecting: null,
-            lastIntersectionRatio: null,
-            isIntersectingAtTop: null,
-            intersectionRatioAtTop: null,
-            upStartHeight: null,
-            upStartTop: null,
-            upStartBottom: null,
-            upStartVisible: null,
-            upEndHeight: null,
-            upEndTop: null,
-            upEndBottom: null,
-            upEndVisible: null,
-            resourceObserverState: 'not-started',
-            resourceRequests: 0,
-            resourceRequestsAtTop: 0,
-            fetchRequests: 0,
-            fetchRequestsAtTop: 0,
-            xmlHttpRequests: 0,
-            xmlHttpRequestsAtTop: 0,
-            lastResourceInitiator: null,
-            lastResourcePath: null,
-            lastResourceAtTop: null
-        },
-        upRuns: 0,
-        upStartPass: null,
-        upStartScrollTop: null,
-        upStartMessages: null,
-        upEndScrollTop: null,
-        upEndMessages: null,
-        upResult: null,
-        downRuns: 0,
-        downStartPass: null,
-        downStartScrollTop: null,
-        downStartMessages: null,
-        downEndScrollTop: null,
-        downEndMessages: null,
-        downResult: null
-    };
-    let observedOnlyFansChatContainer = null;
-    let onlyFansChatContainerObserver = null;
-    let onlyFansChatContainerDirection = null;
-    let observedOnlyFansTopLoader = null;
-    let onlyFansTopLoaderObserver = null;
-    let onlyFansTopLoaderResourceObserver = null;
-    let onlyFansChatContainerAtTop = false;
-    const onlyFansTopLoader = onlyFansChatContainer.topLoader;
-    const onlyFansLoaderTrigger = onlyFansChatContainer.loaderTrigger;
-    const onlyFansCarouselTraversal = onlyFansChatContainer.carouselTraversal;
+    let onlyFansScanner = null;
     const PHOTO_SWIPE_SLOW_CALL_THRESHOLD_MS = 250;
     const MAX_PHOTO_SWIPE_SLOW_CALLS = 12;
     const photoSwipeSlowCalls = [];
@@ -2493,11 +2344,7 @@ export async function runHiddenFrameDeepScan({
             performanceMetrics.directPhotoSwipeMs
         );
         photoSwipeDetail.direct.discoveryMs += detail.direct.discoveryMs;
-        if (phase === 'of-virtual-swiper-slide') {
-            Object.keys(onlyFansCarouselPhotoSwipe).forEach((name) => {
-                onlyFansCarouselPhotoSwipe[name] += detail.direct[name] ?? 0;
-            });
-        }
+        onlyFansScanner?.recordPhotoSwipePerformance(detail, phase);
         photoSwipeDetail.generic.calls += performanceMetrics.genericCarouselCalls;
         photoSwipeDetail.generic.totalMs += performanceMetrics.genericCarouselMs;
         photoSwipeDetail.generic.maxCallMs = Math.max(
@@ -2579,43 +2426,9 @@ export async function runHiddenFrameDeepScan({
         });
     };
     const createPerformanceSummary = (status) => {
-        const carouselTraversal = onlyFansChatContainer.carouselTraversal;
-        carouselTraversal.photoSwipeTargets = onlyFansCarouselPhotoSwipe.targetCount;
-        carouselTraversal.photoSwipeSkipped = [
-            `processed=${onlyFansCarouselPhotoSwipe.processedTargetsSkipped}`,
-            `source=${onlyFansCarouselPhotoSwipe.sourceDuplicatesSkipped}`,
-            `invisible=${onlyFansCarouselPhotoSwipe.invisibleTargetsSkipped}`,
-            `open=${onlyFansCarouselPhotoSwipe.openModalSkips}`
-        ].join(', ');
-        carouselTraversal.photoSwipeModal = [
-            `checks=${onlyFansCarouselPhotoSwipe.openModalChecks}`,
-            `opened=${onlyFansCarouselPhotoSwipe.openSuccesses}`,
-            `timeout=${onlyFansCarouselPhotoSwipe.openTimeouts}`
-        ].join(', ');
-        carouselTraversal.photoSwipeReady = [
-            `ready=${onlyFansCarouselPhotoSwipe.readySlides}`,
-            `timeout=${onlyFansCarouselPhotoSwipe.readySlideTimeouts}`
-        ].join(', ');
-        carouselTraversal.photoSwipeInitial = [
-            `candidates=${onlyFansCarouselPhotoSwipe.initialCandidateCount}`,
-            `max=${onlyFansCarouselPhotoSwipe.initialMaxWidth}x` +
-                onlyFansCarouselPhotoSwipe.initialMaxHeight
-        ].join(', ');
-        carouselTraversal.photoSwipeZoom = [
-            `attempts=${onlyFansCarouselPhotoSwipe.zoomAttempts}`,
-            `clickFailures=${onlyFansCarouselPhotoSwipe.zoomClickFailures}`,
-            `changed=${onlyFansCarouselPhotoSwipe.zoomStateChanges}`,
-            `timeout=${onlyFansCarouselPhotoSwipe.zoomTimeouts}`,
-            `upgrades=${onlyFansCarouselPhotoSwipe.resolutionUpgrades}`,
-            `candidates=${onlyFansCarouselPhotoSwipe.zoomCandidateCount}`,
-            `max=${onlyFansCarouselPhotoSwipe.zoomMaxWidth}x` +
-                onlyFansCarouselPhotoSwipe.zoomMaxHeight
-        ].join(', ');
-        carouselTraversal.photoSwipeCloseFailure =
-            photoSwipePerformanceState.photoSwipeCloseFailureDiagnostic;
-        carouselTraversal.photoSwipeMainWorldClose =
-            photoSwipePerformanceState.photoSwipeMainWorldCloseDiagnostic;
-        stopOnlyFansChatContainerDiagnostics();
+        const onlyFansChatContainer = onlyFansScanner?.finalizeDiagnostics(
+            photoSwipePerformanceState
+        );
         const createEdgeRangeGrowthSummary = () => ({
             totalMs: 0,
             waits: 0,
@@ -3226,6 +3039,7 @@ export async function runHiddenFrameDeepScan({
             ...collectionScope.roots,
             ...collectionScope.dirtyGenericRoots
         ]));
+        const onlyFansPhotoSwipeOptions = onlyFansScanner?.getPhotoSwipeOptions() ?? {};
         const photoSwipeCandidates = await scanPhotoSwipeImages({
             carouselScanner,
             photoSwipeScanner,
@@ -3249,14 +3063,12 @@ export async function runHiddenFrameDeepScan({
                 recordCollectionMetric(metrics, 'photoSwipeOtherMs', performanceMetrics.otherMs);
             },
             traverseCarousel,
-            // ✏️ EDIT 2026-10-18: OF's virtual swiper has a dedicated traversal path.
-            // The generic scanner can open a page-owned PhotoSwipe it cannot reliably close,
-            // which then blocks all following direct OF targets.
-            skipGenericCarousel: hasOnlyFansChat(),
+            skipGenericCarousel: onlyFansPhotoSwipeOptions.skipGenericCarousel === true,
             skipDirectZoom,
-            requestMainWorldPhotoSwipeClose: hasOnlyFansChat()
-                ? requestOnlyFansPhotoSwipeClose
-                : null,
+            fallbackToOpenCarouselOnCloseFailure:
+                onlyFansPhotoSwipeOptions.fallbackToOpenCarouselOnCloseFailure === true,
+            requestMainWorldPhotoSwipeClose:
+                onlyFansPhotoSwipeOptions.requestMainWorldPhotoSwipeClose ?? null,
             scanRoots: photoSwipeRoots,
             dirtyGenericRoots: collectionScope.dirtyGenericRoots,
             registerGenericRoot: (root) => domState.registerGenericRoot(root),
@@ -3363,7 +3175,7 @@ export async function runHiddenFrameDeepScan({
     const isRelevantScrollableContainer = (element) => {
         if (!element || element === document.documentElement || element === document.body) return false;
 
-        return matchesOnlyFansChatContainer(element) ||
+        return onlyFansScanner?.isRelevantScrollableContainer(element) === true ||
             ContainerAnalyser.getScrollInfo(element).verticallyScrollable;
     };
     const getRelevantContainerCandidates = () => {
@@ -3406,281 +3218,16 @@ export async function runHiddenFrameDeepScan({
             targets: targets.length
         };
     };
-    // ✴️ NEW 2026-10-15: Captures only the established OF chat root for the temporary diagnosis.
-    const getOnlyFansChatContainerMetrics = (container) => {
-        const scrollInfo = ContainerAnalyser.getScrollInfo(container);
-        const {geometry} = scrollInfo;
-
-        return {
-            scrollTop: geometry.scrollTop,
-            scrollHeight: geometry.scrollHeight,
-            clientHeight: geometry.clientHeight,
-            overflowY: scrollInfo.overflowY,
-            messageCount: container.querySelectorAll('[at-attr="chat_message"]').length,
-            mediaLocatorCount: container.querySelectorAll('[at-attr="media_locator"]').length
-        };
-    };
-    // ✏️ EDIT 2026-10-15: Separates the OF chat match from diagnostics so loading works normally.
-    const matchesOnlyFansChatContainer = (container) => window.location.hostname.endsWith('onlyfans.com') &&
-        container?.matches?.(ONLYFANS_CHAT_CONTAINER_SELECTOR) === true;
-    const isOnlyFansChatContainer = (container) => collectContainerDiagnostics &&
-        matchesOnlyFansChatContainer(container);
-    const updateOnlyFansChatContainerState = (container) => {
-        if (!isOnlyFansChatContainer(container)) return;
-
-        const metrics = getOnlyFansChatContainerMetrics(container);
-        onlyFansChatContainer.detected = true;
-        onlyFansChatContainer.overflowY = metrics.overflowY;
-        onlyFansChatContainer.scrollTop = metrics.scrollTop;
-        onlyFansChatContainer.scrollHeight = metrics.scrollHeight;
-        onlyFansChatContainer.clientHeight = metrics.clientHeight;
-        onlyFansChatContainer.messageCount = metrics.messageCount;
-        onlyFansChatContainer.mediaLocatorCount = metrics.mediaLocatorCount;
-    };
-    // ✴️ NEW 2026-10-15: Measures the Vue InfiniteLoading sentinel inside the verified chat root.
-    const getOnlyFansTopLoaderGeometry = (container, loader) => {
-        const containerRect = container.getBoundingClientRect();
-        const loaderRect = loader.getBoundingClientRect();
-        const top = Math.round(loaderRect.top - containerRect.top);
-        const bottom = Math.round(loaderRect.bottom - containerRect.top);
-
-        return {
-            height: Math.round(loaderRect.height),
-            top,
-            bottom,
-            visible: loaderRect.bottom > containerRect.top && loaderRect.top < containerRect.bottom
-        };
-    };
-    const recordOnlyFansTopLoaderGeometry = (container, loader, direction = null, phase = null) => {
-        const geometry = getOnlyFansTopLoaderGeometry(container, loader);
-        onlyFansTopLoader.detected = true;
-        onlyFansTopLoader.present = true;
-        onlyFansTopLoader.height = geometry.height;
-        onlyFansTopLoader.top = geometry.top;
-        onlyFansTopLoader.bottom = geometry.bottom;
-        onlyFansTopLoader.visible = geometry.visible;
-        if (direction !== 'up' || !['start', 'end'].includes(phase)) return;
-
-        const prefix = `up${phase === 'start' ? 'Start' : 'End'}`;
-        onlyFansTopLoader[`${prefix}Height`] = geometry.height;
-        onlyFansTopLoader[`${prefix}Top`] = geometry.top;
-        onlyFansTopLoader[`${prefix}Bottom`] = geometry.bottom;
-        onlyFansTopLoader[`${prefix}Visible`] = geometry.visible;
-    };
-    const observeOnlyFansTopLoader = (container, loader) => {
-        if (observedOnlyFansTopLoader === loader) return;
-
-        onlyFansTopLoaderObserver?.disconnect();
-        onlyFansTopLoaderObserver = null;
-        observedOnlyFansTopLoader = loader;
-        if (typeof IntersectionObserver !== 'function') {
-            onlyFansTopLoader.observerState = 'unavailable';
-            return;
-        }
-
-        onlyFansTopLoader.observerState = 'active';
-        onlyFansTopLoaderObserver = new IntersectionObserver((entries) => {
-            entries.forEach((entry) => {
-                if (entry.target !== observedOnlyFansTopLoader) return;
-
-                onlyFansTopLoader.intersectionEvents += 1;
-                onlyFansTopLoader.lastIsIntersecting = entry.isIntersecting;
-                onlyFansTopLoader.lastIntersectionRatio = entry.intersectionRatio;
-                if (entry.isIntersecting) onlyFansTopLoader.intersectingEvents += 1;
-                if (container.scrollTop <= 4) {
-                    onlyFansTopLoader.isIntersectingAtTop = entry.isIntersecting;
-                    onlyFansTopLoader.intersectionRatioAtTop = entry.intersectionRatio;
-                }
-            });
-        }, {root: container, threshold: [0, 0.01]});
-        onlyFansTopLoaderObserver.observe(loader);
-    };
-    // ✴️ NEW 2026-10-15: Observes loader-triggered fetch/XHR resources without touching requests.
-    const observeOnlyFansTopLoaderResources = () => {
-        if (onlyFansTopLoaderResourceObserver) return;
-        if (typeof PerformanceObserver !== 'function') {
-            onlyFansTopLoader.resourceObserverState = 'unavailable';
-            return;
-        }
-
-        try {
-            onlyFansTopLoader.resourceObserverState = 'active';
-            onlyFansTopLoaderResourceObserver = new PerformanceObserver((list) => {
-                list.getEntries().forEach((entry) => {
-                    const initiator = String(entry.initiatorType ?? '').toLowerCase();
-                    if (!['fetch', 'xmlhttprequest'].includes(initiator)) return;
-
-                    let path = null;
-                    try {
-                        path = new URL(entry.name).pathname;
-                    } catch {
-                        path = String(entry.name ?? '');
-                    }
-                    onlyFansTopLoader.resourceRequests += 1;
-                    onlyFansTopLoader.lastResourceInitiator = initiator;
-                    onlyFansTopLoader.lastResourcePath = path;
-                    onlyFansTopLoader.lastResourceAtTop = onlyFansChatContainerAtTop;
-                    if (initiator === 'fetch') onlyFansTopLoader.fetchRequests += 1;
-                    if (initiator === 'xmlhttprequest') onlyFansTopLoader.xmlHttpRequests += 1;
-                    if (!onlyFansChatContainerAtTop) return;
-
-                    onlyFansTopLoader.resourceRequestsAtTop += 1;
-                    if (initiator === 'fetch') onlyFansTopLoader.fetchRequestsAtTop += 1;
-                    if (initiator === 'xmlhttprequest') {
-                        onlyFansTopLoader.xmlHttpRequestsAtTop += 1;
-                    }
-                });
-            });
-            onlyFansTopLoaderResourceObserver.observe({type: 'resource', buffered: false});
-        } catch {
-            onlyFansTopLoaderResourceObserver?.disconnect();
-            onlyFansTopLoaderResourceObserver = null;
-            onlyFansTopLoader.resourceObserverState = 'unavailable';
-        }
-    };
-    const updateOnlyFansTopLoaderState = (container, direction = null, phase = null) => {
-        if (!isOnlyFansChatContainer(container)) return;
-
-        const loader = container.querySelector(ONLYFANS_TOP_LOADER_SELECTOR);
-        if (!loader) {
-            onlyFansTopLoader.present = false;
-            return;
-        }
-
-        observeOnlyFansTopLoader(container, loader);
-        observeOnlyFansTopLoaderResources();
-        recordOnlyFansTopLoaderGeometry(container, loader, direction, phase);
-    };
-    // ✴️ NEW 2026-10-15: Differentiates an ineffective scroll event from a loader that ignores it.
-    const countOnlyFansChatMessageNodes = (nodes) => Array.from(nodes).reduce((count, node) => {
-        if (node.nodeType !== Node.ELEMENT_NODE) return count;
-
-        const elm = /** @type {Element} */ (node);
-        return count + Number(elm.matches('[at-attr="chat_message"]')) +
-            elm.querySelectorAll('[at-attr="chat_message"]').length;
-    }, 0);
-    const onOnlyFansChatContainerScroll = (e) => {
-        const container = observedOnlyFansChatContainer;
-        if (!container?.isConnected) return;
-
-        onlyFansChatContainer.scrollEvents += 1;
-        onlyFansLoaderTrigger.lastScrollEventTrusted = e.isTrusted;
-        if (e.isTrusted) {
-            onlyFansLoaderTrigger.trustedScrollEvents += 1;
-        } else {
-            onlyFansLoaderTrigger.untrustedScrollEvents += 1;
-        }
-        if (onlyFansChatContainerDirection === 'up') {
-            onlyFansChatContainer.upScrollEvents += 1;
-        } else if (onlyFansChatContainerDirection === 'down') {
-            onlyFansChatContainer.downScrollEvents += 1;
-        }
-        onlyFansChatContainerAtTop = container.scrollTop <= 4;
-        if (onlyFansChatContainerAtTop) {
-            onlyFansChatContainer.topScrollEvents += 1;
-            if (e.isTrusted) onlyFansLoaderTrigger.trustedTopScrollEvents += 1;
-        }
-    };
-    const observeOnlyFansChatContainer = (container) => {
-        if (!isOnlyFansChatContainer(container) || observedOnlyFansChatContainer === container) return;
-
-        stopOnlyFansChatContainerDiagnostics();
-        observedOnlyFansChatContainer = container;
-        container.addEventListener('scroll', onOnlyFansChatContainerScroll);
-        onlyFansChatContainerObserver = new MutationObserver((records) => {
-            records.forEach((record) => {
-                if (record.type !== 'childList') return;
-
-                const added = countOnlyFansChatMessageNodes(record.addedNodes);
-                const removed = countOnlyFansChatMessageNodes(record.removedNodes);
-                if (added === 0 && removed === 0) return;
-
-                onlyFansChatContainer.chatMessageMutationRecords += 1;
-                onlyFansChatContainer.chatMessageNodesAdded += added;
-                onlyFansChatContainer.chatMessageNodesRemoved += removed;
-                if (container.scrollTop <= 4) {
-                    onlyFansChatContainer.chatMessageNodesAddedAtTop += added;
-                }
-            });
+    if (window.location.hostname.endsWith('onlyfans.com')) {
+        onlyFansScanner = new OnlyFansScanner({
+            signal,
+            collectDiagnostics: collectContainerDiagnostics,
+            getCurrentPass: () => currentPassRecord,
+            markPageActivity: () => {
+                lastRelevantMutationAt = Date.now();
+            }
         });
-        onlyFansChatContainerObserver.observe(container, {childList: true, subtree: true});
-    };
-    const stopOnlyFansChatContainerDiagnostics = () => {
-        onlyFansChatContainerObserver?.disconnect();
-        onlyFansChatContainerObserver = null;
-        onlyFansTopLoaderObserver?.disconnect();
-        onlyFansTopLoaderObserver = null;
-        onlyFansTopLoaderResourceObserver?.disconnect();
-        onlyFansTopLoaderResourceObserver = null;
-        observedOnlyFansChatContainer?.removeEventListener('scroll', onOnlyFansChatContainerScroll);
-        observedOnlyFansChatContainer = null;
-        observedOnlyFansTopLoader = null;
-        onlyFansChatContainerDirection = null;
-        onlyFansChatContainerAtTop = false;
-    };
-    const recordOnlyFansChatContainerPlan = (candidates, plan) => {
-        if (!collectContainerDiagnostics) return;
-
-        const container = document.querySelector(ONLYFANS_CHAT_CONTAINER_SELECTOR);
-        if (!container) {
-            onlyFansChatContainer.plan = 'not-found';
-            return;
-        }
-
-        updateOnlyFansChatContainerState(container);
-        observeOnlyFansChatContainer(container);
-        updateOnlyFansTopLoaderState(container);
-        const candidate = candidates.find((item) => item.container === container);
-        if (!candidate) {
-            onlyFansChatContainer.plan = 'not-pending-candidate';
-            return;
-        }
-
-        const entry = plan?.entries.find((item) => item.container === container);
-        if (!entry) {
-            onlyFansChatContainer.plan = 'not-planned';
-            return;
-        }
-
-        let planName = 'analysis-only';
-        if (plan.skipped.includes(entry)) planName = 'skipped';
-        if (plan.scanEntries.includes(entry)) planName = 'scan';
-        const historyEntry = `${currentPassRecord?.pass ?? 0}:${planName}`;
-        onlyFansChatContainer.candidatePasses += 1;
-        onlyFansChatContainer.plan = planName;
-        onlyFansChatContainer.priority = entry.priority;
-        onlyFansChatContainer.classification = entry.analysis.classification;
-        onlyFansChatContainer.suggestedAction = entry.analysis.suggestedAction;
-        onlyFansChatContainer.isScrollable = entry.isScrollable;
-        onlyFansChatContainer.isStructural = entry.isStructural;
-        if (!onlyFansChatContainer.planHistory.endsWith(historyEntry)) {
-            onlyFansChatContainer.planHistory = [
-                onlyFansChatContainer.planHistory,
-                historyEntry
-            ].filter(Boolean).join(',');
-        }
-    };
-    const recordOnlyFansChatContainerDirection = (container, direction, phase, result = null) => {
-        if (!isOnlyFansChatContainer(container)) return;
-
-        const metrics = getOnlyFansChatContainerMetrics(container);
-        const prefix = `${direction}${phase === 'start' ? 'Start' : 'End'}`;
-        if (phase === 'start') {
-            onlyFansChatContainer[`${direction}Runs`] += 1;
-            onlyFansChatContainer[`${direction}StartPass`] = currentPassRecord?.pass ?? null;
-            onlyFansChatContainerDirection = direction;
-            onlyFansChatContainerAtTop = direction === 'up' && metrics.scrollTop <= 4;
-        }
-        onlyFansChatContainer[`${prefix}ScrollTop`] = metrics.scrollTop;
-        onlyFansChatContainer[`${prefix}Messages`] = metrics.messageCount;
-        updateOnlyFansTopLoaderState(container, direction, phase);
-        if (phase === 'end') {
-            onlyFansChatContainer[`${direction}Result`] = result;
-            if (direction === 'up') onlyFansChatContainerAtTop = metrics.scrollTop <= 4;
-            onlyFansChatContainerDirection = null;
-        }
-        updateOnlyFansChatContainerState(container);
-    };
+    }
     const containerAnalyses = new WeakMap();
     const isInsideLowPriorityStructureContainer = (element) => {
         let current = element;
@@ -3737,8 +3284,9 @@ export async function runHiddenFrameDeepScan({
             const isNewContainer = !knownScrollContainerIndices.has(container);
             getScrollContainerIndex(container);
             const analysis = getContainerAnalysis(container);
-            // ✏️ EDIT 2026-10-16: Prioritize OnlyFans chat containers so they are always scanned.
-            const priority = matchesOnlyFansChatContainer(container) ? 'high' : analysis.priority;
+            const priority = onlyFansScanner?.matchesChatContainer(container)
+                ? 'high'
+                : analysis.priority;
             return {
                 container,
                 analysis,
@@ -3782,306 +3330,14 @@ export async function runHiddenFrameDeepScan({
     const isAtContainerBottom = (metrics) => metrics.scrollTop + metrics.clientHeight >=
         metrics.scrollHeight - 4;
     const getScrollRange = (metrics) => Math.max(0, metrics.scrollHeight - metrics.clientHeight);
-    // The OF history loader is page-owned Vue code. At the top edge, call its observed handler
-    // in MAIN world; its public InfiniteLoading method is the bounded fallback.
-    const requestOnlyFansHistoryPage = async (container, {preferAttemptLoad = false} = {}) => {
-        if (!matchesOnlyFansChatContainer(container)) {
-            return null;
-        }
-
-        if (collectContainerDiagnostics) {
-            onlyFansLoaderTrigger.mainWorldAttempts += 1;
-            onlyFansLoaderTrigger.mainWorldError = null;
-        }
-        try {
-            const response = await chrome.runtime.sendMessage({
-                target: ONLYFANS_MAIN_WORLD_TARGET,
-                source: 'hidden-deepscan-frame',
-                action: 'trigger-history-loader',
-                preferAttemptLoad
-            });
-            if (response?.success !== true) {
-                if (collectContainerDiagnostics) {
-                    onlyFansLoaderTrigger.mainWorldResult = null;
-                    onlyFansLoaderTrigger.mainWorldError = response?.error ?? 'MAIN_WORLD_REQUEST_FAILED';
-                }
-                return null;
-            }
-
-            const result = response.result ?? null;
-            if (result?.invoked === true) {
-                lastRelevantMutationAt = Date.now();
-            }
-            if (collectContainerDiagnostics) {
-                onlyFansLoaderTrigger.mainWorldResult = result?.reason ?? 'MAIN_WORLD_NO_RESULT';
-                onlyFansLoaderTrigger.mainWorldInvoked = result?.invoked === true;
-                onlyFansLoaderTrigger.mainWorldMethod = result?.method ?? null;
-                onlyFansLoaderTrigger.mainWorldNetworkRequestTriggered =
-                    typeof result?.networkRequestTriggered === 'boolean'
-                        ? result.networkRequestTriggered
-                        : null;
-                onlyFansLoaderTrigger.mainWorldFramework = result?.framework ?? null;
-                onlyFansLoaderTrigger.mainWorldComponentHostDepth =
-                    Number.isInteger(result?.componentHostDepth) ? result.componentHostDepth : null;
-                onlyFansLoaderTrigger.mainWorldComponentParentDepth =
-                    Number.isInteger(result?.componentParentDepth)
-                        ? result.componentParentDepth
-                        : null;
-                onlyFansLoaderTrigger.mainWorldComponentName = result?.componentName ?? null;
-                onlyFansLoaderTrigger.mainWorldReceiverScope = result?.receiverScope ?? null;
-                onlyFansLoaderTrigger.mainWorldCandidateCount =
-                    Number.isInteger(result?.candidateCount) ? result.candidateCount : 0;
-                onlyFansLoaderTrigger.mainWorldIsLoadingBefore =
-                    typeof result?.isLoadingBefore === 'boolean' ? result.isLoadingBefore : null;
-                onlyFansLoaderTrigger.mainWorldIsLoadingAfter =
-                    typeof result?.isLoadingAfter === 'boolean' ? result.isLoadingAfter : null;
-                onlyFansLoaderTrigger.mainWorldIsComplete =
-                    typeof result?.isComplete === 'boolean' ? result.isComplete : null;
-            }
-            return result;
-        } catch (error) {
-            if (collectContainerDiagnostics) {
-                onlyFansLoaderTrigger.mainWorldResult = null;
-                onlyFansLoaderTrigger.mainWorldError =
-                    error instanceof Error ? error.message : String(error);
-            }
-            return null;
-        }
-    };
-    // OF chat media uses a virtual Swiper: only the active and neighbouring slides exist in
-    // the DOM.  Its page-owned instance is reached through the narrowly scoped MAIN-world
-    // bridge, then the generic scanner verifies the active slide actually changed.
-    const advanceOnlyFansVirtualSwiper = async ({root, direction}) => {
-        if (!window.location.hostname.endsWith('onlyfans.com') ||
-            !root?.matches?.(ONLYFANS_VIRTUAL_SWIPER_SELECTOR) ||
-            !['forward', 'backward'].includes(direction)) {
-            return null;
-        }
-        const chatContainer = root.closest(ONLYFANS_CHAT_CONTAINER_SELECTOR);
-        if (!matchesOnlyFansChatContainer(chatContainer)) return null;
-
-        const swipers = Array.from(document.querySelectorAll(
-            `${ONLYFANS_CHAT_CONTAINER_SELECTOR} ${ONLYFANS_VIRTUAL_SWIPER_SELECTOR}`
-        ));
-        const swiperIndex = swipers.indexOf(root);
-        if (swiperIndex < 0) return null;
-
-        if (collectContainerDiagnostics) {
-            onlyFansCarouselTraversal.swipersFound = Math.max(
-                onlyFansCarouselTraversal.swipersFound,
-                swipers.filter((swiper) => chatContainer.contains(swiper)).length
-            );
-            onlyFansCarouselTraversal.mainWorldAttempts += 1;
-            onlyFansCarouselTraversal.lastError = null;
-        }
-        try {
-            const response = await chrome.runtime.sendMessage({
-                target: ONLYFANS_MAIN_WORLD_TARGET,
-                source: 'hidden-deepscan-frame',
-                action: 'advance-virtual-swiper',
-                swiperIndex,
-                direction
-            });
-            if (response?.success !== true) {
-                if (collectContainerDiagnostics) {
-                    onlyFansCarouselTraversal.lastResult = null;
-                    onlyFansCarouselTraversal.lastError = response?.error ?? 'MAIN_WORLD_REQUEST_FAILED';
-                }
-                return null;
-            }
-
-            const result = response.result ?? null;
-            if (collectContainerDiagnostics) {
-                if (result?.invoked === true) onlyFansCarouselTraversal.mainWorldInvoked += 1;
-                if (result?.changed === true) onlyFansCarouselTraversal.stateChanges += 1;
-                onlyFansCarouselTraversal.lastMethod = result?.method ?? null;
-                onlyFansCarouselTraversal.lastResult = result?.reason ?? 'MAIN_WORLD_NO_RESULT';
-            }
-            return result;
-        } catch (error) {
-            if (collectContainerDiagnostics) {
-                onlyFansCarouselTraversal.lastResult = null;
-                onlyFansCarouselTraversal.lastError =
-                    error instanceof Error ? error.message : String(error);
-            }
-            return null;
-        }
-    };
-    const requestOnlyFansPhotoSwipeClose = async () => {
-        if (!hasOnlyFansChat()) return null;
-
-        try {
-            const response = await chrome.runtime.sendMessage({
-                target: ONLYFANS_MAIN_WORLD_TARGET,
-                source: 'hidden-deepscan-frame',
-                action: 'close-photo-swipe'
-            });
-            return response?.success === true ? response.result ?? null : {
-                reason: response?.error ?? 'MAIN_WORLD_CLOSE_REQUEST_FAILED'
-            };
-        } catch (error) {
-            return {
-                reason: error instanceof Error ? error.message : String(error)
-            };
-        }
-    };
-    const getOnlyFansVirtualSwiperState = (swiper) => {
-        const activeSlide = swiper?.querySelector?.('.swiper-slide-active') ?? null;
-        if (!activeSlide) return null;
-
-        const index = activeSlide.getAttribute('data-swiper-slide-index')?.trim() ?? null;
-        const image = activeSlide.querySelector('img');
-        const source = image?.currentSrc || image?.getAttribute('src') || null;
-        const key = index ? `index:${index}` : source ? `source:${source}` : null;
-        return key ? {key, index, source} : null;
-    };
-    const getOnlyFansVirtualSwiperLimit = (swiper) => {
-        const postMedia = swiper.closest('[at-attr="post_media"], .post_media');
-        const counterText = postMedia?.querySelector(
-            '.switcher-media-content__btn.active-btn .switcher-media-content__val-total'
-        )?.textContent ?? '';
-        const total = Number(counterText.trim());
-        return Number.isInteger(total) && total > 0 ? Math.min(total + 1, 128) : 64;
-    };
-    const waitForOnlyFansVirtualSwiperStateChange = async (swiper, previousKey) => {
-        const deadline = Date.now() + 1000;
-        while (isActive() && swiper.isConnected && Date.now() < deadline) {
-            const state = getOnlyFansVirtualSwiperState(swiper);
-            if (state && state.key !== previousKey) return state;
-            if (!(await wait(50))) break;
-        }
-        return null;
-    };
-    // This bypasses the generic carousel candidate filter.  OF virtualizes this exact Swiper, so
-    // only its active/neighbour slides are present in the DOM and each distinct state must be
-    // scanned before moving on.
-    const traverseOnlyFansVirtualSwipers = async (container, metrics) => {
-        if (!matchesOnlyFansChatContainer(container)) return;
-        const swipers = Array.from(container.querySelectorAll(ONLYFANS_VIRTUAL_SWIPER_SELECTOR));
-        if (collectContainerDiagnostics) {
-            onlyFansCarouselTraversal.swipersFound = Math.max(
-                onlyFansCarouselTraversal.swipersFound,
-                swipers.length
-            );
-        }
-
-        for (const swiper of swipers) {
-            if (!isActive() || !swiper.isConnected) break;
-            if (collectContainerDiagnostics) onlyFansCarouselTraversal.swipersTraversed += 1;
-
-            const seenStates = new Set();
-            const collectActiveState = async () => {
-                let state = getOnlyFansVirtualSwiperState(swiper);
-                if (!state || seenStates.has(state.key)) return state;
-
-                await waitForSettle({
-                    minimumMs: 100,
-                    scope: 'container',
-                    phase: 'of-virtual-swiper-slide'
-                });
-                state = getOnlyFansVirtualSwiperState(swiper);
-                if (!state || seenStates.has(state.key)) return state;
-
-                seenStates.add(state.key);
-                if (collectContainerDiagnostics) onlyFansCarouselTraversal.slideStatesVisited += 1;
-                await collectSources({
-                    metrics,
-                    phase: 'of-virtual-swiper-slide',
-                    roots: [swiper],
-                    traverseCarousel: false,
-                    skipDirectZoom: true
-                });
-                registerTargets();
-                return state;
-            };
-            const traverseDirection = async (direction) => {
-                const maximumTransitions = getOnlyFansVirtualSwiperLimit(swiper);
-                for (let transition = 0;
-                    isActive() && swiper.isConnected && transition < maximumTransitions;
-                    transition += 1) {
-                    const beforeState = await collectActiveState();
-                    if (!beforeState) return 'state-unavailable';
-
-                    const advanceResult = await advanceOnlyFansVirtualSwiper({root: swiper, direction});
-                    if (advanceResult?.reason === 'SWIPER_EDGE_REACHED') {
-                        if (collectContainerDiagnostics) onlyFansCarouselTraversal.edgesReached += 1;
-                        return 'edge';
-                    }
-                    if (advanceResult?.invoked !== true) {
-                        return advanceResult?.reason ?? 'advance-unavailable';
-                    }
-
-                    const immediateNextState = getOnlyFansVirtualSwiperState(swiper);
-                    const nextState = immediateNextState?.key !== beforeState.key
-                        ? immediateNextState
-                        : await waitForOnlyFansVirtualSwiperStateChange(swiper, beforeState.key);
-                    if (!nextState || nextState.key === beforeState.key) {
-                        return 'state-unchanged';
-                    }
-                }
-                return 'transition-limit';
-            };
-
-            const forward = await traverseDirection('forward');
-            if (isActive() && swiper.isConnected && forward !== 'transition-limit') {
-                await traverseDirection('backward');
-            }
-        }
-    };
-    // This wait belongs to the hidden-frame scanner's scope.  The earlier implementation used
-    // the similarly named helper from another scanner closure, which caused a ReferenceError as
-    // soon as the first OF history request had been made.
-    const waitForOnlyFansHistoryBatch = ({
-        container,
-        messagesBefore,
-        scrollHeightBefore,
-        timeoutMs = 10000
-    }) => new Promise((resolve) => {
-        let observer = null;
-        let timeout = null;
-        let poll = null;
-        const finish = (value) => {
-            if (timeout !== null) clearTimeout(timeout);
-            if (poll !== null) clearInterval(poll);
-            observer?.disconnect();
-            signal?.removeEventListener?.('abort', onAbort);
-            resolve(value);
-        };
-        const check = () => {
-            if (!isActive() || !container.isConnected) {
-                finish({type: 'aborted'});
-                return;
-            }
-            const currentMessages = container.querySelectorAll(ONLYFANS_CHAT_MESSAGE_SELECTOR).length;
-            if (currentMessages > messagesBefore) {
-                finish({type: 'message-count', currentMessages});
-                return;
-            }
-            if (container.scrollHeight > scrollHeightBefore) {
-                finish({type: 'scroll-height', scrollHeight: container.scrollHeight});
-                return;
-            }
-            if (!container.querySelector(ONLYFANS_TOP_LOADER_SELECTOR)) {
-                finish({type: 'loader-completed'});
-            }
-        };
-        const onAbort = () => finish({type: 'aborted'});
-
-        observer = new MutationObserver(check);
-        observer.observe(container, {childList: true, subtree: true});
-        poll = setInterval(check, 100);
-        timeout = setTimeout(() => finish(null), timeoutMs);
-        signal?.addEventListener?.('abort', onAbort, {once: true});
-        check();
-    });
     const scanScrollableContainer = async (container, direction) => {
         let edgeStableCycles = 0;
         let edgeLoadWaited = false;
-        const isOnlyFansChat = matchesOnlyFansChatContainer(container);
+        const isOnlyFansChat = onlyFansScanner?.matchesChatContainer(container) === true;
         const directionStartedAt = performance.now();
         const directionMetrics = createPerformanceMetrics();
         let directionFinished = false;
-        recordOnlyFansChatContainerDirection(container, direction, 'start');
+        onlyFansScanner?.recordContainerDirection(container, direction, 'start');
 
         const finishContainerScan = (result) => {
             if (!directionFinished) {
@@ -4091,127 +3347,25 @@ export async function runHiddenFrameDeepScan({
                     'containerTraversalMs',
                     performance.now() - directionStartedAt
                 );
-                recordOnlyFansChatContainerDirection(container, direction, 'end', result);
+                onlyFansScanner?.recordContainerDirection(container, direction, 'end', result);
             }
             return result;
         };
 
-        // ✴️ NEW 2026-10-16: Dedicated continuous history loader for OnlyFans chat containers.
-        // In direction='up', scroll to top and fetch all older history batches until the beginning of chat.
         if (isOnlyFansChat && direction === 'up') {
-            // Step 1: If not already at the top, scroll up to the top of the currently visible messages
-            let initialUpSteps = 0;
-            while (isActive() && container.isConnected && container.scrollTop > 4 && initialUpSteps < 10) {
-                const before = getContainerMetrics(container);
-                const beforeScrollTop = container.scrollTop;
-                const offset = Math.ceil(before.clientHeight * scrollStepFactor);
-                container.scrollTop = Math.max(0, before.scrollTop - offset);
-                initialUpSteps += 1;
-                await waitForSettle({
-                    minimumMs: minimumSettleMs,
-                    scope: 'container',
-                    direction: 'up',
-                    phase: 'container-up-scroll'
-                });
-                await collectSources({metrics: directionMetrics});
-                registerTargets();
-                if (container.scrollTop >= beforeScrollTop) {
-                    break;
-                }
-            }
-            if (container.isConnected && container.scrollTop > 0) {
-                container.scrollTop = 0;
-            }
-
-            // Step 2: Request and retain every older batch.  On OF the message DOM is virtualized,
-            // so sources must be collected before the following batch can replace these nodes.
-            while (isActive() && container.isConnected) {
-                try {
-                    container.scrollTop = 0;
-                    if (typeof container.scrollTo === 'function') {
-                        container.scrollTo({top: 0, behavior: 'instant'});
-                    }
-                    await waitForSettle({minimumMs: 100, scope: 'container', phase: 'container-up-top'});
-
-                    const messagesBefore = container.querySelectorAll(ONLYFANS_CHAT_MESSAGE_SELECTOR).length;
-                    const scrollHeightBefore = container.scrollHeight;
-
-                    let triggerResult = await requestOnlyFansHistoryPage(container);
-                    if (triggerResult?.reason === 'TOP_LOADER_NOT_FOUND_COMPLETE' ||
-                        !container.querySelector(ONLYFANS_TOP_LOADER_SELECTOR)) {
-                        // Chat history has reached the very beginning!
-                        break;
-                    }
-
-                    let batchArrived = triggerResult?.invoked === true
-                        ? await waitForOnlyFansHistoryBatch({
-                            container,
-                            messagesBefore,
-                            scrollHeightBefore
-                        })
-                        : null;
-
-                    // ✏️ EDIT 2026-10-18: A handler call without DOM progress gets one bounded
-                    // InfiniteLoading fallback before history pagination ends.
-                    if (!batchArrived && container.querySelector(ONLYFANS_TOP_LOADER_SELECTOR)) {
-                        triggerResult = await requestOnlyFansHistoryPage(container, {
-                            preferAttemptLoad: true
-                        });
-                        if (triggerResult?.reason === 'TOP_LOADER_NOT_FOUND_COMPLETE' ||
-                            !container.querySelector(ONLYFANS_TOP_LOADER_SELECTOR)) {
-                            break;
-                        }
-                        batchArrived = triggerResult?.invoked === true
-                            ? await waitForOnlyFansHistoryBatch({
-                                container,
-                                messagesBefore,
-                                scrollHeightBefore
-                            })
-                            : null;
-                    }
-
-                    if (batchArrived) {
-                        addMetric(directionMetrics, 'steps', 1);
-                        addMetric(directionMetrics, 'containerScrollSteps', 1);
-
-                        if (batchArrived.type === 'loader-completed') {
-                            break;
-                        }
-
-                        await waitForSettle({
-                            minimumMs: 100,
-                            scope: 'container',
-                            direction: 'up',
-                            phase: 'of-chat-history-batch'
-                        });
-                        await collectSources({metrics: directionMetrics, phase: 'of-chat-history-batch'});
-                        registerTargets();
-
-                        // Re-scroll to the (new) top for the next page.
-                        container.scrollTop = 0;
-                        if (typeof container.scrollTo === 'function') {
-                            container.scrollTo({top: 0, behavior: 'instant'});
-                        }
-                        await wait(200);
-                    } else {
-                        if (!container.querySelector(ONLYFANS_TOP_LOADER_SELECTOR)) {
-                            break;
-                        }
-                        // ✏️ EDIT 2026-10-18: OF retains this loader even at the oldest known
-                        // page. Both page-owned load paths have been exhausted; scan the loaded DOM.
-                        break;
-                    }
-                } catch (batchError) {
-                    console.warn('[OnlyFans Chat History] Batch step failed:', batchError);
-                    break;
-                }
-            }
-
-            await traverseOnlyFansVirtualSwipers(container, directionMetrics);
-            // Final source collection at the top
-            await collectSources({metrics: directionMetrics, phase: 'final'});
-            registerTargets();
-            return finishContainerScan('stable');
+            const result = await onlyFansScanner.scanHistory(container, {
+                metrics: directionMetrics,
+                isActive,
+                wait,
+                waitForSettle,
+                collectSources,
+                registerTargets,
+                getContainerMetrics,
+                addMetric,
+                scrollStepFactor,
+                minimumSettleMs
+            });
+            return finishContainerScan(result ?? 'stable');
         }
 
         while (isActive() && container.isConnected && isRelevantScrollableContainer(container)) {
@@ -4247,10 +3401,7 @@ export async function runHiddenFrameDeepScan({
                 getContainerMetrics(container)
             );
             if (atEdge || reachedUpperEdge) {
-                onlyFansChatContainerAtTop = direction === 'up';
-                if (direction === 'up') {
-                    updateOnlyFansTopLoaderState(container, direction, 'edge');
-                }
+                onlyFansScanner?.recordContainerEdge(container, direction);
             }
 
             await collectSources({
@@ -4362,12 +3513,12 @@ export async function runHiddenFrameDeepScan({
         while (isActive()) {
             const candidates = getPendingRelevantContainerCandidates();
             if (candidates.length === 0) {
-                recordOnlyFansChatContainerPlan([], null);
+                onlyFansScanner?.recordContainerPlan([], null);
                 return;
             }
 
             const plan = createContainerPlan(candidates);
-            recordOnlyFansChatContainerPlan(candidates, plan);
+            onlyFansScanner?.recordContainerPlan(candidates, plan);
             if (!isActive()) return;
             for (const entry of plan.entries) {
                 const {container} = entry;

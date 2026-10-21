@@ -4,7 +4,7 @@
     --adn-icon-size-small: 1.5rem;
     --adn-marker-size: 1rem;
     --adn-icon-color: #101010;
-    --adn-media-images: #6DBF39;
+    --adn-media-images: #007700;
     --adn-media-videos: #EF4444;
     --adn-media-audios: #285EFE;
     --adn-media-color: var(--adn-media-images, #6DBF39);
@@ -26,23 +26,24 @@
 
     /* --adn-progressbar-border: silver; */
     --adn-progressbar-text: var(--adn-text);
-    --adn-control-accent: #285EFE; /* #006000 #32CD32 */
+    --adn-control-accent: #285EFE;
 
     --adn-led-bg: #cccccc;
     --adn-led-text: #000000;
     --adn-led-active-text: #000000;
 
     --adn-marker-new: #EF4444; /* tomato */
-    --adn-marker-upgrade: #6DBF39; /* #32CD32 */
+    --adn-marker-upgrade: var(--adn-media-images);
     --adn-result-selected-bg: navy;
     --adn-result-selected-text: whitesmoke;
-    --adn-result-saved-text: #006000;
+    --adn-result-saved-text: #007700;
     --adn-result-selected-saved-bg: lightgreen;
 }
 
 html[data-mode="dark"] {
     --adn-color-scheme: dark;
     --adn-icon-color: #d4d4d4;
+    --adn-media-images: #6DBF39;
 
     --adn-page-bg: #1e1e1e;
     --adn-surface-bg: #2A2A2A;
