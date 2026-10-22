@@ -749,6 +749,8 @@ export async function scanPhotoSwipeImages({
     skipGenericCarousel = false,
     skipDirectZoom = false,
     fallbackToOpenCarouselOnCloseFailure = false,
+    shouldSkipDirectTarget = null,
+    allowRecycledDirectTargets = false,
     requestMainWorldPhotoSwipeClose = null,
     scanRoots = [document],
     dirtyGenericRoots = new Set(),
@@ -1489,6 +1491,8 @@ export async function scanPhotoSwipeImages({
         traverseCarousel,
         skipDirectZoom,
         fallbackToOpenCarouselOnCloseFailure,
+        shouldSkipDirectTarget,
+        allowRecycledDirectTargets,
         scanRoots,
         registerDirectTarget
     });
@@ -3067,6 +3071,13 @@ export async function runHiddenFrameDeepScan({
             skipDirectZoom,
             fallbackToOpenCarouselOnCloseFailure:
                 onlyFansPhotoSwipeOptions.fallbackToOpenCarouselOnCloseFailure === true,
+            shouldSkipDirectTarget: (target) =>
+                onlyFansScanner?.shouldSkipGenericPhotoSwipeTarget(
+                    target,
+                    collectionScope.phase
+                ) === true,
+            allowRecycledDirectTargets:
+                collectionScope.phase === 'of-virtual-swiper-slide',
             requestMainWorldPhotoSwipeClose:
                 onlyFansPhotoSwipeOptions.requestMainWorldPhotoSwipeClose ?? null,
             scanRoots: photoSwipeRoots,

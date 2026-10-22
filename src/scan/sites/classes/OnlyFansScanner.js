@@ -210,6 +210,11 @@ export default class OnlyFansScanner {
         };
     }
 
+    shouldSkipGenericPhotoSwipeTarget(target, phase) {
+        return this.hasChat() && phase !== 'of-virtual-swiper-slide' &&
+            target?.closest?.(VIRTUAL_SWIPER_SELECTOR) !== null;
+    }
+
     recordPhotoSwipePerformance(detail, phase) {
         this.#photoSwipeFallback.used += detail.direct.closeFallbacks ?? 0;
         this.#photoSwipeFallback.slides += detail.direct.fallbackCarouselStates ?? 0;
@@ -807,6 +812,42 @@ export default class OnlyFansScanner {
         return Number.isInteger(total) && total > 0 ? Math.min(total + 1, 128) : 64;
     }
 
+    #getMediaCategoryInfo(postMedia) {
+        const controls = Array.from(postMedia?.querySelectorAll(
+            '.switcher-media-content > .switcher-media-content__btn'
+        ) ?? []);
+        return {
+            activeIndex: controls.findIndex((control) => control.classList.contains('active-btn')),
+            imageIndex: controls.findIndex((control) => control.querySelector(
+                '[data-icon-name="icon-media"]'
+            ) !== null)
+        };
+    }
+
+    async #activateMediaCategory(postMedia, controlIndex) {
+        if (!Number.isInteger(controlIndex) || controlIndex < 0) return null;
+
+        const chatContainer = postMedia?.closest(CHAT_CONTAINER_SELECTOR);
+        if (!this.matchesChatContainer(chatContainer)) return null;
+
+        const postMediaIndex = Array.from(chatContainer.querySelectorAll('[at-attr="post_media"]'))
+            .indexOf(postMedia);
+        if (postMediaIndex < 0) return null;
+
+        try {
+            const response = await chrome.runtime.sendMessage({
+                target: MAIN_WORLD_TARGET,
+                source: 'hidden-deepscan-frame',
+                action: 'activate-media-category',
+                postMediaIndex,
+                controlIndex
+            });
+            return response?.success === true ? response.result ?? null : null;
+        } catch {
+            return null;
+        }
+    }
+
     async #waitForVirtualSwiperStateChange(swiper, previousKey, {isActive, wait}) {
         const deadline = Date.now() + 1000;
         while (isActive() && swiper.isConnected && Date.now() < deadline) {
@@ -817,8 +858,75 @@ export default class OnlyFansScanner {
         return null;
     }
 
-    async #traverseVirtualSwipers(container, context) {
+    async #traverseVirtualSwiper(swiper, context) {
         const {metrics, isActive, wait, waitForSettle, collectSources, registerTargets} = context;
+        if (!isActive() || !swiper?.isConnected) return;
+        const traversal = this.#chatContainer.carouselTraversal;
+        if (this.#collectDiagnostics) traversal.swipersTraversed += 1;
+
+        const seenStates = new Set();
+        const collectActiveState = async () => {
+            let state = this.#getVirtualSwiperState(swiper);
+            if (!state || seenStates.has(state.key)) return state;
+
+            await waitForSettle({
+                minimumMs: 100,
+                scope: 'container',
+                phase: 'of-virtual-swiper-slide'
+            });
+            state = this.#getVirtualSwiperState(swiper);
+            if (!state || seenStates.has(state.key)) return state;
+
+            seenStates.add(state.key);
+            if (this.#collectDiagnostics) traversal.slideStatesVisited += 1;
+            await collectSources({
+                metrics,
+                phase: 'of-virtual-swiper-slide',
+                roots: [swiper],
+                traverseCarousel: false,
+                skipDirectZoom: true
+            });
+            registerTargets();
+            return state;
+        };
+        const traverseDirection = async (direction) => {
+            const maximumTransitions = this.#getVirtualSwiperLimit(swiper);
+            for (let transition = 0;
+                isActive() && swiper.isConnected && transition < maximumTransitions;
+                transition += 1) {
+                const beforeState = await collectActiveState();
+                if (!beforeState) return 'state-unavailable';
+
+                const advanceResult = await this.#advanceVirtualSwiper({root: swiper, direction});
+                if (advanceResult?.reason === 'SWIPER_EDGE_REACHED') {
+                    if (this.#collectDiagnostics) traversal.edgesReached += 1;
+                    return 'edge';
+                }
+                if (advanceResult?.invoked !== true) {
+                    return advanceResult?.reason ?? 'advance-unavailable';
+                }
+
+                const immediateNextState = this.#getVirtualSwiperState(swiper);
+                const nextState = immediateNextState?.key !== beforeState.key
+                    ? immediateNextState
+                    : await this.#waitForVirtualSwiperStateChange(
+                        swiper,
+                        beforeState.key,
+                        {isActive, wait}
+                    );
+                if (!nextState || nextState.key === beforeState.key) return 'state-unchanged';
+            }
+            return 'transition-limit';
+        };
+
+        const forward = await traverseDirection('forward');
+        if (isActive() && swiper.isConnected && forward !== 'transition-limit') {
+            await traverseDirection('backward');
+        }
+    }
+
+    async #traverseVirtualSwipers(container, context) {
+        const {isActive, waitForSettle} = context;
         if (!this.matchesChatContainer(container)) return;
 
         const swipers = Array.from(container.querySelectorAll(VIRTUAL_SWIPER_SELECTOR));
@@ -829,66 +937,32 @@ export default class OnlyFansScanner {
 
         for (const swiper of swipers) {
             if (!isActive() || !swiper.isConnected) break;
-            if (this.#collectDiagnostics) traversal.swipersTraversed += 1;
 
-            const seenStates = new Set();
-            const collectActiveState = async () => {
-                let state = this.#getVirtualSwiperState(swiper);
-                if (!state || seenStates.has(state.key)) return state;
+            const postMedia = swiper.closest('[at-attr="post_media"]');
+            const {activeIndex, imageIndex} = this.#getMediaCategoryInfo(postMedia);
+            await this.#traverseVirtualSwiper(swiper, context);
+            if (!isActive() || !postMedia?.isConnected || imageIndex < 0 ||
+                imageIndex === activeIndex) {
+                continue;
+            }
 
+            const switched = await this.#activateMediaCategory(postMedia, imageIndex);
+            if (switched?.activeControlIndex !== imageIndex) continue;
+
+            try {
                 await waitForSettle({
                     minimumMs: 100,
                     scope: 'container',
-                    phase: 'of-virtual-swiper-slide'
+                    phase: 'of-virtual-swiper-category'
                 });
-                state = this.#getVirtualSwiperState(swiper);
-                if (!state || seenStates.has(state.key)) return state;
-
-                seenStates.add(state.key);
-                if (this.#collectDiagnostics) traversal.slideStatesVisited += 1;
-                await collectSources({
-                    metrics,
-                    phase: 'of-virtual-swiper-slide',
-                    roots: [swiper],
-                    traverseCarousel: false,
-                    skipDirectZoom: true
-                });
-                registerTargets();
-                return state;
-            };
-            const traverseDirection = async (direction) => {
-                const maximumTransitions = this.#getVirtualSwiperLimit(swiper);
-                for (let transition = 0;
-                    isActive() && swiper.isConnected && transition < maximumTransitions;
-                    transition += 1) {
-                    const beforeState = await collectActiveState();
-                    if (!beforeState) return 'state-unavailable';
-
-                    const advanceResult = await this.#advanceVirtualSwiper({root: swiper, direction});
-                    if (advanceResult?.reason === 'SWIPER_EDGE_REACHED') {
-                        if (this.#collectDiagnostics) traversal.edgesReached += 1;
-                        return 'edge';
-                    }
-                    if (advanceResult?.invoked !== true) {
-                        return advanceResult?.reason ?? 'advance-unavailable';
-                    }
-
-                    const immediateNextState = this.#getVirtualSwiperState(swiper);
-                    const nextState = immediateNextState?.key !== beforeState.key
-                        ? immediateNextState
-                        : await this.#waitForVirtualSwiperStateChange(
-                            swiper,
-                            beforeState.key,
-                            {isActive, wait}
-                        );
-                    if (!nextState || nextState.key === beforeState.key) return 'state-unchanged';
+                const imageSwiper = postMedia.querySelector(VIRTUAL_SWIPER_SELECTOR);
+                if (isActive() && imageSwiper?.isConnected) {
+                    await this.#traverseVirtualSwiper(imageSwiper, context);
                 }
-                return 'transition-limit';
-            };
-
-            const forward = await traverseDirection('forward');
-            if (isActive() && swiper.isConnected && forward !== 'transition-limit') {
-                await traverseDirection('backward');
+            } finally {
+                if (postMedia.isConnected && activeIndex >= 0) {
+                    await this.#activateMediaCategory(postMedia, activeIndex);
+                }
             }
         }
     }

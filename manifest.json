@@ -1,8 +1,8 @@
 {
     "manifest_version": 3,
     "name": "Image Finder",
-    "version": "0.2.1",
-    "version_name": "Beta 0.2.1",
+    "version": "0.2.2",
+    "version_name": "Beta 0.2.2",
     "description": "Find media on the current website.",
     "icons": {
         "16": "assets/icons/icon16.png",

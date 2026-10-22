@@ -57,6 +57,8 @@ export default class PhotoSwipeScanner {
         traverseCarousel,
         skipDirectZoom = false,
         fallbackToOpenCarouselOnCloseFailure = false,
+        shouldSkipDirectTarget = null,
+        allowRecycledDirectTargets = false,
         scanRoots = [scanDocument],
         registerDirectTarget = null
     } = {}) {
@@ -474,6 +476,11 @@ export default class PhotoSwipeScanner {
                     performanceState?.directTargets?.add(target);
                 }
             }
+            if (shouldSkipDirectTarget?.(target) === true) {
+                recordPhase('candidateClassificationMs', candidateStartedAt);
+                finishTargetIteration();
+                continue;
+            }
             registerDirectTarget?.(target);
             const targetSource = getTargetSourceKey(target);
             if (isAborted()) {
@@ -481,7 +488,7 @@ export default class PhotoSwipeScanner {
                 finishTargetIteration();
                 continue;
             }
-            if (this.#processedTargets.has(target)) {
+            if (!allowRecycledDirectTargets && this.#processedTargets.has(target)) {
                 if (collectPerformance) performanceDetail.direct.processedTargetsSkipped += 1;
                 recordPhase('candidateClassificationMs', candidateStartedAt);
                 finishTargetIteration();

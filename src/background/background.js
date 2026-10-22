@@ -471,6 +471,74 @@ async function advanceOnlyFansVirtualSwiperInMainWorld(swiperIndex, direction) {
     }
 }
 
+// OF groups videos and photos behind small media-category controls. The click must run in
+// MAIN world so Vue updates the corresponding virtual Swiper before it is traversed.
+async function activateOnlyFansMediaCategoryInMainWorld(postMediaIndex, controlIndex) {
+    const result = {
+        found: false,
+        invoked: false,
+        changed: false,
+        activeControlIndex: null,
+        reason: null
+    };
+    if (!Number.isInteger(postMediaIndex) || postMediaIndex < 0 ||
+        !Number.isInteger(controlIndex) || controlIndex < 0) {
+        result.reason = 'INVALID_MEDIA_CATEGORY_REQUEST';
+        return result;
+    }
+
+    const postMedia = Array.from(document.querySelectorAll(
+        '.b-chats__scrollbar.b-chat__messages [at-attr="post_media"]'
+    ))[postMediaIndex] ?? null;
+    if (!postMedia) {
+        result.reason = 'POST_MEDIA_NOT_FOUND';
+        return result;
+    }
+    result.found = true;
+
+    const getControls = () => Array.from(postMedia.querySelectorAll(
+        '.switcher-media-content > .switcher-media-content__btn'
+    ));
+    const getActiveControlIndex = () => getControls().findIndex(
+        (control) => control.classList.contains('active-btn')
+    );
+    const control = getControls()[controlIndex] ?? null;
+    if (!control) {
+        result.reason = 'MEDIA_CATEGORY_CONTROL_NOT_FOUND';
+        return result;
+    }
+
+    const activeBefore = getActiveControlIndex();
+    if (activeBefore === controlIndex) {
+        result.activeControlIndex = activeBefore;
+        result.reason = 'MEDIA_CATEGORY_ALREADY_ACTIVE';
+        return result;
+    }
+
+    try {
+        control.click();
+        result.invoked = true;
+        const deadline = Date.now() + 1200;
+        while (Date.now() < deadline) {
+            const activeControlIndex = getActiveControlIndex();
+            if (activeControlIndex === controlIndex) {
+                result.changed = true;
+                result.activeControlIndex = activeControlIndex;
+                result.reason = 'MEDIA_CATEGORY_CHANGED';
+                return result;
+            }
+            await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        result.activeControlIndex = getActiveControlIndex();
+        result.reason = 'MEDIA_CATEGORY_UNCHANGED';
+        return result;
+    } catch (error) {
+        result.activeControlIndex = getActiveControlIndex();
+        result.reason = `MEDIA_CATEGORY_ERROR:${error instanceof Error ? error.message : String(error)}`;
+        return result;
+    }
+}
+
 // PhotoSwipe is created by OF's page-owned Vue tree. A synthetic click from the isolated
 // extension world can open it, but some builds ignore that same click for closing. This bridge
 // is intentionally restricted to the one currently open PhotoSwipe and its own Vue components.
@@ -735,11 +803,16 @@ async function requestOnlyFansMainWorldPageAction(message, sender) {
     }
     const isHistoryRequest = message?.action === 'trigger-history-loader';
     const isSwiperRequest = message?.action === 'advance-virtual-swiper';
+    const isMediaCategoryRequest = message?.action === 'activate-media-category';
     const isPhotoSwipeCloseRequest = message?.action === 'close-photo-swipe';
     const validSwiperRequest = isSwiperRequest && Number.isInteger(message?.swiperIndex) &&
         message.swiperIndex >= 0 && ['forward', 'backward'].includes(message?.direction);
+    const validMediaCategoryRequest = isMediaCategoryRequest &&
+        Number.isInteger(message?.postMediaIndex) && message.postMediaIndex >= 0 &&
+        Number.isInteger(message?.controlIndex) && message.controlIndex >= 0;
     if (message?.source !== 'hidden-deepscan-frame' ||
-        (!isHistoryRequest && !validSwiperRequest && !isPhotoSwipeCloseRequest) ||
+        (!isHistoryRequest && !validSwiperRequest && !validMediaCategoryRequest &&
+            !isPhotoSwipeCloseRequest) ||
         !Number.isInteger(tabId) || !Number.isInteger(frameId) ||
         !hostname?.endsWith('onlyfans.com') ||
         activeHiddenDeepScan?.tabId !== tabId) {
@@ -748,7 +821,9 @@ async function requestOnlyFansMainWorldPageAction(message, sender) {
 
     const mainWorldArguments = isSwiperRequest
         ? [message.swiperIndex, message.direction]
-        : [message.preferAttemptLoad === true];
+        : isMediaCategoryRequest
+            ? [message.postMediaIndex, message.controlIndex]
+            : [message.preferAttemptLoad === true];
     const results = await chrome.scripting.executeScript({
         target: {tabId, frameIds: [frameId]},
         world: 'MAIN',
@@ -756,7 +831,9 @@ async function requestOnlyFansMainWorldPageAction(message, sender) {
             ? triggerOnlyFansHistoryLoaderInMainWorld
             : isSwiperRequest
                 ? advanceOnlyFansVirtualSwiperInMainWorld
-                : closeOnlyFansPhotoSwipeInMainWorld,
+                : isMediaCategoryRequest
+                    ? activateOnlyFansMediaCategoryInMainWorld
+                    : closeOnlyFansPhotoSwipeInMainWorld,
         args: isPhotoSwipeCloseRequest ? [] : mainWorldArguments
     });
     return results[0]?.result ?? {reason: 'MAIN_WORLD_NO_RESULT'};

@@ -306,6 +306,7 @@ html[data-mode="dark"] .toolbar-button.scanner-led.flash-led {
     align-items: center;
     justify-content: center;
     line-height: 0;
+    cursor: pointer;
 }
 
 #chkTheme:checked ~ .theme-icon .theme-light {
