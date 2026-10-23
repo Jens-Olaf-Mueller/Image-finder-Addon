@@ -115,6 +115,10 @@ img.preview:not([src]) {
     justify-content: flex-start;
 }
 
+#divDebugToolbar.toolbar-section button >svg {
+    color: var(--adn-debug-color, tomato);
+}
+
 .toolbar-actions {
     display: flex;
     align-items: center;
@@ -225,12 +229,12 @@ img.preview:not([src]) {
     min-height: var(--adn-icon-size-small);
     width: var(--adn-icon-size-small);
     height: var(--adn-icon-size-small);
-    padding: 3px;
+    padding: 2px 4px 2px 2px;
     margin-right: 0.75rem;
 }
 
 .tbr-btn__small .tbr-btn__icon {
-    width: 1rem;
+    width: 0.94rem;
     height: 1rem;
 }
 

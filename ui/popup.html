@@ -69,6 +69,25 @@
             <div id="divLED" class="toolbar-button scanner-led" style="margin-left: auto;">0</div>
         </div>
         <div id="divToolbarTopRight" class="toolbar-section" role="group" aria-label="Media preview controls">
+            <div id="divDebugToolbar" class="toolbar-section hidden">
+                <button id="btnDebugStart" type="button" class="toolbar-button tbr-btn__small"
+                    title="Start logging"
+                    style="margin-left: 1rem;">
+                    <svg class="tbr-btn__icon">
+                        <use href="../assets/icons/button-icons.svg#svgPlay"></use>
+                    </svg>
+                </button>
+                <button id="btnDebugStop" type="button" class="toolbar-button tbr-btn__small" title="Stop logging">
+                    <svg class="tbr-btn__icon">
+                        <use href="../assets/icons/button-icons.svg#svgStop"></use>
+                    </svg>
+                </button>
+                <button id="btnDebugMark" type="button" class="toolbar-button tbr-btn__small" title="Mark DOM element">
+                    <svg class="tbr-btn__icon">
+                        <use href="../assets/icons/button-icons.svg#svgTarget"></use>
+                    </svg>
+                </button>
+            </div>
             <div class="control theme toolbar-button tbr-btn__small" style="margin: 0 0 0 auto;">
                 <label title="Switch theme">
                     <input type="checkbox" id="chkTheme" name="theme" title="Switch theme" aria-label="Switch theme">

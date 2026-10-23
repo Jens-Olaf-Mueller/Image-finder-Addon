@@ -8,6 +8,7 @@
     --adn-media-videos: #EF4444;
     --adn-media-audios: #285EFE;
     --adn-media-color: var(--adn-media-images, #6DBF39);
+    --adn-debug-color: #EF4444; /* tomato */
 
     --adn-page-bg: #f4f4f4;
     --adn-surface-bg: white;
