@@ -884,7 +884,9 @@ export default class OnlyFansScanner {
                 phase: 'of-virtual-swiper-slide',
                 roots: [swiper],
                 traverseCarousel: false,
-                skipDirectZoom: true
+                // ✏️ EDIT 2026-10-24: Waits for OF's low-to-hi-res PhotoSwipe upgrade
+                // before this virtual slide advances to the following carousel state.
+                skipDirectZoom: false
             });
             registerTargets();
             return state;

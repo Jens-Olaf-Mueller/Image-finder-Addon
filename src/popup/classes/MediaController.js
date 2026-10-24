@@ -7,8 +7,12 @@ import Popup from './Popup.js';
 import { ScanContext } from './ScanContext.js';
 import ScanController from './ScanController.js';
 
+const DEBUG_SESSION_TARGET = 'image-finder-debug-session';
+const DEBUG_UI_TARGET = 'image-finder-debug-ui';
+
 export class MediaController {
     #activeDownloadJobId = null;
+    #debugSessionId = null;
     #onDownLoaderMessage = message => this.#handleDownLoaderMessage(message);
 
     get candidates() {
@@ -51,6 +55,9 @@ export class MediaController {
             onClearMedia: () => this.clearMedia(),
             onReloadCurrentTab: () => this.reloadCurrentTab(),
             onThemeChange: (mode) => this.#setThemeMode(mode),
+            onDebugStart: () => this.startDebugSession(),
+            onDebugStop: () => this.stopDebugSession(),
+            onDebugMark: () => this.markDebugSession(),
             // ✴️ NEW 2026-10-14: Stores the popup media choice independently from profiles.
             onMediaModeChange: (mode) => this.#setMediaMode(mode),
             onSettingsClosed: () => {
@@ -82,8 +89,12 @@ export class MediaController {
         const mediaMode = this.settings.getMediaMode();
         this.popup.applyMediaMode(mediaMode);
         if (typeof onSettingsReady === 'function') await onSettingsReady();
+        // ✏️ EDIT 2026-10-24: Debug sessions always leave scan start to the developer.
+        const debugModeEnabled = this.settings.get('debug', 'debugmode', false) === true;
+        await this.setDebugModeEnabled(debugModeEnabled);
         this.updateDownloadTitles();
-        if (this.settings.get('common', 'scanOnStart', true) && mediaMode === 1) {
+        if (!debugModeEnabled && this.settings.get('common', 'scanOnStart', true) &&
+            mediaMode === 1) {
             await this.scan();
         }
     }
@@ -112,8 +123,12 @@ export class MediaController {
     async stopScan({endReason = 'user-abort'} = {}) {
         if (!this.isScanRunning) return false;
 
+        const deepScanWasRunning = this.isDeepScanRunning ||
+            this.scanController.isActivityRunning('deepScan');
         this.analyzerClient.clear();
         const stopped = await this.scanController.stop({endReason});
+        // ✴️ NEW 2026-10-24: A manually ended DeepScan also finishes its debug recording.
+        if (deepScanWasRunning) await this.stopDebugSession();
         this.popup.showPreviewPlaceholder();
         return stopped;
     }
@@ -132,6 +147,112 @@ export class MediaController {
 
     setDeepScanClientId(clientId) {
         this.scanController.setDeepScanClientId(clientId);
+    }
+
+    async setDebugModeEnabled(enabled) {
+        const isEnabled = enabled === true;
+        if (!isEnabled) await this.stopDebugSession();
+        this.popup.setDebugToolbarVisible(isEnabled);
+        if (isEnabled) await this.#restoreDebugSession();
+    }
+
+    async startDebugSession() {
+        if (this.#debugSessionId || this.settings.get('debug', 'debugmode', false) !== true) {
+            return false;
+        }
+
+        await this.setWebsiteURLFromActiveTab();
+        const tabId = this.scanContext.tabId;
+        const url = this.scanContext.url;
+        if (!Number.isInteger(tabId) || typeof url !== 'string' || !url) return false;
+
+        const sessionId = crypto.randomUUID();
+        const response = await window.chrome.runtime.sendMessage({
+            target: DEBUG_SESSION_TARGET,
+            action: 'start',
+            sessionId,
+            tabId,
+            url,
+            debugSettings: this.settings.get('debug') ?? {}
+        });
+        if (response?.success !== true) return false;
+
+        this.#activateDebugSession(sessionId, url);
+        console.info('[Manual Debug] popup recording started');
+        return true;
+    }
+
+    async stopDebugSession() {
+        const sessionId = this.#debugSessionId;
+        if (!sessionId) return false;
+
+        const tabId = this.scanContext.tabId;
+        console.info('[Manual Debug] popup recording stopped');
+        await globalThis.imageFinderDebugLogger?.flush?.();
+        try {
+            await window.chrome.runtime.sendMessage({
+                target: DEBUG_SESSION_TARGET,
+                action: 'stop',
+                sessionId,
+                tabId
+            });
+        } catch {
+            // The background export fallback is independent from popup lifetime.
+        } finally {
+            this.#deactivateDebugSession(sessionId);
+        }
+        return true;
+    }
+
+    async markDebugSession() {
+        if (!this.#debugSessionId || !Number.isInteger(this.scanContext.tabId)) return false;
+
+        const response = await window.chrome.runtime.sendMessage({
+            target: DEBUG_SESSION_TARGET,
+            action: 'mark',
+            sessionId: this.#debugSessionId,
+            tabId: this.scanContext.tabId
+        });
+        const selecting = response?.success === true && response.selecting === true;
+        this.popup.setDebugSelecting(selecting);
+        return selecting;
+    }
+
+    async #restoreDebugSession() {
+        const tabId = this.scanContext.tabId;
+        if (!Number.isInteger(tabId)) return;
+
+        try {
+            const response = await window.chrome.runtime.sendMessage({
+                target: DEBUG_SESSION_TARGET,
+                action: 'status',
+                tabId
+            });
+            if (typeof response?.sessionId === 'string' && response.sessionId) {
+                this.#activateDebugSession(response.sessionId, this.scanContext.url);
+            } else {
+                this.#deactivateDebugSession();
+            }
+        } catch {
+            this.#deactivateDebugSession();
+        }
+    }
+
+    #activateDebugSession(sessionId, url) {
+        this.#debugSessionId = sessionId;
+        this.scanner.setDebugSessionId(sessionId);
+        this.popup.setDebugLogging(true);
+        globalThis.imageFinderDebugLogger?.setContext({scanId: sessionId, url});
+    }
+
+    #deactivateDebugSession(sessionId = null) {
+        if (sessionId && this.#debugSessionId !== sessionId) return;
+
+        const activeSessionId = this.#debugSessionId;
+        this.#debugSessionId = null;
+        this.scanner.setDebugSessionId(null);
+        this.popup.setDebugLogging(false);
+        if (activeSessionId) globalThis.imageFinderDebugLogger?.clearContext(activeSessionId);
     }
 
     // ✏️ EDIT 2026-10-09: Delegates selected image preview preparation to Popup and MediaPreview.
@@ -167,6 +288,7 @@ export class MediaController {
 
     async resetSettingsToDefaults() {
         await this.settings.resetToDefaults();
+        await this.setDebugModeEnabled(false);
 
         return {
             themeMode: this.settings.getThemeMode(),
@@ -198,6 +320,7 @@ export class MediaController {
 
     async reloadCurrentTab() {
         await this.stopScan({endReason: 'tab-reload'});
+        await this.stopDebugSession();
 
         await window.chrome.tabs.reload();
     }
@@ -302,8 +425,10 @@ export class MediaController {
                     newCandidates: Math.max(0, this.candidates.size - deepScanInitialCandidates)
                 });
 
-                // ✴️ NEW 2026-10-11: Exports all DeepScan logs after the final result has been logged.
+                // ✴️ NEW 2026-10-11: Flushes all DeepScan records after the final result is logged.
                 await this.scanner.completeDeepScanDebugContext();
+                // ✴️ NEW 2026-10-24: A finished DeepScan is a terminal manual-debug recording.
+                await this.stopDebugSession();
 
                 return completionInfo;
             },
@@ -819,6 +944,12 @@ export class MediaController {
 
     // ✴️ NEW 2026-10-15: Applies background list and ZIP job events while this popup remains open.
     #handleDownLoaderMessage(message) {
+        if (message?.target === DEBUG_UI_TARGET && message.source === 'background' &&
+            message.action === 'mark-selected' && message.sessionId === this.#debugSessionId) {
+            this.popup.setDebugSelecting(false);
+            return;
+        }
+
         if (message?.target !== 'image-finder-downloader' || message.source !== 'background') return;
 
         const job = message.job;

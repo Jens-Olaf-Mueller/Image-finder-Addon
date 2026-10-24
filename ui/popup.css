@@ -229,12 +229,12 @@ img.preview:not([src]) {
     min-height: var(--adn-icon-size-small);
     width: var(--adn-icon-size-small);
     height: var(--adn-icon-size-small);
-    padding: 2px 4px 2px 2px;
+    padding: 1px 2px 1px 1px;
     margin-right: 0.75rem;
 }
 
 .tbr-btn__small .tbr-btn__icon {
-    width: 0.94rem;
+    width: 1rem;
     height: 1rem;
 }
 

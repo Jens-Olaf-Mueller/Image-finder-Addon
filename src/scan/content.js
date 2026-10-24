@@ -3065,6 +3065,40 @@ export async function runHiddenFrameDeepScan({
                 recordCollectionMetric(metrics, 'directPhotoSwipeMs', performanceMetrics.directPhotoSwipeMs);
                 recordCollectionMetric(metrics, 'directPhotoSwipeCalls', performanceMetrics.directPhotoSwipeCalls);
                 recordCollectionMetric(metrics, 'photoSwipeOtherMs', performanceMetrics.otherMs);
+                // ✴️ NEW 2026-10-24: Makes each OF virtual-slide PhotoSwipe decision
+                // inspectable without emitting URLs or generic DeepScan event noise.
+                if (collectContainerDiagnostics &&
+                    collectionScope.phase === 'of-virtual-swiper-slide') {
+                    const detail = performanceMetrics.detail;
+                    const direct = detail?.direct ?? {};
+                    const openWait = detail?.waitPurposes?.['direct-photo-swipe-open'] ?? {};
+                    console.info('[OnlyFans PhotoSwipe]', {
+                        targets: direct.targetCount ?? 0,
+                        skipped: {
+                            processed: direct.processedTargetsSkipped ?? 0,
+                            source: direct.sourceDuplicatesSkipped ?? 0,
+                            invisible: direct.invisibleTargetsSkipped ?? 0,
+                            open: direct.openModalSkips ?? 0
+                        },
+                        opening: {
+                            checks: direct.openModalChecks ?? 0,
+                            opened: direct.openSuccesses ?? 0,
+                            timeout: direct.openTimeouts ?? 0,
+                            waitCalls: openWait.calls ?? 0,
+                            waitTimeouts: openWait.timeouts ?? 0
+                        },
+                        activeSlide: {
+                            ready: direct.readySlides ?? 0,
+                            timeout: direct.readySlideTimeouts ?? 0
+                        },
+                        upgrade: {
+                            attempts: direct.zoomAttempts ?? 0,
+                            changed: direct.zoomStateChanges ?? 0,
+                            timeout: direct.zoomTimeouts ?? 0,
+                            upgrades: direct.resolutionUpgrades ?? 0
+                        }
+                    });
+                }
             },
             traverseCarousel,
             skipGenericCarousel: onlyFansPhotoSwipeOptions.skipGenericCarousel === true,

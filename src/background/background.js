@@ -13,6 +13,8 @@ const POPUP_DEEP_SCAN_PORT_NAME = 'image-finder-popup-deepscan';
 const REOPEN_POPUP_AFTER_RESTART_STORAGE_KEY = 'reopenPopupAfterRestart';
 const REOPEN_POPUP_AFTER_RESTART_MAX_AGE_MS = 60 * 1000;
 const DEBUG_LOG_TARGET = 'image-finder-debug-log';
+const DEBUG_SESSION_TARGET = 'image-finder-debug-session';
+const DEBUG_UI_TARGET = 'image-finder-debug-ui';
 const DOWNLOADER_EVENT_TARGET = 'image-finder-downloader';
 const DEBUG_LOG_EXPORT_DELAY_MS = 5000;
 const DEBUG_LOG_POPUP_FINAL_DELAY_MS = 250;
@@ -43,6 +45,7 @@ let hiddenDeepScanFrameRuleOwner = null;
 let protectedDeepScanFrameRuleUpdate = Promise.resolve();
 const popupDeepScanPorts = new Map();
 const debugCollectorsByScanId = new Map();
+const debugSessionsByTabId = new Map();
 let activeDebugLogContext = null;
 const debugBackgroundLogger = globalThis.ImageFinderDebugLogger?.createLogger({
     source: 'service-worker',
@@ -872,17 +875,18 @@ function hasEnabledDebugLogSource(enabledSources) {
     return Object.values(enabledSources ?? {}).some((enabled) => enabled === true);
 }
 
-function createDebugCollector(job) {
+function createDebugCollector(job, {kind = 'deep-scan'} = {}) {
     if (!job?.scanId || debugCollectorsByScanId.has(job.scanId)) return;
+    if (!hasEnabledDebugLogSource(job.enabledDebugLogSources)) return;
+
     activeDebugLogContext = null;
     debugBackgroundLogger?.clearContext();
-
-    if (!hasEnabledDebugLogSource(job.enabledDebugLogSources)) return;
 
     debugCollectorsByScanId.set(job.scanId, {
         meta: {
             ...getDebugManifestMeta(),
             scanId: job.scanId,
+            kind,
             url: job.url ?? null,
             startedAt: new Date().toISOString(),
             hiddenCompletedAt: null,
@@ -903,12 +907,25 @@ function createDebugCollector(job) {
     debugBackgroundLogger?.setContext(activeDebugLogContext);
 }
 
+function getManualDebugCollectorForUrl(url) {
+    if (typeof url !== 'string' || !url) return null;
+
+    for (const session of debugSessionsByTabId.values()) {
+        if (session.url !== url) continue;
+
+        const collector = debugCollectorsByScanId.get(session.sessionId);
+        if (collector && !collector.exported) return collector;
+    }
+    return null;
+}
+
 function collectDebugRecords(records) {
     if (!Array.isArray(records)) return;
 
     records.forEach((record) => {
         if (!record || typeof record.scanId !== 'string' || !record.scanId) return;
-        const collector = debugCollectorsByScanId.get(record.scanId);
+        const collector = debugCollectorsByScanId.get(record.scanId) ??
+            getManualDebugCollectorForUrl(record.url);
         if (!collector || collector.exported) return;
 
         const source = record.source;
@@ -922,7 +939,10 @@ function collectDebugRecords(records) {
                 : 'log',
             sourceSequence: Number.isInteger(record.sourceSequence) ? record.sourceSequence : null,
             collectorSequence: ++collector.collectorSequence,
-            scanId: record.scanId,
+            scanId: collector.meta.scanId,
+            ...(record.scanId !== collector.meta.scanId
+                ? {sourceContextId: record.scanId}
+                : {}),
             url: typeof record.url === 'string' ? record.url : collector.meta.url,
             message: typeof record.message === 'string' ? record.message : '',
             arguments: Array.isArray(record.arguments) ? record.arguments : []
@@ -1039,6 +1059,138 @@ function scheduleDebugExport(job, status, reason = null) {
             collector.popupComplete ? DEBUG_LOG_POPUP_FINAL_DELAY_MS : DEBUG_LOG_EXPORT_DELAY_MS
         );
     });
+}
+
+async function sendDebugSessionCommand(session, action) {
+    return chrome.tabs.sendMessage(session.tabId, {
+        target: DEBUG_SESSION_TARGET,
+        source: 'background',
+        action,
+        sessionId: session.sessionId
+    }, {frameId: 0});
+}
+
+async function ensureDebugSessionHost(session) {
+    try {
+        const response = await sendDebugSessionCommand(session, 'probe');
+        if (response?.success === true) return;
+    } catch {
+        // Existing tabs can predate the content script after an extension reload.
+    }
+
+    await chrome.scripting.executeScript({
+        target: {tabId: session.tabId, frameIds: [0]},
+        files: ['src/shared/debug-logger.js', 'src/scan/deepscan-frame.js'],
+        injectImmediately: true
+    });
+    const response = await sendDebugSessionCommand(session, 'probe');
+    if (response?.success !== true) {
+        throw new Error(response?.reason || 'DEBUG_SESSION_TAB_HOST_UNAVAILABLE');
+    }
+}
+
+async function startDebugSession(request) {
+    if (typeof request?.sessionId !== 'string' || !request.sessionId ||
+        !Number.isInteger(request.tabId) || typeof request.url !== 'string' || !request.url) {
+        return {success: false, reason: 'DEBUG_SESSION_REQUEST_INVALID'};
+    }
+
+    const currentSession = debugSessionsByTabId.get(request.tabId);
+    if (currentSession?.sessionId === request.sessionId) return {success: true};
+    if (currentSession) await stopDebugSession(request.tabId, currentSession.sessionId);
+
+    const tab = await chrome.tabs.get(request.tabId);
+    if (tab?.url !== request.url) return {success: false, reason: 'DEBUG_SESSION_TAB_CHANGED'};
+
+    const enabledDebugLogSources = getEnabledDebugLogSources(request.debugSettings);
+    const session = {
+        sessionId: request.sessionId,
+        tabId: request.tabId,
+        url: request.url,
+        enabledDebugLogSources
+    };
+    createDebugCollector({
+        scanId: session.sessionId,
+        url: session.url,
+        enabledDebugLogSources: session.enabledDebugLogSources
+    }, {kind: 'manual'});
+    debugSessionsByTabId.set(session.tabId, session);
+
+    try {
+        await ensureDebugSessionHost(session);
+        const response = await sendDebugSessionCommand(session, 'start');
+        if (response?.success !== true) {
+            throw new Error(response?.reason || 'DEBUG_SESSION_TAB_START_FAILED');
+        }
+        console.info('[Manual Debug] session started', {tabId: session.tabId});
+        return {success: true, sessionId: session.sessionId};
+    } catch (error) {
+        debugSessionsByTabId.delete(session.tabId);
+        debugCollectorsByScanId.delete(session.sessionId);
+        if (activeDebugLogContext?.scanId === session.sessionId) {
+            activeDebugLogContext = null;
+            debugBackgroundLogger?.clearContext(session.sessionId);
+        }
+        return {success: false, reason: getErrorMessage(error)};
+    }
+}
+
+async function stopDebugSession(tabId, sessionId) {
+    const session = debugSessionsByTabId.get(tabId);
+    if (!session || session.sessionId !== sessionId) {
+        return {success: false, reason: 'DEBUG_SESSION_NOT_ACTIVE'};
+    }
+
+    try {
+        await sendDebugSessionCommand(session, 'stop');
+    } catch {
+        // A closed or reloaded tab has already discarded the marker.
+    }
+
+    debugSessionsByTabId.delete(tabId);
+    const collector = debugCollectorsByScanId.get(session.sessionId);
+    if (collector && !collector.exported) {
+        collector.meta.status = 'completed';
+        collector.meta.endedAt = new Date().toISOString();
+        const flush = debugBackgroundLogger?.flush?.() ?? Promise.resolve();
+        void flush.finally(() => queueDebugCollectorExport(collector, DEBUG_LOG_POPUP_FINAL_DELAY_MS));
+    }
+    if (activeDebugLogContext?.scanId === session.sessionId) {
+        activeDebugLogContext = null;
+        debugBackgroundLogger?.clearContext(session.sessionId);
+    }
+    return {success: true};
+}
+
+async function markDebugSession(tabId, sessionId) {
+    const session = debugSessionsByTabId.get(tabId);
+    if (!session || session.sessionId !== sessionId) {
+        return {success: false, reason: 'DEBUG_SESSION_NOT_ACTIVE'};
+    }
+
+    try {
+        return await sendDebugSessionCommand(session, 'mark');
+    } catch (error) {
+        return {success: false, reason: getErrorMessage(error)};
+    }
+}
+
+function getDebugSession(tabId) {
+    const session = debugSessionsByTabId.get(tabId);
+    return session
+        ? {success: true, sessionId: session.sessionId}
+        : {success: true, sessionId: null};
+}
+
+// ✴️ NEW 2026-10-24: Releases the popup's one-click media-target selection state.
+function notifyDebugSelection(tabId, sessionId) {
+    void chrome.runtime.sendMessage({
+        target: DEBUG_UI_TARGET,
+        source: 'background',
+        action: 'mark-selected',
+        tabId,
+        sessionId
+    }).catch(() => undefined);
 }
 
 function getPopupDeepScanClientId(port) {
@@ -1980,6 +2132,7 @@ async function startIsolatedDeepScan(request) {
             ? Math.max(0, Math.round(request.minimumImageHeight))
             : 200,
         allowProtectedDeepScan: request.allowProtectedDeepScan === true,
+        collectContainerDiagnostics: request.collectContainerDiagnostics === true,
         enabledDebugLogSources: getEnabledDebugLogSources(request.debugSettings),
         popupClientId: typeof request.popupClientId === 'string' && request.popupClientId
             ? request.popupClientId
@@ -2007,8 +2160,7 @@ async function startIsolatedDeepScan(request) {
             minimumImageWidth: job.minimumImageWidth,
             minimumImageHeight: job.minimumImageHeight,
             allowProtectedDeepScan: job.allowProtectedDeepScan,
-            collectContainerDiagnostics: job.enabledDebugLogSources.popup === true ||
-                job.enabledDebugLogSources.tab === true
+            collectContainerDiagnostics: job.collectContainerDiagnostics
         });
     } catch (error) {
         await finishIsolatedDeepScan(job, 'unavailable', getErrorMessage(error));
@@ -2184,6 +2336,11 @@ chrome.downloads.onChanged.addListener((delta) => {
 });
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+    const debugSession = debugSessionsByTabId.get(tabId);
+    if (debugSession && (changeInfo.status === 'loading' ||
+        (typeof changeInfo.url === 'string' && changeInfo.url !== debugSession.url))) {
+        void stopDebugSession(tabId, debugSession.sessionId);
+    }
     const job = activeIsolatedDeepScan;
     const hiddenDeepScan = activeHiddenDeepScan;
     if (hiddenDeepScan && tabId === hiddenDeepScan.tabId && typeof changeInfo.url === 'string' &&
@@ -2198,6 +2355,8 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
+    const debugSession = debugSessionsByTabId.get(tabId);
+    if (debugSession) void stopDebugSession(tabId, debugSession.sessionId);
     if (activeHiddenDeepScan?.tabId === tabId) {
         void completeHiddenDeepScanJob(activeHiddenDeepScan, 'cancelled');
     }
@@ -2228,6 +2387,47 @@ chrome.runtime.onConnect.addListener((port) => {
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message?.target === DEBUG_SESSION_TARGET) {
+        if (message.source === 'tab' && message.action === 'heartbeat') {
+            const tabId = sender?.tab?.id;
+            const session = debugSessionsByTabId.get(tabId);
+            sendResponse({success: session?.sessionId === message.sessionId});
+            return undefined;
+        }
+
+        if (message.source === 'tab' && message.action === 'mark-selected') {
+            const tabId = sender?.tab?.id;
+            const session = debugSessionsByTabId.get(tabId);
+            const selected = session?.sessionId === message.sessionId;
+            if (selected) notifyDebugSelection(tabId, message.sessionId);
+            sendResponse({success: selected});
+            return undefined;
+        }
+
+        const isExtensionPage = typeof sender?.url === 'string' &&
+            sender.url.startsWith(chrome.runtime.getURL(''));
+        if (!isExtensionPage) {
+            sendResponse({success: false, reason: 'DEBUG_SESSION_SENDER_INVALID'});
+            return undefined;
+        }
+
+        const action = message.action;
+        const operation = action === 'start'
+            ? startDebugSession(message)
+            : action === 'stop'
+                ? stopDebugSession(message.tabId, message.sessionId)
+                : action === 'mark'
+                    ? markDebugSession(message.tabId, message.sessionId)
+                    : action === 'status'
+                        ? Promise.resolve(getDebugSession(message.tabId))
+                        : Promise.resolve({success: false, reason: 'DEBUG_SESSION_ACTION_UNKNOWN'});
+        void operation.then(sendResponse, error => sendResponse({
+            success: false,
+            reason: getErrorMessage(error)
+        }));
+        return true;
+    }
+
     if (message?.target === DEBUG_LOG_TARGET) {
         if (message.action === 'records') collectDebugRecords(message.records);
         else if (message.action === 'context-complete') handleDebugContextComplete(message);

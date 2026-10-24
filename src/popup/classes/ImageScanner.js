@@ -16,6 +16,7 @@ export default class ImageScanner {
     #activeDeepScan = null;
     #deepScanClientId = null;
     #deepScanDebugContext = null;
+    #debugSessionId = null;
 
     get isDeepScanRunning() {
         return this.#activeDeepScan !== null;
@@ -30,6 +31,12 @@ export default class ImageScanner {
     setDeepScanClientId(clientId) {
         this.#deepScanClientId = typeof clientId === 'string' && clientId
             ? clientId
+            : null;
+    }
+
+    setDebugSessionId(sessionId) {
+        this.#debugSessionId = typeof sessionId === 'string' && sessionId
+            ? sessionId
             : null;
     }
 
@@ -102,10 +109,11 @@ export default class ImageScanner {
         if (!context) return;
 
         this.#deepScanDebugContext = null;
-        const {logger, scanId} = context;
+        const {logger, scanId, persistent} = context;
         try {
             await logger?.flush?.();
         } finally {
+            if (persistent) return;
             logger?.clearContext(scanId);
             try {
                 await window.chrome.runtime.sendMessage({
@@ -133,7 +141,8 @@ export default class ImageScanner {
         const deepScanStartedAt = performance.now();
         let hiddenDiscoveryCompletedAt = null;
         const debugSettings = this.settings.get('debug') ?? {};
-        const shouldMeasurePopupPipeline = debugSettings.debugmode === true &&
+        const debugSessionId = this.#debugSessionId;
+        const shouldMeasurePopupPipeline = debugSessionId !== null &&
             debugSettings.logpopup === true;
         const imageFilter = this.mediaProvider.filter;
         const allowProtectedDeepScan = this.settings.get(
@@ -146,8 +155,13 @@ export default class ImageScanner {
 
         const scanId = crypto.randomUUID();
         const debugLogger = globalThis.imageFinderDebugLogger;
-        this.#deepScanDebugContext = {logger: debugLogger, scanId};
-        debugLogger?.setContext({scanId, url: scanContext.url});
+        const debugContextId = debugSessionId ?? scanId;
+        this.#deepScanDebugContext = {
+            logger: debugLogger,
+            scanId: debugContextId,
+            persistent: debugSessionId !== null
+        };
+        debugLogger?.setContext({scanId: debugContextId, url: scanContext.url});
         const transportMetrics = {
             batches: 0,
             timestampedBatches: 0,
@@ -429,8 +443,10 @@ export default class ImageScanner {
                     minimumImageWidth: imageFilter.minWidth,
                     minimumImageHeight: imageFilter.minHeight,
                     allowProtectedDeepScan,
+                    collectContainerDiagnostics: debugSessionId !== null,
                     debugSettings: {
-                        debugmode: debugSettings.debugmode === true,
+                        // Debug mode exposes the toolbar. A file is created only by its START button.
+                        debugmode: false,
                         logtab: debugSettings.logtab === true,
                         logpopup: debugSettings.logpopup === true,
                         logserviceworker: debugSettings.logserviceworker === true

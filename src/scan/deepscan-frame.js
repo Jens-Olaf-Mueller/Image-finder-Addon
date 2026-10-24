@@ -1,16 +1,23 @@
 (() => {
+    const FRAME_HOST_MARKER = '__imageFinderDeepScanFrameInstalled';
+    if (globalThis[FRAME_HOST_MARKER] === true) return;
+    globalThis[FRAME_HOST_MARKER] = true;
+
     const FRAME_MESSAGE_TARGET = 'image-finder-isolated-deepscan-frame';
     const HIDDEN_DEEP_SCAN_TARGET = 'image-finder-hidden-deepscan';
     const HIDDEN_DEEP_SCAN_FRAME_TARGET = 'image-finder-hidden-deepscan-frame';
+    const DEBUG_SESSION_TARGET = 'image-finder-debug-session';
     const HIDDEN_DEEP_SCAN_HANDSHAKE_TIMEOUT_MS = 10000;
     const HIDDEN_DEEP_SCAN_LOAD_GRACE_MS = 15000;
     const HIDDEN_DEEP_SCAN_HYDRATION_POLL_INTERVAL_MS = 100;
     const HIDDEN_DEEP_SCAN_HYDRATION_STABLE_MS = 2500;
     const HIDDEN_DEEP_SCAN_HYDRATION_MAX_WAIT_MS = 10000;
+    const DEBUG_SESSION_HEARTBEAT_MS = 20000;
     const extensionOrigin = new URL(chrome.runtime.getURL('/')).origin;
     let activeScan = null;
     let activeHiddenDeepScanHost = null;
     let activeHiddenDeepScanFrame = null;
+    let activeDebugSession = null;
     const tabDebugLogger = globalThis.ImageFinderDebugLogger?.createLogger({
         source: 'tab',
         sendRecords: (records) => {
@@ -26,15 +33,75 @@
         }
     })?.install();
     const setTabDebugContext = (scanId) => {
-        tabDebugLogger?.setContext({scanId, url: window.location.href});
+        tabDebugLogger?.setContext({
+            scanId: activeDebugSession?.sessionId ?? scanId,
+            url: window.location.href
+        });
     };
     const flushTabDebugContext = (scanId) => {
         const flush = tabDebugLogger?.flush?.();
         if (flush && typeof flush.finally === 'function') {
-            void flush.finally(() => tabDebugLogger.clearContext(scanId));
-        } else {
+            void flush.finally(() => {
+                if (!activeDebugSession) tabDebugLogger.clearContext(scanId);
+            });
+        } else if (!activeDebugSession) {
             tabDebugLogger?.clearContext(scanId);
         }
+    };
+
+    const startDebugSession = async (message) => {
+        if (activeDebugSession?.sessionId === message.sessionId) return {success: true};
+        if (activeDebugSession) await stopDebugSession(activeDebugSession.sessionId);
+
+        const {default: DebugTrace} = await import(
+            chrome.runtime.getURL('src/scan/classes/DebugTrace.js')
+        );
+        activeDebugSession = {
+            sessionId: message.sessionId,
+            trace: new DebugTrace({
+                log: (event, detail) => console.info(event, detail),
+                onMarkSelected: () => {
+                    void chrome.runtime.sendMessage({
+                        target: DEBUG_SESSION_TARGET,
+                        source: 'tab',
+                        action: 'mark-selected',
+                        sessionId: message.sessionId
+                    }).catch(() => undefined);
+                }
+            }),
+            heartbeatTimer: setInterval(() => {
+                void chrome.runtime.sendMessage({
+                    target: DEBUG_SESSION_TARGET,
+                    source: 'tab',
+                    action: 'heartbeat',
+                    sessionId: message.sessionId
+                }).catch(() => undefined);
+            }, DEBUG_SESSION_HEARTBEAT_MS)
+        };
+        setTabDebugContext(message.sessionId);
+        activeDebugSession.trace.start();
+        return {success: true};
+    };
+
+    const stopDebugSession = async (sessionId) => {
+        if (!activeDebugSession || activeDebugSession.sessionId !== sessionId) {
+            return {success: false, reason: 'DEBUG_SESSION_NOT_ACTIVE'};
+        }
+
+        activeDebugSession.trace.stop();
+        clearInterval(activeDebugSession.heartbeatTimer);
+        await tabDebugLogger?.flush?.();
+        tabDebugLogger?.clearContext(sessionId);
+        activeDebugSession = null;
+        return {success: true};
+    };
+
+    const markDebugSession = (sessionId) => {
+        if (!activeDebugSession || activeDebugSession.sessionId !== sessionId) {
+            return {success: false, reason: 'DEBUG_SESSION_NOT_ACTIVE'};
+        }
+
+        return {success: true, ...activeDebugSession.trace.mark()};
     };
 
     const sendToHost = (message) => {
@@ -662,6 +729,35 @@
         }
     });
     chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+        if (message?.target === DEBUG_SESSION_TARGET && message.source === 'background' &&
+            window.top === window) {
+            if (typeof message.sessionId !== 'string' || !message.sessionId) {
+                sendResponse({success: false, reason: 'DEBUG_SESSION_ID_INVALID'});
+                return undefined;
+            }
+
+            if (message.action === 'start') {
+                void startDebugSession(message).then(sendResponse, error => sendResponse({
+                    success: false,
+                    reason: getDiagnosticErrorMessage(error)
+                }));
+                return true;
+            }
+            if (message.action === 'probe') {
+                sendResponse({success: true});
+                return undefined;
+            }
+            if (message.action === 'stop') {
+                void stopDebugSession(message.sessionId).then(sendResponse);
+                return true;
+            }
+            if (message.action === 'mark') {
+                sendResponse(markDebugSession(message.sessionId));
+                return undefined;
+            }
+            sendResponse({success: false, reason: 'DEBUG_SESSION_ACTION_UNKNOWN'});
+            return undefined;
+        }
         if (message?.target !== HIDDEN_DEEP_SCAN_TARGET || message.source !== 'background' ||
             window.top !== window) {
             return undefined;

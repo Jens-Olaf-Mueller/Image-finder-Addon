@@ -125,6 +125,7 @@ export default class Popup {
         this.#mediaPreview = new MediaPreview(this.DOM.divPreview, this.DOM.spnStatusBar);
         this.#progressbar = new Progressbar(this.DOM.divProgressbar);
         this.applyMediaMode(this.#mode);
+        this.setDebugLogging(false);
         this.#setEventListeners();
         window.addEventListener('pagehide', () => {
             this.#stopDeepScanTitleTimer();
@@ -204,6 +205,32 @@ export default class Popup {
         button.setAttribute('aria-label', button.title);
         // ✏️ EDIT 2026-10-12: Locks the scan media type for every active scan generation.
         this.DOM.btnMediaType.disabled = isActive;
+    }
+
+    /**
+     * Shows or hides the explicitly enabled manual debug controls.
+     * @param {Boolean} visible Whether debug mode is enabled in settings.
+     */
+    setDebugToolbarVisible(visible) {
+        this.DOM.divDebugToolbar?.classList.toggle('hidden', visible !== true);
+    }
+
+    /**
+     * Renders the current manual-debug recording state.
+     * @param {Boolean} active Whether a debug recording is active.
+     */
+    setDebugLogging(active) {
+        const isActive = active === true;
+        this.DOM.btnDebugStart?.classList.toggle('sorted', isActive);
+        if (this.DOM.btnDebugStart) this.DOM.btnDebugStart.disabled = isActive;
+        if (this.DOM.btnDebugStop) this.DOM.btnDebugStop.disabled = !isActive;
+        if (this.DOM.btnDebugMark) this.DOM.btnDebugMark.disabled = !isActive;
+        if (!isActive) this.setDebugSelecting(false);
+    }
+
+    // ✴️ NEW 2026-10-24: Visualizes the one-click PhotoSwipe-target selection mode.
+    setDebugSelecting(selecting) {
+        this.DOM.btnDebugMark?.classList.toggle('sorted', selecting === true);
     }
 
     /**
@@ -627,6 +654,9 @@ export default class Popup {
                 : 'asc';
             this.sortMediaList(this.#eventHandlers.getVisibleMedia?.() ?? new Map(), criterion, direction);
         });
+        this.DOM.divDebugToolbar?.addEventListener('click', (e) => {
+            void this.#onDebugToolbarButtonClick(e);
+        });
         this.DOM.lstImages.addEventListener('click', (e) => {
             const item = e.target.closest('li');
             if (!item) return;
@@ -712,6 +742,25 @@ export default class Popup {
                 await this.#restartExtension();
                 break;
 
+            default:
+                break;
+        }
+    }
+
+    async #onDebugToolbarButtonClick(event) {
+        const button = event.target.closest('button');
+        if (!button || !this.DOM.divDebugToolbar?.contains(button) || button.disabled) return;
+
+        switch (button.id) {
+            case 'btnDebugStart':
+                await this.#eventHandlers.onDebugStart?.();
+                break;
+            case 'btnDebugStop':
+                await this.#eventHandlers.onDebugStop?.();
+                break;
+            case 'btnDebugMark':
+                await this.#eventHandlers.onDebugMark?.();
+                break;
             default:
                 break;
         }
