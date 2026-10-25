@@ -20,6 +20,17 @@ const MEDIA_MODES = Object.freeze({
     3: 'audio'
 });
 
+const DEBUG_LOG_SOURCE_CONTROL_IDS = Object.freeze({
+    tab: 'chkLogTabConsole',
+    popup: 'chkLogPopupConsole',
+    'service-worker': 'chkLogServiceWorkerConsole'
+});
+const DEBUG_LOG_SOURCE_BUTTON_IDS = Object.freeze({
+    tab: 'btnDebugLogTab',
+    popup: 'btnDebugLogPopup',
+    'service-worker': 'btnDebugLogServiceWorker'
+});
+
 const REOPEN_POPUP_AFTER_RESTART_STORAGE_KEY = 'reopenPopupAfterRestart';
 const DOWNLOAD_COMPLETION_DISPLAY_MS = 2500;
 
@@ -221,11 +232,42 @@ export default class Popup {
      */
     setDebugLogging(active) {
         const isActive = active === true;
-        this.DOM.btnDebugStart?.classList.toggle('sorted', isActive);
-        if (this.DOM.btnDebugStart) this.DOM.btnDebugStart.disabled = isActive;
-        if (this.DOM.btnDebugStop) this.DOM.btnDebugStop.disabled = !isActive;
+        const button = this.DOM.btnDebugStart;
+
+        // ✏️ EDIT 2026-10-25: The start control is the recording start/stop toggle.
+        if (button) {
+            button.value = isActive ? 'true' : 'false';
+            button.title = isActive ? 'Stop logging' : 'Start logging';
+        }
         if (this.DOM.btnDebugMark) this.DOM.btnDebugMark.disabled = !isActive;
         if (!isActive) this.setDebugSelecting(false);
+    }
+
+    /**
+     * Mirrors the persisted debug-log source settings in the debug toolbar.
+     * @param {Object} debugSettings Persisted debug settings.
+     */
+    setDebugLogSources(debugSettings = {}) {
+        Object.entries(DEBUG_LOG_SOURCE_BUTTON_IDS).forEach(([source, buttonId]) => {
+            const settingId = DEBUG_LOG_SOURCE_CONTROL_IDS[source];
+            const settingName = this.#settingsPanel?.DOM?.[settingId]?.name;
+            const enabled = settingName && debugSettings?.[settingName] === true;
+            const button = this.DOM[buttonId];
+
+            if (button) button.value = enabled ? 'true' : 'false';
+        });
+    }
+
+    /**
+     * Toggles one mirrored debug-log checkbox and persists the changed setting.
+     * @param {'tab'|'popup'|'service-worker'} source Debug-log source to toggle.
+     * @returns {Promise<boolean>} Whether the matching setting was changed.
+     */
+    async toggleDebugLogSource(source) {
+        const controlId = DEBUG_LOG_SOURCE_CONTROL_IDS[source];
+        if (!controlId || !this.#settingsPanel) return false;
+
+        return this.#settingsPanel.toggleCheckbox(controlId);
     }
 
     // ✴️ NEW 2026-10-24: Visualizes the one-click PhotoSwipe-target selection mode.
@@ -753,13 +795,19 @@ export default class Popup {
 
         switch (button.id) {
             case 'btnDebugStart':
-                await this.#eventHandlers.onDebugStart?.();
-                break;
-            case 'btnDebugStop':
-                await this.#eventHandlers.onDebugStop?.();
+                await this.#eventHandlers.onDebugToggle?.();
                 break;
             case 'btnDebugMark':
                 await this.#eventHandlers.onDebugMark?.();
+                break;
+            case 'btnDebugLogTab':
+                await this.#eventHandlers.onDebugLogSourceToggle?.('tab');
+                break;
+            case 'btnDebugLogPopup':
+                await this.#eventHandlers.onDebugLogSourceToggle?.('popup');
+                break;
+            case 'btnDebugLogServiceWorker':
+                await this.#eventHandlers.onDebugLogSourceToggle?.('service-worker');
                 break;
             default:
                 break;

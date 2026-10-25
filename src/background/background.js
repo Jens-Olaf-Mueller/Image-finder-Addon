@@ -1162,6 +1162,33 @@ async function stopDebugSession(tabId, sessionId) {
     return {success: true};
 }
 
+// ✴️ NEW 2026-10-25: Applies source toggles to an already running manual recording.
+async function updateDebugSessionSources(tabId, sessionId, debugSettings) {
+    const session = debugSessionsByTabId.get(tabId);
+    if (!session || session.sessionId !== sessionId) {
+        return {success: false, reason: 'DEBUG_SESSION_NOT_ACTIVE'};
+    }
+
+    const enabledDebugLogSources = getEnabledDebugLogSources(debugSettings);
+    session.enabledDebugLogSources = enabledDebugLogSources;
+    let collector = debugCollectorsByScanId.get(session.sessionId);
+
+    if (!collector && hasEnabledDebugLogSource(enabledDebugLogSources)) {
+        createDebugCollector({
+            scanId: session.sessionId,
+            url: session.url,
+            enabledDebugLogSources
+        }, {kind: 'manual'});
+        collector = debugCollectorsByScanId.get(session.sessionId);
+    }
+
+    if (collector && !collector.exported) {
+        collector.enabledSources = {...enabledDebugLogSources};
+        collector.meta.enabledSources = {...enabledDebugLogSources};
+    }
+    return {success: true, enabledSources: enabledDebugLogSources};
+}
+
 async function markDebugSession(tabId, sessionId) {
     const session = debugSessionsByTabId.get(tabId);
     if (!session || session.sessionId !== sessionId) {
@@ -2416,6 +2443,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             ? startDebugSession(message)
             : action === 'stop'
                 ? stopDebugSession(message.tabId, message.sessionId)
+                : action === 'sources'
+                    ? updateDebugSessionSources(message.tabId, message.sessionId, message.debugSettings)
                 : action === 'mark'
                     ? markDebugSession(message.tabId, message.sessionId)
                     : action === 'status'

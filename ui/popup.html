@@ -72,20 +72,38 @@
             <div id="divDebugToolbar" class="toolbar-section hidden">
                 <button id="btnDebugStart" type="button" class="toolbar-button tbr-btn__small"
                     title="Start logging"
+                    value="false"
                     style="margin-left: 1rem;">
                     <svg class="tbr-btn__icon">
-                        <use href="../assets/icons/button-icons.svg#svgPlay"></use>
-                    </svg>
-                </button>
-                <button id="btnDebugStop" type="button" class="toolbar-button tbr-btn__small" title="Stop logging">
-                    <svg class="tbr-btn__icon">
-                        <use href="../assets/icons/button-icons.svg#svgStop"></use>
+                        <use class="icon-debug-start" href="../assets/icons/button-icons.svg#svgPlay"></use>
+                        <use class="icon-debug-stop" href="../assets/icons/button-icons.svg#svgStop"></use>
                     </svg>
                 </button>
                 <button id="btnDebugMark" type="button" class="toolbar-button tbr-btn__small"
                     title="Select PhotoSwipe container">
                     <svg class="tbr-btn__icon">
                         <use href="../assets/icons/button-icons.svg#svgTarget"></use>
+                    </svg>
+                </button>
+                <button id="btnDebugLogTab" type="button" class="toolbar-button tbr-btn__small"
+                    title="Log current tab messages into file"
+                    value="false">
+                    <svg class="tbr-btn__icon">
+                        <use href="../assets/icons/button-icons.svg#svgTab"></use>
+                    </svg>
+                </button>
+                <button id="btnDebugLogPopup" type="button" class="toolbar-button tbr-btn__small"
+                    title="Log popup messages into file"
+                    value="false">
+                    <svg class="tbr-btn__icon">
+                        <use href="../assets/icons/button-icons.svg#svgPopup"></use>
+                    </svg>
+                </button>
+                <button id="btnDebugLogServiceWorker" type="button" class="toolbar-button tbr-btn__small"
+                    title="Log service worker messages into file"
+                    value="false">
+                    <svg class="tbr-btn__icon">
+                        <use href="../assets/icons/button-icons.svg#svgServiceWorker"></use>
                     </svg>
                 </button>
             </div>

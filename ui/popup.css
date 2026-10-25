@@ -257,6 +257,19 @@ img.preview:not([src]) {
     display: none;
 }
 
+/* ✴️ NEW 2026-10-25: Swaps the manual debug-recording toggle icon. */
+.icon-debug-stop {
+    display: none;
+}
+
+#btnDebugStart[value="true"] .icon-debug-start {
+    display: none;
+}
+
+#btnDebugStart[value="true"] .icon-debug-stop {
+    display: inline;
+}
+
 .theme-icon {
     width: 1.05rem;
     height: 1.05rem;
@@ -323,6 +336,10 @@ html[data-mode="dark"] .toolbar-button.scanner-led.flash-led {
 
 #btnSearch[value="true"],
 #btnSettings[value="true"],
+#btnDebugStart[value="true"],
+#btnDebugLogTab[value="true"],
+#btnDebugLogPopup[value="true"],
+#btnDebugLogServiceWorker[value="true"],
 .toolbar-button:has(svg.toolbar-button__media),
 .sorted {
     border: 1px inset var(--adn-button-inset-border);

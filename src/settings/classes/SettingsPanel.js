@@ -35,6 +35,7 @@
  * - {@link setFormData}                      - Writes settings data into the form.
  * - {@link getValue}                         - Reads a single form control value.
  * - {@link setValue}                         - Writes a single form control value.
+ * - {@link toggleCheckbox}                   - Toggles and persists one checkbox value.
  * - {@link openBrowserDownloadSettings}      - Opens browser download settings.
  *
  * ---------------------------------------------------------------
@@ -329,6 +330,27 @@ export class SettingsPanel {
                 control.value = value;
                 break;
         }
+    }
+
+    /**
+     * Toggles and persists a checkbox that belongs to this settings form.
+     * @param {String} controlId Checkbox element ID.
+     * @returns {Promise<Boolean>} Whether the checkbox was changed.
+     */
+    async toggleCheckbox(controlId) {
+        const control = this.DOM[controlId];
+        if (control?.type !== 'checkbox' || control.disabled) return false;
+
+        // ✴️ NEW 2026-10-25: Lets popup toolbar toggles use the normal settings save path.
+        control.checked = !control.checked;
+        this.#updateDebugControls();
+        const data = this.getFormData();
+        await this.enqueue(async () => {
+            await this.settings.save(data);
+            await this.refresh();
+            await this.notifySettingsChanged();
+        });
+        return true;
     }
 
     /**

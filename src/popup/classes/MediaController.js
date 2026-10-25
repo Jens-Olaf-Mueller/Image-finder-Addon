@@ -13,6 +13,7 @@ const DEBUG_UI_TARGET = 'image-finder-debug-ui';
 export class MediaController {
     #activeDownloadJobId = null;
     #debugSessionId = null;
+    #debugSessionTogglePending = false;
     #onDownLoaderMessage = message => this.#handleDownLoaderMessage(message);
 
     get candidates() {
@@ -55,9 +56,9 @@ export class MediaController {
             onClearMedia: () => this.clearMedia(),
             onReloadCurrentTab: () => this.reloadCurrentTab(),
             onThemeChange: (mode) => this.#setThemeMode(mode),
-            onDebugStart: () => this.startDebugSession(),
-            onDebugStop: () => this.stopDebugSession(),
+            onDebugToggle: () => this.toggleDebugSession(),
             onDebugMark: () => this.markDebugSession(),
+            onDebugLogSourceToggle: (source) => this.toggleDebugLogSource(source),
             // ✴️ NEW 2026-10-14: Stores the popup media choice independently from profiles.
             onMediaModeChange: (mode) => this.#setMediaMode(mode),
             onSettingsClosed: () => {
@@ -92,6 +93,7 @@ export class MediaController {
         // ✏️ EDIT 2026-10-24: Debug sessions always leave scan start to the developer.
         const debugModeEnabled = this.settings.get('debug', 'debugmode', false) === true;
         await this.setDebugModeEnabled(debugModeEnabled);
+        await this.setDebugLogSources(this.settings.get('debug') ?? {});
         this.updateDownloadTitles();
         if (!debugModeEnabled && this.settings.get('common', 'scanOnStart', true) &&
             mediaMode === 1) {
@@ -154,6 +156,56 @@ export class MediaController {
         if (!isEnabled) await this.stopDebugSession();
         this.popup.setDebugToolbarVisible(isEnabled);
         if (isEnabled) await this.#restoreDebugSession();
+    }
+
+    /**
+     * Renders the configured log sources and applies them to a running recording.
+     * @param {Object} debugSettings Persisted debug settings.
+     * @returns {Promise<Boolean>} Whether a running session accepted the new source settings.
+     */
+    async setDebugLogSources(debugSettings = {}) {
+        this.popup.setDebugLogSources(debugSettings);
+        if (!this.#debugSessionId || !Number.isInteger(this.scanContext.tabId)) return true;
+
+        try {
+            const response = await window.chrome.runtime.sendMessage({
+                target: DEBUG_SESSION_TARGET,
+                action: 'sources',
+                sessionId: this.#debugSessionId,
+                tabId: this.scanContext.tabId,
+                debugSettings
+            });
+            return response?.success === true;
+        } catch {
+            return false;
+        }
+    }
+
+    /**
+     * Starts or stops the current manual debug recording.
+     * @returns {Promise<Boolean>} Whether the requested state transition completed.
+     */
+    async toggleDebugSession() {
+        if (this.#debugSessionTogglePending) return false;
+
+        this.#debugSessionTogglePending = true;
+        try {
+            // ✴️ NEW 2026-10-25: A single toolbar control starts and stops recording.
+            return this.#debugSessionId
+                ? await this.stopDebugSession()
+                : await this.startDebugSession();
+        } finally {
+            this.#debugSessionTogglePending = false;
+        }
+    }
+
+    /**
+     * Delegates one debug-log source toggle to the mirrored settings checkbox.
+     * @param {'tab'|'popup'|'service-worker'} source Debug-log source to toggle.
+     * @returns {Promise<Boolean>} Whether the matching setting was changed.
+     */
+    async toggleDebugLogSource(source) {
+        return this.popup.toggleDebugLogSource(source);
     }
 
     async startDebugSession() {

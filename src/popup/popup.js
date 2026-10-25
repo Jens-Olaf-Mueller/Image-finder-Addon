@@ -62,7 +62,9 @@ async function runPopup() {
         const panel = new SettingsPanel(mediaController.settings, form, {
             onSettingsChanged: async (settingsData) => {
                 mediaController.updateDownloadTitles();
-                await mediaController.setDebugModeEnabled(settingsData?.debug?.debugmode === true);
+                const debugSettings = settingsData?.debug ?? {};
+                await mediaController.setDebugModeEnabled(debugSettings.debugmode === true);
+                await mediaController.setDebugLogSources(debugSettings);
             },
             onThemeChange: (mode) => mediaController.popup.applyThemeMode(mode)
         });
